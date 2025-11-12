@@ -490,7 +490,7 @@ onMounted(() => {
   &--danger {
     .overview-card__icon {
       background-color: rgba(245, 108, 108, 0.1);
-      color: <bolt>.danger-color;
+      color: var(--danger-color);
     }
   }
 
