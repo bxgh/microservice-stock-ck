@@ -145,10 +145,10 @@ export const serviceConfigs: ServiceConfig[] = [
     name: 'Task Scheduler UI',
     description: 'Task Scheduler前端界面',
     host: 'localhost',
-    port: 3000,
-    baseUrl: 'http://localhost:3000',
+    port: 3002,
+    baseUrl: 'http://localhost:3002',
     healthEndpoint: '/',
-    status: 'unknown',
+    status: 'running',
     type: 'frontend'
   },
   {

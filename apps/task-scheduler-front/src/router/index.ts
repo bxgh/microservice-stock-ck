@@ -4,35 +4,95 @@ import NProgress from 'nprogress'
 const routes: Array<RouteRecordRaw> = [
   {
     path: '/',
-    name: 'Home',
-    component: () => import('@/views/home/index.vue'),
-    meta: {
-      title: '首页'
-    }
+    redirect: '/dashboard'
   },
   {
-    path: '/dashboard',
-    name: 'Dashboard',
-    component: () => import('@/views/dashboard/index.vue'),
-    meta: {
-      title: '仪表板'
-    }
-  },
-  {
-    path: '/components',
-    name: 'Components',
-    component: () => import('@/views/components/index.vue'),
-    meta: {
-      title: '组件库'
-    }
-  },
-  {
-    path: '/examples',
-    name: 'Examples',
-    component: () => import('@/views/examples/index.vue'),
-    meta: {
-      title: '使用示例'
-    }
+    path: '/',
+    component: () => import('@/layouts/TaskSchedulerLayout.vue'),
+    children: [
+      {
+        path: 'dashboard',
+        name: 'Dashboard',
+        component: () => import('@/views/dashboard/index.vue'),
+        meta: {
+          title: '仪表板'
+        }
+      },
+      // 任务管理路由
+      {
+        path: 'tasks',
+        children: [
+          {
+            path: 'list',
+            name: 'TaskList',
+            component: () => import('@/views/tasks/List.vue'),
+            meta: {
+              title: '任务列表'
+            }
+          },
+          {
+            path: 'create',
+            name: 'TaskCreate',
+            component: () => import('@/views/tasks/Create.vue'),
+            meta: {
+              title: '创建任务'
+            }
+          },
+          {
+            path: 'statistics',
+            name: 'TaskStatistics',
+            component: () => import('@/views/tasks/Statistics.vue'),
+            meta: {
+              title: '任务统计'
+            }
+          }
+        ]
+      },
+      // 监控中心路由
+      {
+        path: 'monitor',
+        children: [
+          {
+            path: 'executions',
+            name: 'Executions',
+            component: () => import('@/views/monitor/Executions.vue'),
+            meta: {
+              title: '执行记录'
+            }
+          },
+          {
+            path: 'performance',
+            name: 'Performance',
+            component: () => import('@/views/monitor/Performance.vue'),
+            meta: {
+              title: '性能监控'
+            }
+          }
+        ]
+      },
+      // 系统设置路由
+      {
+        path: 'settings',
+        children: [
+          {
+            path: 'configuration',
+            name: 'Configuration',
+            component: () => import('@/views/settings/Configuration.vue'),
+            meta: {
+              title: '系统配置'
+            }
+          },
+          {
+            path: 'logs',
+            name: 'SystemLogs',
+            component: () => import('@/views/settings/Logs.vue'),
+            meta: {
+              title: '系统日志'
+            }
+          }
+        ]
+      }
+    ]
   }
 ]
 
@@ -54,7 +114,7 @@ router.beforeEach((to, from, next) => {
 
   // 设置页面标题
   if (to.meta?.title) {
-    document.title = `${to.meta.title} - Frontend Template`
+    document.title = `${to.meta.title} - Task Scheduler`
   }
 
   next()
