@@ -2,34 +2,70 @@
 
 基于事件驱动架构的微服务任务调度系统，支持实时数据处理和监控。
 
-## 快速开始
+## 🏗️ Monorepo架构
 
+本项目采用 **Monorepo** 架构，统一管理前后端应用和共享组件：
+
+```
+microservice-stock/
+├── 📁 apps/                    # 前端应用
+│   ├── 🚀 task-scheduler-ui/   # Task Scheduler专用前端
+│   └── 🌐 frontend-web/        # 通用Web前端
+├── 📁 packages/                # 共享包
+│   ├── 🧩 ui-components/       # 共享UI组件库
+│   ├── 🔧 utils/               # 工具函数库
+│   └── 📝 types/               # TypeScript类型定义
+├── 📁 services/                # 后端微服务
+│   ├── ⚙️ task-scheduler/      # 任务调度服务
+│   ├── 📊 data-collector/      # 数据采集服务
+│   └── 🌐 api-gateway/         # API网关
+├── 📁 infrastructure/          # 基础设施
+├── 📁 docs/                    # 项目文档
+└── 📁 tools/                   # 开发工具
+```
+
+## 🚀 快速开始
+
+### 启动开发环境
 ```bash
 # 克隆项目
 git clone <repository-url>
 cd microservice-stock
 
-# 启动开发环境
+# 启动基础设施服务
+docker-compose -f infrastructure/docker-compose.yml up -d
+
+# 启动后端服务
 ./scripts/start-dev.sh
 
-# 构建所有服务
-./scripts/build.sh
+# 启动前端应用
+cd apps/task-scheduler-ui && npm install && npm run dev
+cd apps/frontend-web && npm install && npm run dev
 ```
 
-## 架构概览
+### 前端应用开发
+```bash
+# Task Scheduler UI (任务调度专用)
+cd apps/task-scheduler-ui
+npm install
+npm run dev        # 开发服务器: http://localhost:3000
+npm run build      # 构建生产版本
 
-本项目采用微服务架构，包含以下核心服务：
+# Frontend Web (通用Web前端)
+cd apps/frontend-web
+npm install
+npm run dev        # 开发服务器: http://localhost:3001
+npm run build      # 构建生产版本
+```
 
-- **API Gateway** - 统一入口和路由分发
-- **TaskScheduler** - 任务调度引擎
-- **DataCollector** - 数据采集服务
-- **DataProcessor** - 数据处理服务
-- **DataStorage** - 数据存储服务
-- **Notification** - 通知服务
-- **Monitor** - 监控服务
-- **Web UI** - 管理界面
-
-详细架构文档请参见 [docs/architecture/](./docs/architecture/)
+### 共享组件开发
+```bash
+# UI组件库
+cd packages/ui-components
+npm install
+npm run dev        # 开发模式（监听变化）
+npm run build      # 构建组件库
+```
 
 ## 开发指南
 
