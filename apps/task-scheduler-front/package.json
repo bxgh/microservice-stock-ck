@@ -1,0 +1,82 @@
+{
+  "name": "task-scheduler-frontend",
+  "version": "1.0.0",
+  "description": "Task Scheduler微服务前端应用 - 基于Vue 3 + TypeScript + Element Plus",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc && vite build",
+    "preview": "vite preview",
+    "test": "vitest",
+    "test:ui": "vitest --ui",
+    "test:coverage": "vitest --coverage",
+    "lint": "eslint . --ext .vue,.js,.jsx,.cjs,.mjs,.ts,.tsx,.cts,.mts --fix",
+    "lint:check": "eslint . --ext .vue,.js,.jsx,.cjs,.mjs,.ts,.tsx,.cts,.mts",
+    "format": "prettier --write src/",
+    "format:check": "prettier --check src/",
+    "type-check": "vue-tsc --noEmit",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "storybook": "storybook dev -p 6006",
+    "build-storybook": "storybook build"
+  },
+  "dependencies": {
+    "vue": "^3.4.0",
+    "vue-router": "^4.2.0",
+    "pinia": "^2.1.0",
+    "element-plus": "^2.4.0",
+    "@element-plus/icons-vue": "^2.3.0",
+    "axios": "^1.6.0",
+    "dayjs": "^1.11.0",
+    "lodash-es": "^4.17.0",
+    "nprogress": "^0.2.0",
+    "echarts": "^5.4.0",
+    "vue-echarts": "^6.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/lodash-es": "^4.17.0",
+    "@types/nprogress": "^0.2.0",
+    "@vitejs/plugin-vue": "^4.5.0",
+    "typescript": "^5.0.0",
+    "vue-tsc": "^1.8.0",
+    "vite": "^5.0.0",
+    "vitest": "^1.0.0",
+    "@vue/test-utils": "^2.4.0",
+    "jsdom": "^23.0.0",
+    "sass": "^1.69.0",
+    "unplugin-auto-import": "^0.17.0",
+    "unplugin-vue-components": "^0.25.0",
+    "@typescript-eslint/eslint-plugin": "^6.14.0",
+    "@typescript-eslint/parser": "^6.14.0",
+    "eslint": "^8.55.0",
+    "eslint-plugin-vue": "^9.19.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-prettier": "^5.0.0",
+    "prettier": "^3.1.0",
+    "husky": "^8.0.0",
+    "lint-staged": "^15.2.0",
+    "vitepress": "^1.0.0",
+    "@storybook/vue3": "^7.0.0",
+    "@storybook/addon-essentials": "^7.0.0",
+    "storybook": "^7.0.0"
+  },
+  "keywords": [
+    "vue3",
+    "typescript",
+    "element-plus",
+    "task-scheduler",
+    "microservice",
+    "frontend"
+  ],
+  "author": "Task Scheduler Frontend Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-org/frontend-template"
+  },
+  "bugs": {
+    "url": "https://github.com/your-org/frontend-template/issues"
+  },
+  "homepage": "https://github.com/your-org/frontend-template#readme"
+}
