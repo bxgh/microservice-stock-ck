@@ -89,3 +89,7 @@ MANIFEST
 # AI开发工具配置 - 本地使用，不需要跟踪
 .bmad-core/
 openspec/
+
+# 文档和测试目录 - 本地使用，不需要跟踪
+docs/
+tests/
