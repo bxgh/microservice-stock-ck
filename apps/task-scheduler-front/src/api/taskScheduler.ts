@@ -16,32 +16,22 @@ export interface Task {
 }
 
 export interface TaskConfig {
-  url?: string
-  method?: string
-  headers?: Record<string, any>
-  body?: any
-  script?: string
-  timeout?: number
-  retry_count?: number
-  retry_interval?: number
+  [key: string]: string
 }
 
 export interface TaskCreateRequest {
   name: string
   description: string
-  schedule: string
-  type: 'http' | 'shell' | 'python' | 'database'
+  cron_expression: string
+  task_type: 'http' | 'shell' | 'python' | 'database'
   config: TaskConfig
   timeout?: number
-  retry_count?: number
-  retry_interval?: number
-  priority?: number
-  notifications?: {
-    failure?: {
-      enabled: boolean
-      email?: string
-    }
-  }
+  max_retries?: number
+  retry_delay?: number
+  enabled?: boolean
+  start_date?: string
+  end_date?: string
+  tags?: string[]
 }
 
 export interface TaskExecution {

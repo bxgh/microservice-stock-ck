@@ -33,8 +33,8 @@
             </el-form-item>
           </el-col>
           <el-col :span="12">
-            <el-form-item label="任务类型" prop="type">
-              <el-select v-model="form.type" placeholder="请选择任务类型">
+            <el-form-item label="任务类型" prop="task_type">
+              <el-select v-model="form.task_type" placeholder="请选择任务类型">
                 <el-option label="HTTP请求" value="http" />
                 <el-option label="Shell脚本" value="shell" />
                 <el-option label="Python脚本" value="python" />
@@ -55,9 +55,9 @@
 
         <el-row :gutter="24">
           <el-col :span="12">
-            <el-form-item label="调度规则" prop="schedule">
+            <el-form-item label="调度规则" prop="cron_expression">
               <el-input
-                v-model="form.schedule"
+                v-model="form.cron_expression"
                 placeholder="0 * * * *"
                 clearable
               >
@@ -68,13 +68,12 @@
             </el-form-item>
           </el-col>
           <el-col :span="12">
-            <el-form-item label="任务优先级" prop="priority">
-              <el-select v-model="form.priority" placeholder="请选择优先级">
-                <el-option label="低" :value="1" />
-                <el-option label="中" :value="2" />
-                <el-option label="高" :value="3" />
-                <el-option label="紧急" :value="4" />
-              </el-select>
+            <el-form-item label="启用状态" prop="enabled">
+              <el-switch
+                v-model="form.enabled"
+                active-text="启用"
+                inactive-text="禁用"
+              />
             </el-form-item>
           </el-col>
         </el-row>
@@ -160,9 +159,9 @@
             </el-form-item>
           </el-col>
           <el-col :span="8">
-            <el-form-item label="重试次数" prop="retry_count">
+            <el-form-item label="重试次数" prop="max_retries">
               <el-input-number
-                v-model="form.retry_count"
+                v-model="form.max_retries"
                 :min="0"
                 :max="5"
                 controls-position="right"
@@ -170,9 +169,9 @@
             </el-form-item>
           </el-col>
           <el-col :span="8">
-            <el-form-item label="重试间隔(秒)" prop="retry_interval">
+            <el-form-item label="重试延迟(秒)" prop="retry_delay">
               <el-input-number
-                v-model="form.retry_interval"
+                v-model="form.retry_delay"
                 :min="1"
                 :max="300"
                 controls-position="right"
@@ -181,24 +180,18 @@
           </el-col>
         </el-row>
 
-        <!-- 通知配置 -->
-        <el-divider content-position="left">通知配置</el-divider>
-        <el-form-item label="失败通知">
-          <el-switch
-            v-model="form.notifications.failure.enabled"
-            active-text="启用"
-            inactive-text="禁用"
-          />
-        </el-form-item>
-        <el-form-item
-          label="通知邮箱"
-          prop="notifications.failure.email"
-          v-if="form.notifications.failure.enabled"
-        >
-          <el-input
-            v-model="form.notifications.failure.email"
-            placeholder="admin@example.com"
-          />
+              <!-- 标签配置 -->
+        <el-divider content-position="left">标签配置</el-divider>
+        <el-form-item label="任务标签">
+          <el-select
+            v-model="form.tags"
+            multiple
+            filterable
+            allow-create
+            default-first-option
+            placeholder="添加标签（可选）"
+          >
+          </el-select>
         </el-form-item>
       </el-form>
     </el-card>
@@ -234,7 +227,7 @@ import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElForm } from 'element-plus'
 import type { FormRules } from 'element-plus'
-import taskSchedulerApi, { type TaskCreateRequest } from '@/api/taskScheduler'
+import taskSchedulerApi, { type TaskCreateRequest, type TaskConfig } from '@/api/taskScheduler'
 
 // 响应式数据
 const router = useRouter()
@@ -242,29 +235,24 @@ const formRef = ref<InstanceType<typeof ElForm>>()
 const saving = ref(false)
 const cronHelperVisible = ref(false)
 
-// 表单数据
-const form = reactive<TaskCreateRequest>({
+// 表单数据 - 为了UI友好，使用内部结构
+const form = reactive({
   name: '',
-  type: 'http',
+  task_type: 'http',
   description: '',
-  schedule: '',
-  priority: 2,
+  cron_expression: '',
   config: {
     url: '',
     method: 'GET',
-    headers: {},
+    headers: '',
     body: '',
     script: ''
   },
   timeout: 300,
-  retry_count: 3,
-  retry_interval: 60,
-  notifications: {
-    failure: {
-      enabled: true,
-      email: ''
-    }
-  }
+  max_retries: 3,
+  retry_delay: 60,
+  enabled: true,
+  tags: []
 })
 
 // 表单验证规则
@@ -273,14 +261,11 @@ const rules: FormRules = {
     { required: true, message: '请输入任务名称', trigger: 'blur' },
     { min: 2, max: 50, message: '任务名称长度在 2 到 50 个字符', trigger: 'blur' }
   ],
-  type: [
+  task_type: [
     { required: true, message: '请选择任务类型', trigger: 'change' }
   ],
-  schedule: [
+  cron_expression: [
     { required: true, message: '请输入调度规则', trigger: 'blur' }
-  ],
-  priority: [
-    { required: true, message: '请选择任务优先级', trigger: 'change' }
   ],
   'config.url': [
     { required: true, message: '请输入请求URL', trigger: 'blur' },
@@ -320,13 +305,26 @@ const handleSave = async () => {
     saving.value = true
 
     // 处理表单数据
+    // 将结构化的config转换为API要求的字符串格式
+    const config: TaskConfig = {}
+
+    if (form.config.url) config.url = form.config.url
+    if (form.config.method) config.method = form.config.method
+    if (form.config.headers) config.headers = form.config.headers
+    if (form.config.body) config.body = form.config.body
+    if (form.config.script) config.script = form.config.script
+
     const taskData: TaskCreateRequest = {
-      ...form,
-      // 处理headers字段
-      config: {
-        ...form.config,
-        headers: form.config.headers ? JSON.parse(form.config.headers as string) : {}
-      }
+      name: form.name,
+      description: form.description,
+      cron_expression: form.cron_expression,
+      task_type: form.task_type,
+      config,
+      timeout: form.timeout,
+      max_retries: form.max_retries,
+      retry_delay: form.retry_delay,
+      enabled: form.enabled,
+      tags: form.tags
     }
 
     console.log('创建任务:', taskData)
