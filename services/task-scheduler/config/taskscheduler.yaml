@@ -1,0 +1,75 @@
+# Task Scheduler 配置文件
+# Task Scheduler Configuration File
+
+# 服务配置
+app:
+  name: "TaskScheduler"
+  version: "2.0.0"
+  debug: false
+  host: "0.0.0.0"
+  port: 8081
+  workers: 1
+  access_log: true
+
+# 安全配置
+security:
+  api_key: null
+  jwt_secret: null
+  token_expire_hours: 24
+
+# 数据库配置
+database:
+  type: "sqlite"
+  path: "data/taskscheduler.db"
+  connection_pool_size: 10
+
+# Redis配置
+redis:
+  url: "redis://localhost:6379"
+  max_connections: 20
+  retry_on_timeout: true
+
+# 调度器配置
+scheduler:
+  timezone: "Asia/Shanghai"
+  max_workers: 10
+  job_defaults:
+    coalesce: false
+    max_instances: 3
+    misfire_grace_time: 30
+
+# 任务执行配置
+execution:
+  timeout: 300
+  max_retries: 3
+  retry_delay: 60
+
+# 日志配置
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file_path: "logs/taskscheduler.log"
+  max_bytes: 10485760  # 10MB
+  backup_count: 5
+
+# 插件配置
+plugins:
+  enabled: true
+  auto_load: true
+  directories:
+    - "plugins/builtin"
+    - "plugins/custom"
+
+# 监控配置
+monitoring:
+  enabled: true
+  metrics_port: 9090
+  health_check_interval: 30
+
+# Nacos配置
+nacos:
+  server_url: "http://nacos:8848"
+  namespace: ""
+  group: "DEFAULT_GROUP"
+  timeout: 5
+  heartbeat_interval: 30

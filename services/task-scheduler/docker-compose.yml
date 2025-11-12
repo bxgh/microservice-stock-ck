@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  task-scheduler:
+    image: task-scheduler:enterprise
+    container_name: task-scheduler
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    environment:
+      - NACOS_SERVER_URL=http://nacos:8848
+      - SERVICE_NAME=task-scheduler
+      - SERVICE_GROUP=DEFAULT_GROUP
+      - SERVICE_PORT=8081
+      - LOG_LEVEL=INFO
+      - HEARTBEAT_INTERVAL=30
+    networks:
+      - microservice-stock_microservice-stock
+    volumes:
+      - task-scheduler-logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "--noproxy", "*", "-f", "http://localhost:8081/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  microservice-stock:
+    external: true
+  microservice-stock_microservice-stock:
+    external: true
+
+volumes:
+  task-scheduler-logs:
+    driver: local
