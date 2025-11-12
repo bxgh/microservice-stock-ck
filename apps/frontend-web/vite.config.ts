@@ -6,6 +6,8 @@ import Components from 'unplugin-vue-components/vite'
 import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 
 export default defineConfig({
+  root: '.',
+  publicDir: 'public',
   plugins: [
     vue(),
     AutoImport({
@@ -43,8 +45,9 @@ export default defineConfig({
     }
   },
   server: {
+    host: '0.0.0.0',
     port: 3001,
-    open: true,
+    open: false,
     cors: true
   },
   build: {
