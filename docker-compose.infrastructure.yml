@@ -1,0 +1,196 @@
+version: '3.8'
+
+services:
+  # 服务注册发现 - Nacos
+  nacos:
+    image: nacos/nacos-server:v2.2.3
+    container_name: microservice-stock-nacos
+    restart: unless-stopped
+    environment:
+      - MODE=standalone
+      - NACOS_AUTH_ENABLE=false
+    volumes:
+      - nacos_data:/home/nacos/data
+      - nacos_logs:/home/nacos/logs
+    ports:
+      - "8848:8848"   # Nacos Console端口
+      - "9848:9848"   # gRPC端口
+      - "7848:7848"   # 集群通信端口
+    networks:
+      - microservice-stock
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8848/nacos/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # 缓存服务 - Redis
+  redis:
+    image: redis:7.2.4-alpine
+    container_name: microservice-stock-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass redis123
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - microservice-stock
+    depends_on:
+      - nacos
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # 时序数据库 - ClickHouse
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    container_name: microservice-stock-clickhouse
+    restart: unless-stopped
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - clickhouse_logs:/var/log/clickhouse-server
+    ports:
+      - "8123:8123"  # HTTP接口
+      - "9000:9000"  # TCP接口
+      - "9004:9004"  # MySQL兼容接口
+      - "9009:9009"  # 复制通信接口
+    networks:
+      - microservice-stock
+    depends_on:
+      - nacos
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    environment:
+      - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8123/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # 消息队列 - RabbitMQ
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    container_name: microservice-stock-rabbitmq
+    restart: unless-stopped
+    environment:
+      - RABBITMQ_DEFAULT_USER=admin
+      - RABBITMQ_DEFAULT_PASS=admin123
+      - RABBITMQ_DEFAULT_VHOST=/
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+      - rabbitmq_logs:/var/log/rabbitmq
+    ports:
+      - "5672:5672"   # AMQP端口
+      - "15672:15672" # 管理界面端口
+    networks:
+      - microservice-stock
+    depends_on:
+      - nacos
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # 监控 - Prometheus
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: microservice-stock-prometheus
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    volumes:
+      - prometheus_data:/prometheus
+    ports:
+      - "9091:9090"
+    networks:
+      - microservice-stock
+    depends_on:
+      - nacos
+
+  # 监控界面 - Grafana
+  grafana:
+    image: grafana/grafana:latest
+    container_name: microservice-stock-grafana
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    networks:
+      - microservice-stock
+    depends_on:
+      - prometheus
+
+  # API网关 - Nginx (可选)
+  nginx:
+    image: nginx:alpine
+    container_name: microservice-stock-nginx
+    restart: unless-stopped
+    volumes:
+      - nginx_logs:/var/log/nginx
+    ports:
+      - "8080:80"
+      - "8443:443"
+    networks:
+      - microservice-stock
+    depends_on:
+      - nacos
+      - redis
+      - clickhouse
+      - rabbitmq
+    
+volumes:
+  # Nacos 数据卷
+  nacos_data:
+    driver: local
+  nacos_logs:
+    driver: local
+
+  # Redis 数据卷
+  redis_data:
+    driver: local
+
+  # ClickHouse 数据卷
+  clickhouse_data:
+    driver: local
+  clickhouse_logs:
+    driver: local
+
+  # RabbitMQ 数据卷
+  rabbitmq_data:
+    driver: local
+  rabbitmq_logs:
+    driver: local
+
+  # 监控数据卷
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+  # Nginx 数据卷
+  nginx_logs:
+    driver: local
+
+networks:
+  microservice-stock:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

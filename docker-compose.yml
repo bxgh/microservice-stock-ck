@@ -1,0 +1,101 @@
+version: '3.8'
+
+services:
+  # 服务注册发现
+  consul:
+    image: consul:1.16
+    container_name: microservice-stock-consul
+    restart: unless-stopped
+    command: >
+      consul agent
+      -server
+      -bootstrap-expect=1
+      -ui
+      -bind=0.0.0.0
+      -client=0.0.0.0
+      -datacenter=dc1
+    volumes:
+      - consul_data:/consul/data
+      - ./infrastructure/consul/config/consul.hcl:/consul/config/consul.hcl
+    ports:
+      - "8500:8500"   # HTTP API 和 UI
+      - "8600:8600/udp" # DNS
+    networks:
+      - microservice-stock
+    environment:
+      - CONSUL_BIND_INTERFACE=eth0
+
+  # 基础设施服务
+  redis:
+    image: redis:7.0-alpine
+    container_name: microservice-stock-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+      - ./infrastructure/redis/config/redis.conf:/usr/local/etc/redis/redis.conf
+    ports:
+      - "6379:6379"
+    networks:
+      - microservice-stock
+    depends_on:
+      - consul
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    container_name: microservice-stock-clickhouse
+    restart: unless-stopped
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./infrastructure/clickhouse/config/config.xml:/etc/clickhouse-server/config.xml
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    networks:
+      - microservice-stock
+    depends_on:
+      - consul
+
+  # 应用服务（开发阶段）
+  task-scheduler:
+    image: python:3.12-slim
+    container_name: microservice-stock-task-scheduler
+    restart: unless-stopped
+    command: >
+      bash -c "
+        apt-get update &&
+        apt-get install -y curl &&
+        pip install fastapi uvicorn python-dotenv &&
+        echo 'from fastapi import FastAPI
+import uvicorn
+app = FastAPI()
+@app.get(\"/api/v1/health\")
+async def health():
+    return {\"status\": \"healthy\", \"service\": \"TaskScheduler\"}
+@app.get(\"/\")
+async def root():
+    return {\"message\": \"TaskScheduler is running\", \"docs\": \"/docs\"}
+if __name__ == \"__main__\":
+    uvicorn.run(app, host=\"0.0.0.0\", port=8080)' > /app/app.py &&
+        python app.py
+      "
+    environment:
+      - APP_NAME=TaskScheduler
+      - DEBUG=true
+      - LOG_LEVEL=INFO
+    ports:
+      - "8080:8080"
+    networks:
+      - microservice-stock
+
+volumes:
+  consul_data:
+    driver: local
+  redis_data:
+    driver: local
+  clickhouse_data:
+    driver: local
+
+networks:
+  microservice-stock:
+    driver: bridge

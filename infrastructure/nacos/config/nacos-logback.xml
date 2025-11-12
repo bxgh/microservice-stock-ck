@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration scan="true" scanPeriod="10 seconds">
+
+    <property name="LOG_HOME" value="${nacos.logs.path}" />
+
+    <appender name="console" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <Pattern>%date{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</Pattern>
+        </encoder>
+    </appender>
+
+    <appender name="file" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <File>${LOG_HOME}/nacos.log</File>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_HOME}/nacos.log.%d{yyyy-MM-dd}.%i</fileNamePattern>
+            <maxFileSize>64MB</maxFileSize>
+            <maxHistory>7</maxHistory>
+            <totalSizeCap>1GB</totalSizeCap>
+        </rollingPolicy>
+        <encoder>
+            <Pattern>%date{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</Pattern>
+        </encoder>
+    </appender>
+
+    <appender name="alarmFile" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <File>${LOG_HOME}/nacos-alarm.log</File>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_HOME}/nacos-alarm.log.%d{yyyy-MM-dd}.%i</fileNamePattern>
+            <maxFileSize>64MB</maxFileSize>
+            <maxHistory>7</maxHistory>
+        </rollingPolicy>
+        <encoder>
+            <Pattern>%date{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</Pattern>
+        </encoder>
+    </appender>
+
+    <appender name="coreAuthFile" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <File>${LOG_HOME}/nacos-core-auth.log</File>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_HOME}/nacos-core-auth.log.%d{yyyy-MM-dd}.%i</fileNamePattern>
+            <maxFileSize>64MB</maxFileSize>
+            <maxHistory>7</maxHistory>
+        </rollingPolicy>
+        <encoder>
+            <Pattern>%date{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</Pattern>
+        </encoder>
+    </appender>
+
+    <!-- 根日志级别 -->
+    <root level="INFO">
+        <appender-ref ref="console"/>
+        <appender-ref ref="file"/>
+    </root>
+
+    <!-- 特定包的日志级别 -->
+    <logger name="com.alibaba.nacos.core.auth" level="INFO" additivity="false">
+        <appender-ref ref="console"/>
+        <appender-ref ref="coreAuthFile"/>
+    </logger>
+
+    <logger name="com.alibaba.nacos.client.naming" level="INFO" additivity="false">
+        <appender-ref ref="console"/>
+        <appender-ref ref="file"/>
+    </logger>
+
+    <logger name="com.alibaba.nacos.client.config" level="INFO" additivity="false">
+        <appender-ref ref="console"/>
+        <appender-ref ref="file"/>
+    </logger>
+
+    <!-- 告警日志 -->
+    <logger name="com.alibaba.nacos.alert" level="WARN" additivity="false">
+        <appender-ref ref="console"/>
+        <appender-ref ref="alarmFile"/>
+    </logger>
+
+</configuration>
