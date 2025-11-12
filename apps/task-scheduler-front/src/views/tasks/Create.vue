@@ -234,25 +234,7 @@ import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElForm } from 'element-plus'
 import type { FormRules } from 'element-plus'
-
-// 表单接口定义
-interface TaskForm {
-  name: string
-  type: string
-  description: string
-  schedule: string
-  priority: number
-  config: any
-  timeout: number
-  retry_count: number
-  retry_interval: number
-  notifications: {
-    failure: {
-      enabled: boolean
-      email: string
-    }
-  }
-}
+import taskSchedulerApi, { type TaskCreateRequest } from '@/api/taskScheduler'
 
 // 响应式数据
 const router = useRouter()
@@ -261,7 +243,7 @@ const saving = ref(false)
 const cronHelperVisible = ref(false)
 
 // 表单数据
-const form = reactive<TaskForm>({
+const form = reactive<TaskCreateRequest>({
   name: '',
   type: 'http',
   description: '',
@@ -270,7 +252,7 @@ const form = reactive<TaskForm>({
   config: {
     url: '',
     method: 'GET',
-    headers: '',
+    headers: {},
     body: '',
     script: ''
   },
@@ -337,16 +319,22 @@ const handleSave = async () => {
     await formRef.value.validate()
     saving.value = true
 
-    // TODO: 调用创建任务的API
-    console.log('创建任务:', form)
+    // 处理表单数据
+    const taskData: TaskCreateRequest = {
+      ...form,
+      // 处理headers字段
+      config: {
+        ...form.config,
+        headers: form.config.headers ? JSON.parse(form.config.headers as string) : {}
+      }
+    }
 
-    // 模拟API调用延迟
-    await new Promise(resolve => setTimeout(resolve, 1000))
+    console.log('创建任务:', taskData)
+    await taskSchedulerApi.createTask(taskData)
 
-    ElMessage.success('任务创建成功')
     router.push('/tasks/list')
   } catch (error) {
-    console.error('表单验证失败:', error)
+    console.error('创建任务失败:', error)
   } finally {
     saving.value = false
   }

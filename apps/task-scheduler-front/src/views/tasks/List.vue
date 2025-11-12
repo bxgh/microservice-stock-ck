@@ -165,18 +165,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh, ArrowDown } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
-
-// 任务接口定义
-interface Task {
-  id: number
-  name: string
-  description: string
-  schedule: string
-  status: 'enabled' | 'disabled' | 'paused'
-  created_at: string
-  last_run?: string
-  next_run?: string
-}
+import taskSchedulerApi, { type Task } from '@/api/taskScheduler'
 
 // 响应式数据
 const router = useRouter()
@@ -227,50 +216,26 @@ const formatDateTime = (dateTime: string) => {
 const fetchTasks = async () => {
   loading.value = true
   try {
-    // 模拟API调用
-    const mockData: Task[] = [
-      {
-        id: 1,
-        name: '数据同步任务',
-        description: '每小时同步用户数据到分析数据库',
-        schedule: '0 * * * *',
-        status: 'enabled',
-        created_at: '2024-01-15T10:30:00Z',
-        last_run: '2024-01-15T11:00:00Z'
-      },
-      {
-        id: 2,
-        name: '邮件发送任务',
-        description: '每日定时发送营销邮件',
-        schedule: '0 9 * * *',
-        status: 'enabled',
-        created_at: '2024-01-14T15:20:00Z',
-        last_run: '2024-01-15T09:00:00Z'
-      },
-      {
-        id: 3,
-        name: '日志清理任务',
-        description: '每周清理过期日志文件',
-        schedule: '0 2 * * 0',
-        status: 'paused',
-        created_at: '2024-01-10T08:45:00Z',
-        last_run: '2024-01-07T02:00:00Z'
-      },
-      {
-        id: 4,
-        name: '系统监控报告',
-        description: '生成系统性能监控报告',
-        schedule: '0 8 * * 1-5',
-        status: 'disabled',
-        created_at: '2024-01-08T12:10:00Z'
-      }
-    ]
+    const { tasks, total } = await taskSchedulerApi.getTasks(pagination.page, pagination.size)
 
-    taskList.value = mockData
-    pagination.total = mockData.length
+    // 应用搜索和筛选过滤
+    let filteredTasks = tasks
+
+    if (searchForm.name) {
+      filteredTasks = filteredTasks.filter(task =>
+        task.name.toLowerCase().includes(searchForm.name.toLowerCase())
+      )
+    }
+
+    if (searchForm.status) {
+      filteredTasks = filteredTasks.filter(task => task.status === searchForm.status)
+    }
+
+    taskList.value = filteredTasks
+    pagination.total = total
   } catch (error) {
     console.error('获取任务列表失败:', error)
-    ElMessage.error('获取任务列表失败')
+    ElMessage.error('获取任务列表失败，请检查后端服务是否运行')
   } finally {
     loading.value = false
   }
@@ -317,11 +282,11 @@ const handleTrigger = async (task: Task) => {
       }
     )
 
-    // TODO: 调用触发任务的API
-    ElMessage.success('任务执行成功')
+    await taskSchedulerApi.triggerTask(task.id)
     refreshTasks()
   } catch (error) {
-    // 用户取消操作
+    // 用户取消操作或API错误
+    console.log('触发任务操作已取消或失败')
   }
 }
 
@@ -352,11 +317,10 @@ const handleMoreAction = async (command: string, task: Task) => {
 // 启用任务
 const handleEnableTask = async (task: Task) => {
   try {
-    // TODO: 调用启用任务的API
-    ElMessage.success('任务已启用')
+    await taskSchedulerApi.enableTask(task.id)
     refreshTasks()
   } catch (error) {
-    ElMessage.error('启用任务失败')
+    console.error('启用任务失败:', error)
   }
 }
 
@@ -372,33 +336,30 @@ const handleDisableTask = async (task: Task) => {
         type: 'warning'
       }
     )
-    // TODO: 调用禁用任务的API
-    ElMessage.success('任务已禁用')
+    await taskSchedulerApi.disableTask(task.id)
     refreshTasks()
   } catch (error) {
-    ElMessage.error('禁用任务失败')
+    console.error('禁用任务失败:', error)
   }
 }
 
 // 暂停任务
 const handlePauseTask = async (task: Task) => {
   try {
-    // TODO: 调用暂停任务的API
-    ElMessage.success('任务已暂停')
+    await taskSchedulerApi.pauseTask(task.id)
     refreshTasks()
   } catch (error) {
-    ElMessage.error('暂停任务失败')
+    console.error('暂停任务失败:', error)
   }
 }
 
 // 恢复任务
 const handleResumeTask = async (task: Task) => {
   try {
-    // TODO: 调用恢复任务的API
-    ElMessage.success('任务已恢复')
+    await taskSchedulerApi.resumeTask(task.id)
     refreshTasks()
   } catch (error) {
-    ElMessage.error('恢复任务失败')
+    console.error('恢复任务失败:', error)
   }
 }
 
@@ -414,11 +375,10 @@ const handleDeleteTask = async (task: Task) => {
         type: 'error'
       }
     )
-    // TODO: 调用删除任务的API
-    ElMessage.success('任务已删除')
+    await taskSchedulerApi.deleteTask(task.id)
     refreshTasks()
   } catch (error) {
-    ElMessage.error('删除任务失败')
+    console.error('删除任务失败:', error)
   }
 }
 

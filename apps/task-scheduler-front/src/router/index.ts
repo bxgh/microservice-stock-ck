@@ -13,7 +13,7 @@ const routes: Array<RouteRecordRaw> = [
       {
         path: 'dashboard',
         name: 'Dashboard',
-        component: () => import('@/views/dashboard/index.vue'),
+        component: () => import('@/views/dashboard/Simple.vue'),
         meta: {
           title: '仪表板'
         }

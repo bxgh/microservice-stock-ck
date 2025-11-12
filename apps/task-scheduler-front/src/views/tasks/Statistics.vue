@@ -226,6 +226,7 @@ import {
   TrendCharts
 } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
+import taskSchedulerApi, { type TaskStatistics, type TaskExecution } from '@/api/taskScheduler'
 
 // 注册ECharts组件
 use([
@@ -238,53 +239,36 @@ use([
   GridComponent
 ])
 
-// 接口定义
-interface TaskStatistics {
-  total_tasks: number
-  running_tasks: number
-  failed_tasks: number
-  success_rate: number
-}
-
-interface ExecutionRecord {
-  id: number
-  task_name: string
-  status: string
-  start_time: string
-  duration: number
-  result: string
-}
-
 // 响应式数据
 const loading = ref(false)
 const tableLoading = ref(false)
 const trendPeriod = ref('7d')
 const detailVisible = ref(false)
-const currentExecution = ref<ExecutionRecord | null>(null)
+const currentExecution = ref<TaskExecution | null>(null)
 
 // 统计数据
 const statistics = ref<TaskStatistics>({
-  total_tasks: 156,
-  running_tasks: 12,
-  failed_tasks: 8,
-  success_rate: 94.8
+  total_tasks: 0,
+  running_tasks: 0,
+  failed_tasks: 0,
+  success_rate: 0,
+  total_executions: 0,
+  recent_executions: []
 })
 
 // 执行记录列表
-const executionList = ref<ExecutionRecord[]>([])
+const executionList = ref<TaskExecution[]>([])
 
 // 任务选项
 const taskOptions = ref([
-  { id: 1, name: '数据同步任务' },
-  { id: 2, name: '邮件发送任务' },
-  { id: 3, name: '日志清理任务' },
-  { id: 4, name: '系统监控报告' }
+  { id: 0, name: '全部任务' },
+  // TODO: 从API获取真实任务列表
 ])
 
 // 筛选表单
 const filterForm = reactive({
   dateRange: [],
-  taskId: ''
+  taskId: 0
 })
 
 // 分页
@@ -293,6 +277,7 @@ const pagination = reactive({
   size: 20,
   total: 0
 })
+
 
 // 趋势图配置
 const trendChartOption = computed(() => ({
@@ -430,42 +415,36 @@ const formatDuration = (seconds: number) => {
   }
 }
 
+// 获取统计数据
+const fetchStatistics = async () => {
+  loading.value = true
+  try {
+    const stats = await taskSchedulerApi.getStatistics()
+    statistics.value = stats
+  } catch (error) {
+    console.error('获取统计数据失败:', error)
+    ElMessage.error('获取统计数据失败，请检查后端服务')
+  } finally {
+    loading.value = false
+  }
+}
+
 // 获取执行记录
 const fetchExecutions = async () => {
   tableLoading.value = true
   try {
-    // 模拟API调用
-    const mockData: ExecutionRecord[] = [
-      {
-        id: 1,
-        task_name: '数据同步任务',
-        status: 'success',
-        start_time: '2024-01-15T10:00:00Z',
-        duration: 45,
-        result: '同步完成，处理了1,234条记录'
-      },
-      {
-        id: 2,
-        task_name: '邮件发送任务',
-        status: 'failed',
-        start_time: '2024-01-15T09:30:00Z',
-        duration: 120,
-        result: 'SMTP连接超时，发送失败'
-      },
-      {
-        id: 3,
-        task_name: '日志清理任务',
-        status: 'running',
-        start_time: '2024-01-15T08:00:00Z',
-        duration: 1800,
-        result: '正在清理过期日志文件...'
-      }
-    ]
+    const taskId = filterForm.taskId > 0 ? filterForm.taskId : undefined
+    const { executions, total } = await taskSchedulerApi.getTaskExecutions(
+      taskId,
+      pagination.page,
+      pagination.size
+    )
 
-    executionList.value = mockData
-    pagination.total = mockData.length
+    executionList.value = executions
+    pagination.total = total
   } catch (error) {
     console.error('获取执行记录失败:', error)
+    ElMessage.error('获取执行记录失败，请检查后端服务')
   } finally {
     tableLoading.value = false
   }
@@ -473,8 +452,8 @@ const fetchExecutions = async () => {
 
 // 刷新数据
 const refreshData = () => {
+  fetchStatistics()
   fetchExecutions()
-  // 刷新统计数据
 }
 
 // 导出数据
@@ -522,7 +501,7 @@ const handleCurrentChange = (page: number) => {
 
 // 组件挂载
 onMounted(() => {
-  fetchExecutions()
+  refreshData()
 })
 </script>
 
