@@ -85,3 +85,7 @@ MANIFEST
 # 备份文件
 *.bak
 *.backup
+
+# AI开发工具配置 - 本地使用，不需要跟踪
+.bmad-core/
+openspec/
