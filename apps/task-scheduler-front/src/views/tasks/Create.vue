@@ -327,8 +327,11 @@ const handleSave = async () => {
       tags: form.tags
     }
 
-    console.log('创建任务:', taskData)
-    await taskSchedulerApi.createTask(taskData)
+    console.log('创建任务数据:', JSON.stringify(taskData, null, 2))
+    console.log('提交到API:', 'http://localhost:8081/api/v1/tasks')
+
+    const response = await taskSchedulerApi.createTask(taskData)
+    console.log('API响应:', response)
 
     router.push('/tasks/list')
   } catch (error) {
