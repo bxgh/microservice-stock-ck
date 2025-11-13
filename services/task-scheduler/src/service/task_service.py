@@ -29,7 +29,7 @@ class TaskService:
                 raise ValueError(f"Unknown task type: {definition.task_type}")
 
             # 验证任务配置
-            plugin = self.plugin_manager.get_plugin(definition.task_type)
+            plugin = self.plugin_manager.get_plugin_instance(definition.task_type, definition.config)
             if not await plugin.validate_config(definition.config):
                 raise ValueError("Invalid task configuration")
 
@@ -100,7 +100,7 @@ class TaskService:
                 raise ValueError(f"Unknown task type: {definition.task_type}")
 
             # 验证任务配置
-            plugin = self.plugin_manager.get_plugin(definition.task_type)
+            plugin = self.plugin_manager.get_plugin_instance(definition.task_type, definition.config)
             if not await plugin.validate_config(definition.config):
                 raise ValueError("Invalid task configuration")
 
@@ -148,14 +148,58 @@ class TaskService:
             if not task_info.definition.enabled:
                 raise ValueError("Task is disabled")
 
-            # 通过调度服务触发任务
-            from .scheduler_service import SchedulerService
-            scheduler_service = SchedulerService(self.task_repository)
-            return scheduler_service.trigger_task(task_id)
+            # 直接执行任务
+            return await self._execute_task_immediately(task_id)
 
         except Exception as e:
             logger.error(f"Failed to trigger task {task_id}: {e}")
             raise
+
+    async def _execute_task_immediately(self, task_id: str) -> bool:
+        """立即执行任务"""
+        try:
+            task_info = self.task_repository.get_task(task_id)
+            if not task_info:
+                return False
+
+            # 执行任务 - 使用正确的参数
+            result = await self.plugin_manager.execute_plugin(
+                task_info.definition.task_type,
+                task_info.definition.config,
+                task_info.definition.config
+            )
+
+            # 根据任务类型判断执行结果
+            success = self._evaluate_task_result(task_info.definition.task_type, result)
+
+            # 更新统计信息
+            self.task_repository.update_task_statistics(task_id, success)
+
+            return success
+
+        except Exception as e:
+            logger.error(f"Failed to execute task immediately: {e}")
+            self.task_repository.update_task_statistics(task_id, False)
+            return False
+
+    def _evaluate_task_result(self, task_type: str, result) -> bool:
+        """根据任务类型评估执行结果"""
+        if result is None:
+            return False
+
+        if task_type == "http":
+            # HTTP任务：检查状态码
+            if isinstance(result, dict) and "status_code" in result:
+                return 200 <= result["status_code"] < 400
+            return False
+        elif task_type == "shell":
+            # Shell任务：检查返回码
+            if isinstance(result, dict) and "return_code" in result:
+                return result["return_code"] == 0
+            return False
+        else:
+            # 其他类型：假设执行成功就是成功
+            return True
 
     async def pause_task(self, task_id: str) -> bool:
         """暂停任务"""
@@ -167,10 +211,6 @@ class TaskService:
             # 更新任务状态
             success = self.task_repository.update_task_status(task_id, TaskStatus.PAUSED)
             if success:
-                # 暂停调度器中的任务
-                from .scheduler_service import SchedulerService
-                scheduler_service = SchedulerService(self.task_repository)
-                scheduler_service.pause_job(task_id)
                 logger.info(f"Task paused successfully: {task_id}")
 
             return success
@@ -188,10 +228,6 @@ class TaskService:
             # 更新任务状态
             success = self.task_repository.update_task_status(task_id, TaskStatus.PENDING)
             if success:
-                # 恢复调度器中的任务
-                from .scheduler_service import SchedulerService
-                scheduler_service = SchedulerService(self.task_repository)
-                scheduler_service.resume_job(task_id)
                 logger.info(f"Task resumed successfully: {task_id}")
 
             return success
@@ -234,7 +270,7 @@ class TaskService:
         if definition.task_type not in self.plugin_manager.get_available_plugins():
             errors.append(f"Unknown task type: {definition.task_type}")
         else:
-            plugin = self.plugin_manager.get_plugin(definition.task_type)
+            plugin = self.plugin_manager.get_plugin_instance(definition.task_type, definition.config)
             if not await plugin.validate_config(definition.config):
                 errors.append("Invalid task configuration for the plugin")
 
@@ -253,10 +289,6 @@ class TaskService:
 
             success = self.task_repository.update_task(task_id, definition)
             if success:
-                # 恢复调度器中的任务
-                from .scheduler_service import SchedulerService
-                scheduler_service = SchedulerService(self.task_repository)
-                scheduler_service.resume_job(task_id)
                 logger.info(f"Task enabled successfully: {task_id}")
 
             return success
@@ -277,10 +309,6 @@ class TaskService:
 
             success = self.task_repository.update_task(task_id, definition)
             if success:
-                # 暂停调度器中的任务
-                from .scheduler_service import SchedulerService
-                scheduler_service = SchedulerService(self.task_repository)
-                scheduler_service.pause_job(task_id)
                 logger.info(f"Task disabled successfully: {task_id}")
 
             return success
