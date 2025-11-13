@@ -84,3 +84,12 @@ $z-index-modal: 1050;
 $z-index-popover: 1060;
 $z-index-tooltip: 1070;
 $z-index-toast: 1080;
+
+// CSS自定义变量定义
+:root {
+  --primary-color: #{$primary-color};
+  --success-color: #{$success-color};
+  --warning-color: #{$warning-color};
+  --danger-color: #{$danger-color};
+  --info-color: #{$info-color};
+}

@@ -29,8 +29,12 @@ class TaskService:
                 raise ValueError(f"Unknown task type: {definition.task_type}")
 
             # 验证任务配置
-            plugin = self.plugin_manager.get_plugin(definition.task_type)
-            if not await plugin.validate_config(definition.config):
+            plugin_class = self.plugin_manager.get_plugin(definition.task_type)
+            if not plugin_class:
+                raise ValueError(f"Plugin not found: {definition.task_type}")
+
+            plugin_instance = plugin_class(definition.task_type, definition.config)
+            if not plugin_instance.validate_config(definition.config):
                 raise ValueError("Invalid task configuration")
 
             # 生成任务ID
@@ -100,8 +104,12 @@ class TaskService:
                 raise ValueError(f"Unknown task type: {definition.task_type}")
 
             # 验证任务配置
-            plugin = self.plugin_manager.get_plugin(definition.task_type)
-            if not await plugin.validate_config(definition.config):
+            plugin_class = self.plugin_manager.get_plugin(definition.task_type)
+            if not plugin_class:
+                raise ValueError(f"Plugin not found: {definition.task_type}")
+
+            plugin_instance = plugin_class(definition.task_type, definition.config)
+            if not plugin_instance.validate_config(definition.config):
                 raise ValueError("Invalid task configuration")
 
             # 更新数据库
@@ -234,9 +242,11 @@ class TaskService:
         if definition.task_type not in self.plugin_manager.get_available_plugins():
             errors.append(f"Unknown task type: {definition.task_type}")
         else:
-            plugin = self.plugin_manager.get_plugin(definition.task_type)
-            if not await plugin.validate_config(definition.config):
-                errors.append("Invalid task configuration for the plugin")
+            plugin_class = self.plugin_manager.get_plugin(definition.task_type)
+            if plugin_class:
+                plugin_instance = plugin_class(definition.task_type, definition.config)
+                if not plugin_instance.validate_config(definition.config):
+                    errors.append("Invalid task configuration for the plugin")
 
         return errors
 

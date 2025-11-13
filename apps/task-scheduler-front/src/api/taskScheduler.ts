@@ -3,16 +3,27 @@ import { ElMessage } from 'element-plus'
 
 // Task Scheduler API接口定义
 export interface Task {
-  id: number
-  name: string
-  description: string
-  schedule: string
-  status: 'enabled' | 'disabled' | 'paused'
+  task_id: string
+  definition: {
+    name: string
+    task_type: string
+    description: string
+    enabled: boolean
+    cron_expression: string
+    config: TaskConfig
+    tags: string[]
+    timeout: number
+    max_retries: number
+    retry_delay: number
+  }
+  status: 'pending' | 'running' | 'success' | 'failed'
   created_at: string
   updated_at?: string
-  last_run?: string
-  next_run?: string
-  config?: TaskConfig
+  last_execution?: string
+  next_run_time?: string
+  execution_count: number
+  success_count: number
+  failure_count: number
 }
 
 export interface TaskConfig {
@@ -36,7 +47,7 @@ export interface TaskCreateRequest {
 
 export interface TaskExecution {
   id: number
-  task_id: number
+  task_id: string
   task_name: string
   status: 'success' | 'failed' | 'running' | 'pending'
   start_time: string
@@ -68,9 +79,17 @@ export interface ApiResponse<T> {
  */
 class TaskSchedulerApi {
   private client: AxiosInstance
-  private baseUrl = 'http://localhost:8081/api/v1'
+  private baseUrl: string
 
   constructor() {
+    // 动态检测API基础URL，支持远程访问
+    if (typeof window !== 'undefined') {
+      const hostname = window.location.hostname
+      this.baseUrl = `http://${hostname}:8081/api/v1`
+    } else {
+      this.baseUrl = 'http://localhost:8081/api/v1'
+    }
+
     this.client = axios.create({
       baseURL: this.baseUrl,
       timeout: 10000,
@@ -99,7 +118,9 @@ class TaskSchedulerApi {
       },
       (error) => {
         console.error('[TaskScheduler API] Response error:', error)
-        const message = error.response?.data?.detail || error.message || '请求失败'
+        const message = error.response?.data?.detail || error.response?.data?.message || error.message || '请求失败'
+        console.error('[TaskScheduler API] Error message:', message)
+        // 恢复错误显示，同时组件也会处理错误
         ElMessage.error(message)
         return Promise.reject(error)
       }
@@ -128,9 +149,10 @@ class TaskSchedulerApi {
         params: { page, size }
       })
 
-      // 根据实际API响应格式调整
-      const tasks = response.data.tasks || response.data || []
-      const total = response.data.total || tasks.length
+      // 适配后端API响应格式: {data: {tasks: [...], total: N, page: 1, page_size: 20}}
+      const apiData = response.data.data || response.data
+      const tasks = apiData.tasks || []
+      const total = apiData.total || tasks.length
 
       return { tasks, total }
     } catch (error) {
@@ -142,10 +164,10 @@ class TaskSchedulerApi {
   /**
    * 获取任务详情
    */
-  async getTask(taskId: number): Promise<Task> {
+  async getTask(taskId: string): Promise<Task> {
     try {
       const response = await this.client.get(`/tasks/${taskId}`)
-      return response.data
+      return response.data.data || response.data
     } catch (error) {
       console.error(`Failed to get task ${taskId}:`, error)
       throw error
@@ -159,7 +181,7 @@ class TaskSchedulerApi {
     try {
       const response = await this.client.post('/tasks', taskData)
       ElMessage.success('任务创建成功')
-      return response.data
+      return response.data.data || response.data
     } catch (error) {
       console.error('Failed to create task:', error)
       throw error
@@ -169,11 +191,11 @@ class TaskSchedulerApi {
   /**
    * 更新任务
    */
-  async updateTask(taskId: number, taskData: Partial<TaskCreateRequest>): Promise<Task> {
+  async updateTask(taskId: string, taskData: Partial<TaskCreateRequest>): Promise<Task> {
     try {
       const response = await this.client.put(`/tasks/${taskId}`, taskData)
       ElMessage.success('任务更新成功')
-      return response.data
+      return response.data.data || response.data
     } catch (error) {
       console.error(`Failed to update task ${taskId}:`, error)
       throw error
@@ -183,7 +205,7 @@ class TaskSchedulerApi {
   /**
    * 删除任务
    */
-  async deleteTask(taskId: number): Promise<void> {
+  async deleteTask(taskId: string): Promise<void> {
     try {
       await this.client.delete(`/tasks/${taskId}`)
       ElMessage.success('任务删除成功')
@@ -196,7 +218,7 @@ class TaskSchedulerApi {
   /**
    * 触发任务执行
    */
-  async triggerTask(taskId: number): Promise<void> {
+  async triggerTask(taskId: string): Promise<void> {
     try {
       await this.client.post(`/tasks/${taskId}/trigger`)
       ElMessage.success('任务触发成功')
@@ -209,7 +231,7 @@ class TaskSchedulerApi {
   /**
    * 启用任务
    */
-  async enableTask(taskId: number): Promise<void> {
+  async enableTask(taskId: string): Promise<void> {
     try {
       await this.client.post(`/tasks/${taskId}/enable`)
       ElMessage.success('任务已启用')
@@ -222,7 +244,7 @@ class TaskSchedulerApi {
   /**
    * 禁用任务
    */
-  async disableTask(taskId: number): Promise<void> {
+  async disableTask(taskId: string): Promise<void> {
     try {
       await this.client.post(`/tasks/${taskId}/disable`)
       ElMessage.success('任务已禁用')
@@ -235,7 +257,7 @@ class TaskSchedulerApi {
   /**
    * 暂停任务
    */
-  async pauseTask(taskId: number): Promise<void> {
+  async pauseTask(taskId: string): Promise<void> {
     try {
       await this.client.post(`/tasks/${taskId}/pause`)
       ElMessage.success('任务已暂停')
@@ -248,7 +270,7 @@ class TaskSchedulerApi {
   /**
    * 恢复任务
    */
-  async resumeTask(taskId: number): Promise<void> {
+  async resumeTask(taskId: string): Promise<void> {
     try {
       await this.client.post(`/tasks/${taskId}/resume`)
       ElMessage.success('任务已恢复')
@@ -286,7 +308,7 @@ class TaskSchedulerApi {
   /**
    * 获取任务执行记录
    */
-  async getTaskExecutions(taskId?: number, page = 1, size = 20): Promise<{ executions: TaskExecution[]; total: number }> {
+  async getTaskExecutions(taskId?: string, page = 1, size = 20): Promise<{ executions: TaskExecution[]; total: number }> {
     try {
       const params: any = { page, size }
       if (taskId) {
@@ -296,8 +318,9 @@ class TaskSchedulerApi {
       const response = await this.client.get('/executions', { params })
 
       // 根据实际API响应格式调整
-      const executions = response.data.executions || response.data || []
-      const total = response.data.total || executions.length
+      const apiData = response.data.data || response.data
+      const executions = apiData.executions || []
+      const total = apiData.total || executions.length
 
       return { executions, total }
     } catch (error) {
@@ -309,10 +332,10 @@ class TaskSchedulerApi {
   /**
    * 获取任务执行统计
    */
-  async getTaskStatistics(taskId: number): Promise<any> {
+  async getTaskStatistics(taskId: string): Promise<any> {
     try {
       const response = await this.client.get(`/tasks/${taskId}/statistics`)
-      return response.data
+      return response.data.data || response.data
     } catch (error) {
       console.error(`Failed to get task statistics ${taskId}:`, error)
       throw error

@@ -82,7 +82,7 @@
         <el-divider content-position="left">任务配置</el-divider>
 
         <!-- HTTP任务配置 -->
-        <div v-if="form.type === 'http'" class="task-config">
+        <div v-if="form.task_type === 'http'" class="task-config">
           <el-row :gutter="24">
             <el-col :span="12">
               <el-form-item label="请求URL" prop="config.url">
@@ -122,7 +122,7 @@
         </div>
 
         <!-- Shell任务配置 -->
-        <div v-else-if="form.type === 'shell'" class="task-config">
+        <div v-else-if="form.task_type === 'shell'" class="task-config">
           <el-form-item label="Shell脚本" prop="config.script">
             <el-input
               v-model="form.config.script"
@@ -134,7 +134,7 @@
         </div>
 
         <!-- Python任务配置 -->
-        <div v-else-if="form.type === 'python'" class="task-config">
+        <div v-else-if="form.task_type === 'python'" class="task-config">
           <el-form-item label="Python脚本" prop="config.script">
             <el-input
               v-model="form.config.script"
@@ -310,8 +310,24 @@ const handleSave = async () => {
 
     if (form.config.url) config.url = form.config.url
     if (form.config.method) config.method = form.config.method
-    if (form.config.headers) config.headers = form.config.headers
-    if (form.config.body) config.body = form.config.body
+
+    // 确保headers字段是字符串格式（后端要求）
+    if (form.config.headers) {
+      if (typeof form.config.headers === 'object') {
+        config.headers = JSON.stringify(form.config.headers)
+      } else {
+        config.headers = form.config.headers
+      }
+    }
+
+    if (form.config.body) {
+      if (typeof form.config.body === 'object') {
+        config.body = JSON.stringify(form.config.body)
+      } else {
+        config.body = form.config.body
+      }
+    }
+
     if (form.config.script) config.script = form.config.script
 
     const taskData: TaskCreateRequest = {
@@ -328,14 +344,36 @@ const handleSave = async () => {
     }
 
     console.log('创建任务数据:', JSON.stringify(taskData, null, 2))
-    console.log('提交到API:', 'http://localhost:8081/api/v1/tasks')
+    const apiBaseUrl = `http://${window.location.hostname}:8081/api/v1`
+    console.log('提交到API:', `${apiBaseUrl}/tasks`)
 
     const response = await taskSchedulerApi.createTask(taskData)
     console.log('API响应:', response)
 
     router.push('/tasks/list')
-  } catch (error) {
+  } catch (error: any) {
     console.error('创建任务失败:', error)
+
+    // 显示详细错误信息
+    if (error.response) {
+      // 服务器响应了错误状态码
+      const errorData = error.response.data
+      const errorMessage = errorData?.detail || errorData?.message || '服务器错误'
+      console.error('API错误详情:', {
+        status: error.response.status,
+        data: errorData,
+        message: errorMessage
+      })
+      alert(`创建失败: ${errorMessage} (状态码: ${error.response.status})`)
+    } else if (error.request) {
+      // 请求已发出但没有收到响应
+      console.error('网络错误:', error.request)
+      alert('创建失败: 网络连接错误，请检查后端服务是否运行')
+    } else {
+      // 其他错误
+      console.error('其他错误:', error.message)
+      alert(`创建失败: ${error.message}`)
+    }
   } finally {
     saving.value = false
   }

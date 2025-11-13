@@ -33,9 +33,10 @@
             clearable
             style="width: 120px"
           >
-            <el-option label="启用" value="enabled" />
-            <el-option label="禁用" value="disabled" />
-            <el-option label="暂停" value="paused" />
+            <el-option label="等待中" value="pending" />
+            <el-option label="运行中" value="running" />
+            <el-option label="成功" value="success" />
+            <el-option label="失败" value="failed" />
           </el-select>
         </el-form-item>
         <el-form-item>
@@ -54,10 +55,10 @@
         border
         style="width: 100%"
       >
-        <el-table-column prop="id" label="ID" width="80" />
-        <el-table-column prop="name" label="任务名称" min-width="150" />
-        <el-table-column prop="description" label="描述" min-width="200" show-overflow-tooltip />
-        <el-table-column prop="schedule" label="调度规则" width="150" />
+        <el-table-column prop="task_id" label="ID" width="250" show-overflow-tooltip />
+        <el-table-column prop="definition.name" label="任务名称" min-width="150" />
+        <el-table-column prop="definition.description" label="描述" min-width="200" show-overflow-tooltip />
+        <el-table-column prop="definition.cron_expression" label="调度规则" width="150" />
         <el-table-column prop="status" label="状态" width="100">
           <template #default="{ row }">
             <el-tag :type="getStatusType(row.status)">
@@ -190,9 +191,10 @@ const pagination = reactive({
 // 获取状态类型
 const getStatusType = (status: string) => {
   const statusMap = {
-    enabled: 'success',
-    disabled: 'info',
-    paused: 'warning'
+    pending: 'info',
+    running: 'primary',
+    success: 'success',
+    failed: 'danger'
   }
   return statusMap[status] || 'info'
 }
@@ -200,9 +202,10 @@ const getStatusType = (status: string) => {
 // 获取状态文本
 const getStatusText = (status: string) => {
   const statusMap = {
-    enabled: '启用',
-    disabled: '禁用',
-    paused: '暂停'
+    pending: '等待中',
+    running: '运行中',
+    success: '成功',
+    failed: '失败'
   }
   return statusMap[status] || status
 }
@@ -223,7 +226,7 @@ const fetchTasks = async () => {
 
     if (searchForm.name) {
       filteredTasks = filteredTasks.filter(task =>
-        task.name.toLowerCase().includes(searchForm.name.toLowerCase())
+        task.definition.name.toLowerCase().includes(searchForm.name.toLowerCase())
       )
     }
 
