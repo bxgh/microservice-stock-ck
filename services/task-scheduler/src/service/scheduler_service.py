@@ -3,6 +3,7 @@
 """
 
 import logging
+from datetime import datetime
 from typing import Dict, Any, Optional
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.jobstores.memory import MemoryJobStore
@@ -117,3 +118,22 @@ class SchedulerService:
             return None
 
         return self.scheduler.get_job(job_id)
+
+    def trigger_task(self, task_id: str):
+        """手动触发任务执行"""
+        if not self.scheduler:
+            raise RuntimeError("Scheduler not initialized")
+
+        try:
+            # 获取任务
+            job = self.scheduler.get_job(task_id)
+            if not job:
+                raise ValueError(f"Task {task_id} not found in scheduler")
+
+            # 立即执行任务
+            job.modify(next_run_time=datetime.now())
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to trigger task {task_id}: {e}")
+            return False
