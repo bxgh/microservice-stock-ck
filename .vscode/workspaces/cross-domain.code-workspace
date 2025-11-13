@@ -1,0 +1,47 @@
+{
+  "name": "Cross-Domain Development",
+  "paths": ["${workspaceFolder}"],
+  "settings": {
+    "git.branch": "feature/cross-user-auth",
+    "search.exclude": {},
+    "files.exclude": {},
+    "typescript.preferences.importModuleSpecifier": "relative"
+  },
+  "extensions": {
+    "recommendations": [
+      "ms-python.python",
+      "ms-python.flake8",
+      "Vue.volar",
+      "Vue.vscode-typescript-vue-plugin",
+      "bradlc.vscode-tailwindcss",
+      "esbenp.prettier-vscode",
+      "dbaeumer.vscode-eslint"
+    ]
+  },
+  "launch": {
+    "version": "0.2.0",
+    "configurations": [
+      {
+        "name": "Debug Task Scheduler",
+        "type": "python",
+        "request": "launch",
+        "program": "${workspaceFolder}/services/task-scheduler/src/main.py",
+        "cwd": "${workspaceFolder}/services/task-scheduler"
+      },
+      {
+        "name": "Debug Frontend Web",
+        "type": "node",
+        "request": "launch",
+        "program": "${workspaceFolder}/apps/frontend-web/node_modules/.bin/vite",
+        "cwd": "${workspaceFolder}/apps/frontend-web"
+      }
+    ],
+    "compounds": [
+      {
+        "name": "Launch Full Stack",
+        "configurations": ["Debug Task Scheduler", "Debug Frontend Web"],
+        "stopAll": true
+      }
+    ]
+  }
+}

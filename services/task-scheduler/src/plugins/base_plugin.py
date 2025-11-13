@@ -22,3 +22,7 @@ class BasePlugin(ABC):
     def validate(self, task_data: Dict[str, Any]) -> bool:
         """验证任务数据"""
         pass
+
+    def validate_config(self, config: Dict[str, Any]) -> bool:
+        """验证插件配置（默认实现）"""
+        return True

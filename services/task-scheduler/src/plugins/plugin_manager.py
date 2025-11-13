@@ -73,6 +73,17 @@ class HttpPlugin(BasePlugin):
     def validate(self, task_data: Dict[str, Any]) -> bool:
         return "url" in task_data
 
+    def validate_config(self, config: Dict[str, Any]) -> bool:
+        """验证HTTP插件配置"""
+        if not config:
+            return False
+        if "url" not in config:
+            return False
+        # 验证HTTP方法
+        method = config.get("method", "GET").upper()
+        valid_methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
+        return method in valid_methods
+
 
 class ShellPlugin(BasePlugin):
     """Shell命令插件"""
@@ -100,3 +111,17 @@ class ShellPlugin(BasePlugin):
 
     def validate(self, task_data: Dict[str, Any]) -> bool:
         return "command" in task_data
+
+    def validate_config(self, config: Dict[str, Any]) -> bool:
+        """验证Shell插件配置"""
+        if not config:
+            return False
+        if "command" not in config:
+            return False
+        # 基本安全检查：防止危险命令
+        dangerous_commands = ["rm -rf /", "dd if=", "mkfs", "format"]
+        command = config.get("command", "").lower()
+        for dangerous in dangerous_commands:
+            if dangerous in command:
+                return False
+        return True

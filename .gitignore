@@ -93,3 +93,12 @@ openspec/
 # 文档和测试目录 - 本地使用，不需要跟踪
 docs/
 tests/
+
+# VSCode工作区配置 - 分支特定配置
+.vscode/workspaces/feature-*.code-workspace
+.vscode/workspaces/cross-*.code-workspace
+
+# 保留通用工作区配置，忽略分支特定配置
+!.vscode/workspaces/task-scheduler.code-workspace
+!.vscode/workspaces/frontend-web.code-workspace
+!.vscode/workspaces/cross-domain.code-workspace
