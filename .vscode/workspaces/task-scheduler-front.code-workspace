@@ -1,0 +1,202 @@
+{
+  "name": "Task Scheduler Backend - task-scheduler-front",
+  "folders": [
+    {
+      "path": "/home/bxgh/microservice-stock"
+    }
+  ],
+  "settings": {
+    "git.branch": "task-scheduler-front",
+    "workbench.colorCustomizations": {
+      "titleBar.activeBackground": "#e74c3c",
+      "titleBar.activeForeground": "#ffffff",
+      "titleBar.inactiveBackground": "#c0392b",
+      "titleBar.inactiveForeground": "#ffffff",
+      "activityBar.background": "#e74c3c",
+      "activityBar.foreground": "#ffffff",
+      "statusBar.background": "#c0392b",
+      "statusBar.foreground": "#ffffff"
+    },
+    "search.exclude": {
+      "**/apps/**": true,
+      "**/services/data-collector": true,
+      "**/services/data-processor": true,
+      "**/services/data-storage": true,
+      "**/services/notification": true,
+      "**/services/monitor": true,
+      "**/services/api-gateway": true,
+      "**/services/stock-data": true,
+      "**/node_modules": true,
+      "**/__pycache__": true,
+      "**/dist": true,
+      "**/build": true,
+      "**/.pytest_cache": true,
+      "**/coverage": true
+    },
+    "files.exclude": {
+      "**/apps/**": true,
+      "**/services/data-collector": true,
+      "**/services/data-processor": true,
+      "**/services/data-storage": true,
+      "**/services/notification": true,
+      "**/services/monitor": true,
+      "**/services/api-gateway": true,
+      "**/services/stock-data": true,
+      "**/.git": false,
+      "**/node_modules": true,
+      "**/__pycache__": true
+    },
+    "python.defaultInterpreterPath": "${workspaceFolder}/services/task-scheduler/venv/bin/python",
+    "python.linting.enabled": true,
+    "python.linting.flake8Enabled": true,
+    "python.linting.flake8Args": [
+      "--max-line-length=88",
+      "--extend-ignore=E203,W503"
+    ],
+    "python.formatting.provider": "black",
+    "python.formatting.blackArgs": [
+      "--line-length=88"
+    ],
+    "python.testing.pytestEnabled": true,
+    "python.testing.pytestArgs": [
+      "services/task-scheduler"
+    ],
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.organizeImports": true
+    }
+  },
+  "extensions": {
+    "recommendations": [
+      "ms-python.python",
+      "ms-python.flake8",
+      "ms-python.black-formatter",
+      "ms-python.pylint",
+      "ms-python.python-docstring",
+      "ms-vscode.test-adapter-converter",
+      "hbenl.vscode-test-explorer",
+      "ms-python.debugpy",
+      "redhat.vscode-yaml",
+      "ms-vscode-remote.remote-containers"
+    ]
+  },
+  "launch": {
+    "version": "0.2.0",
+    "configurations": [
+      {
+        "name": "Debug Task Scheduler",
+        "type": "python",
+        "request": "launch",
+        "program": "${workspaceFolder}/services/task-scheduler/src/main.py",
+        "console": "integratedTerminal",
+        "cwd": "${workspaceFolder}/services/task-scheduler",
+        "env": {
+          "PYTHONPATH": "${workspaceFolder}/services/task-scheduler/src",
+          "LOG_LEVEL": "DEBUG"
+        },
+        "args": [],
+        "justMyCode": false
+      },
+      {
+        "name": "Debug Task Scheduler Tests",
+        "type": "python",
+        "request": "launch",
+        "program": "${workspaceFolder}/services/task-scheduler/venv/bin/pytest",
+        "args": [
+          "-v",
+          "services/task-scheduler/tests/",
+          "--tb=short"
+        ],
+        "console": "integratedTerminal",
+        "cwd": "${workspaceFolder}/services/task-scheduler",
+        "env": {
+          "PYTHONPATH": "${workspaceFolder}/services/task-scheduler/src"
+        }
+      },
+      {
+        "name": "Debug Specific Test",
+        "type": "python",
+        "request": "launch",
+        "program": "${workspaceFolder}/services/task-scheduler/venv/bin/pytest",
+        "args": [
+          "-v",
+          "${file}",
+          "--tb=short"
+        ],
+        "console": "integratedTerminal",
+        "cwd": "${workspaceFolder}/services/task-scheduler",
+        "env": {
+          "PYTHONPATH": "${workspaceFolder}/services/task-scheduler/src"
+        }
+      }
+    ]
+  },
+  "tasks": {
+    "version": "2.0.0",
+    "tasks": [
+      {
+        "label": "Run Task Scheduler",
+        "type": "shell",
+        "command": "python",
+        "args": ["src/main.py"],
+        "options": {
+          "cwd": "${workspaceFolder}/services/task-scheduler"
+        },
+        "group": "build",
+        "presentation": {
+          "echo": true,
+          "reveal": "always",
+          "focus": false,
+          "panel": "new"
+        }
+      },
+      {
+        "label": "Run Tests",
+        "type": "shell",
+        "command": "pytest",
+        "args": [
+          "-v",
+          "tests/",
+          "--tb=short"
+        ],
+        "options": {
+          "cwd": "${workspaceFolder}/services/task-scheduler"
+        },
+        "group": "test",
+        "presentation": {
+          "echo": true,
+          "reveal": "always",
+          "focus": false,
+          "panel": "new"
+        }
+      },
+      {
+        "label": "Format Code",
+        "type": "shell",
+        "command": "black",
+        "args": [
+          "src/",
+          "--line-length=88"
+        ],
+        "options": {
+          "cwd": "${workspaceFolder}/services/task-scheduler"
+        },
+        "group": "build"
+      },
+      {
+        "label": "Lint Code",
+        "type": "shell",
+        "command": "flake8",
+        "args": [
+          "src/",
+          "--max-line-length=88",
+          "--extend-ignore=E203,W503"
+        ],
+        "options": {
+          "cwd": "${workspaceFolder}/services/task-scheduler"
+        },
+        "group": "build"
+      }
+    ]
+  }
+}
