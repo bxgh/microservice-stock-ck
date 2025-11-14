@@ -67,7 +67,14 @@
     ],
     "editor.formatOnSave": true,
     "editor.codeActionsOnSave": {
-      "source.organizeImports": true
+      "source.organizeImports": "explicit"
+    },
+    "explorer.fileNesting.enabled": true,
+    "explorer.fileNesting.patterns": {
+      "*.py": "${capture}_test.py, test_${capture}.py, ${capture}.pyi",
+      "*.pyi": "*.py",
+      "requirements.txt": "requirements*.txt",
+      "pyproject.toml": "setup.py"
     }
   },
   "extensions": {
