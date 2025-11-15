@@ -7,20 +7,25 @@
 ## 执行流程
 
 ### 1. 检测当前分支
-- 获取当前Git分支名称
+- 获取当前Git分支名称: `git branch --show-current`
 - 分析分支类型和功能
 - 确定最适合的工作区配置
 
 ### 2. 生成工作区配置
 - 根据分支类型选择颜色主题
-- 配置文件过滤规则
+- 配置文件过滤规则 (files.exclude, search.exclude, files.watcherExclude)
 - 推荐相关扩展
 - 设置调试配置
 
-### 3. 启动工作区
-- 自动创建工作区文件
+### 3. 创建工作区文件
+- 创建 `.vscode/workspaces/` 目录
+- 生成正确的工作区JSON配置
+- 设置正确的文件权限 (644)
+
+### 4. 启动工作区
+- 使用 `folders` 配置而不是 `paths`
+- 设置相对路径指向项目根目录 (`../..`)
 - 在新VSCode窗口中打开
-- 切换到对应Git分支
 - 显示使用提示
 
 ## 使用方法
@@ -192,6 +197,87 @@ git checkout -b feature/user-auth-system
 - **配置文件**: 工作区配置会被Git忽略，避免冲突
 - **扩展安装**: 首次使用可能需要手动安装推荐扩展
 
+## 工作区配置模板
+
+### 后端工作区JSON模板
+```json
+{
+    "name": "分支名 - 后端专用工作区",
+    "color": "#8B4513",
+    "icon": "server-process",
+    "folders": [
+        {
+            "path": "../.."
+        }
+    ],
+    "settings": {
+        "files.exclude": {
+            "**/apps/**": true,
+            "**/frontend-web/**": true,
+            "**/mobile/**": true,
+            "**/desktop/**": true,
+            "**/ui/**": true,
+            "**/web/**": true,
+            "**/client/**": true,
+            "**/vue/**": true,
+            "**/react/**": true,
+            "**/angular/**": true
+        }
+    }
+}
+```
+
+### 前端工作区JSON模板
+```json
+{
+    "name": "分支名 - 前端专用工作区",
+    "color": "#3CB371",
+    "icon": "window",
+    "folders": [
+        {
+            "path": "../.."
+        }
+    ],
+    "settings": {
+        "files.exclude": {
+            "**/services/**": true,
+            "**/infrastructure/**": true,
+            "**/tools/**": true
+        }
+    }
+}
+```
+
+## 关键注意事项
+
+### 文件权限
+创建工作区文件后必须设置正确权限：
+```bash
+chmod 644 .vscode/workspaces/分支名.code-workspace
+```
+
+### 路径配置
+- 工作区文件位置: `.vscode/workspaces/`
+- 项目根目录相对路径: `"path": "../.."`
+- 避免使用 `"paths"`，必须使用 `"folders"`
+
+### 分支识别逻辑
+```bash
+# 后端关键词
+if [[ "$branch" == *"(task-scheduler|data-|api|service|backend|python)"* ]]; then
+    workspace_type="backend"
+# 前端关键词
+elif [[ "$branch" == *"(frontend|ui|dashboard|web|client|vue)"* ]]; then
+    workspace_type="frontend"
+# 跨域关键词
+elif [[ "$branch" == *"(cross|integration|auth|full-stack|user-)"* ]]; then
+    workspace_type="cross"
+# 基础设施关键词
+elif [[ "$branch" == *"(infra|docker|ci|deploy|config)"* ]]; then
+    workspace_type="infra"
+fi
+```
+
 ## 故障排除
 
 ### VSCode未启动
@@ -203,6 +289,11 @@ code --version
 code --new-window .vscode/workspaces/分支名.code-workspace
 ```
 
+### 工作区无法打开文件夹
+1. 检查JSON格式: `python3 -m json.tool 工作区文件`
+2. 验证路径: `cd .vscode/workspaces && ls -la ../..`
+3. 检查权限: `ls -la .vscode/workspaces/`
+
 ### 分支不存在
 ```bash
 # 创建新分支
@@ -211,5 +302,10 @@ git checkout -b 新分支名
 # 然后重新执行命令
 为当前分支创建VSCode工作区
 ```
+
+### 工作区配置不生效
+1. 重新加载VSCode窗口: `Ctrl+Shift+P` → `Developer: Reload Window`
+2. 检查工作区是否正确打开
+3. 验证文件过滤规则是否正确应用
 
 这个命令提供了最简单直接的工作区创建方式，无需额外脚本，一键即可创建专用的开发环境。
