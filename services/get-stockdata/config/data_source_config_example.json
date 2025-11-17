@@ -1,0 +1,43 @@
+{
+  "strategies": {
+    "price_data": {
+      "default_strategy": "reliability_first",
+      "priorities": {
+        "A股": ["akshare", "tushare", "baostock"],
+        "港股": ["akshare", "mootdx"],
+        "美股": ["yfinance", "pandas", "alpha_vantage"]
+      },
+      "settings": {
+        "max_retries": 3,
+        "timeout": 8,
+        "cache_ttl": 30
+      }
+    },
+    "volume_data": {
+      "default_strategy": "speed_first",
+      "priorities": {
+        "A股": ["akshare", "tushare"],
+        "港股": ["akshare", "mootdx"],
+        "美股": ["yfinance", "alpha_vantage"]
+      },
+      "settings": {
+        "max_retries": 2,
+        "timeout": 3,
+        "cache_ttl": 60
+      }
+    },
+    "financial_data": {
+      "default_strategy": "accuracy_first",
+      "priorities": {
+        "A股": ["tushare", "akshare", "baostock"],
+        "港股": ["akshare", "mootdx"],
+        "美股": ["alpha_vantage", "yfinance", "pandas"]
+      },
+      "settings": {
+        "max_retries": 2,
+        "timeout": 15,
+        "cache_ttl": 86400
+      }
+    }
+  }
+}
