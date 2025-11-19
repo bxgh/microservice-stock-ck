@@ -9,6 +9,7 @@
 import asyncio
 import aiohttp
 import logging
+import os
 from typing import List, Optional, Dict, Any, Union
 from datetime import datetime, timedelta
 import json
@@ -33,17 +34,26 @@ logger = logging.getLogger(__name__)
 class StockCodeClient:
     """股票代码客户端服务"""
 
-    def __init__(self, redis_url: str = "redis://localhost:6379"):
+    def __init__(self):
         """
         初始化股票代码客户端
-
-        Args:
-            redis_url: Redis连接URL
         """
         self.base_url = "http://124.221.80.250:8000/api/v1"
         self.timeout = aiohttp.ClientTimeout(total=5.0)
         self.redis_client: Optional[redis.Redis] = None
-        self.redis_url = redis_url
+
+        # 从环境变量读取Redis配置
+        redis_host = os.getenv("REDIS_HOST", "localhost")
+        redis_port = os.getenv("REDIS_PORT", "6379")
+        redis_password = os.getenv("REDIS_PASSWORD", "")
+        redis_db = os.getenv("REDIS_DB", "0")
+
+        # 构建Redis URL
+        if redis_password:
+            self.redis_url = f"redis://:{redis_password}@{redis_host}:{redis_port}/{redis_db}"
+        else:
+            self.redis_url = f"redis://{redis_host}:{redis_port}/{redis_db}"
+
         self.memory_cache: Dict[str, Any] = {}
         self.cache_ttl_memory = 600  # 10分钟
         self.cache_ttl_redis = 1800  # 30分钟

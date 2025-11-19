@@ -44,6 +44,34 @@ try:
         "ApiResponse",
         "PaginationInfo"
     ]
+
+    # 尝试导入策略模型
+    try:
+        from .guaranteed_strategy_models import (
+            StrategyStatus,
+            SearchStep,
+            SuccessResult,
+            BatchExecutionRequest,
+            BatchExecutionResult,
+            SearchMatrixConfig,
+            StrategyExecutionStats,
+            GuaranteedStrategyConfig,
+            TickDataValidationResult
+        )
+
+        __all__.extend([
+            "StrategyStatus",
+            "SearchStep",
+            "SuccessResult",
+            "BatchExecutionRequest",
+            "BatchExecutionResult",
+            "SearchMatrixConfig",
+            "StrategyExecutionStats",
+            "GuaranteedStrategyConfig",
+            "TickDataValidationResult"
+        ])
+    except ImportError:
+        pass
 except ImportError:
     # 如果模型文件不存在，创建一个空的__all__
     __all__ = []

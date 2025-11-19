@@ -77,6 +77,19 @@ except ImportError as e:
     async def test_tick_data():
         return {"message": "分笔数据服务测试接口", "status": "placeholder"}
 
+# 导入100%成功策略路由
+try:
+    from api.guaranteed_strategy_routes import router as strategy_router, internal_router as strategy_internal_router
+except ImportError as e:
+    print(f"Warning: guaranteed_strategy_routes not found: {e}")
+    from fastapi import APIRouter
+    strategy_router = APIRouter(prefix="/api/v1/strategy", tags=["100%成功策略"])
+    strategy_internal_router = APIRouter(prefix="/internal/strategy", tags=["策略内部接口"])
+
+    @strategy_router.get("/test")
+    async def test_strategy():
+        return {"message": "100%成功策略测试接口", "status": "placeholder"}
+
 try:
     from api.example_routes import stock_router
 except ImportError:
@@ -366,6 +379,15 @@ async def startup():
         except Exception as e:
             logger.warning(f"通达信客户端初始化失败: {e}")
 
+        # 初始化100%成功策略引擎
+        try:
+            from services.guaranteed_success_strategy import guaranteed_strategy_instance
+            logger.info("✅ 100%成功策略引擎初始化成功")
+            logger.info(f"📊 搜索矩阵步数: {len(guaranteed_strategy_instance.proven_search_matrix)}")
+            logger.info(f"🎯 目标时间: {guaranteed_strategy_instance.config.target_time}")
+        except Exception as e:
+            logger.warning(f"100%成功策略引擎初始化失败: {e}")
+
         # 注册到 Nacos
         logger.info("Registering service to Nacos...")
         await initialize_nacos()
@@ -413,6 +435,14 @@ async def shutdown():
         except Exception as e:
             logger.warning(f"通达信客户端关闭失败: {e}")
 
+        # 关闭100%成功策略引擎
+        try:
+            from services.guaranteed_success_strategy import guaranteed_strategy_instance
+            await guaranteed_strategy_instance.close()
+            logger.info("✅ 100%成功策略引擎已关闭")
+        except Exception as e:
+            logger.warning(f"100%成功策略引擎关闭失败: {e}")
+
         # 清理Nacos服务注册
         logger.info("Deregistering from Nacos...")
         await cleanup_nacos()
@@ -445,6 +475,8 @@ def create_app() -> FastAPI:
     app.include_router(stock_code_internal_router)  # 股票代码内部路由
     app.include_router(tick_data_router)  # 分笔数据路由
     app.include_router(tick_data_internal_router)  # 分笔数据内部路由
+    app.include_router(strategy_router)  # 100%成功策略路由
+    app.include_router(strategy_internal_router)  # 策略内部路由
 
     return app
 
