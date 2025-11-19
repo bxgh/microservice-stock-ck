@@ -51,6 +51,32 @@ except ImportError:
     async def health():
         return {"status": "healthy", "service": settings.name}
 
+# 导入股票代码路由
+try:
+    from api.stock_code_routes import router as stock_code_router, internal_router as stock_code_internal_router
+except ImportError as e:
+    print(f"Warning: stock_code_routes not found: {e}")
+    from fastapi import APIRouter
+    stock_code_router = APIRouter(prefix="/api/v1/stocks", tags=["股票代码"])
+    stock_code_internal_router = APIRouter(prefix="/internal/stocks", tags=["内部接口"])
+
+    @stock_code_router.get("/test")
+    async def test_stock_codes():
+        return {"message": "股票代码服务测试接口", "status": "placeholder"}
+
+# 导入分笔数据路由
+try:
+    from api.tick_data_routes import router as tick_data_router, internal_router as tick_data_internal_router
+except ImportError as e:
+    print(f"Warning: tick_data_routes not found: {e}")
+    from fastapi import APIRouter
+    tick_data_router = APIRouter(prefix="/api/v1/ticks", tags=["分笔数据"])
+    tick_data_internal_router = APIRouter(prefix="/internal/ticks", tags=["分笔数据内部接口"])
+
+    @tick_data_router.get("/test")
+    async def test_tick_data():
+        return {"message": "分笔数据服务测试接口", "status": "placeholder"}
+
 try:
     from api.example_routes import stock_router
 except ImportError:
@@ -321,6 +347,25 @@ async def startup():
     try:
         logger.info("Starting microservice...")
 
+        # 初始化股票代码客户端
+        try:
+            from services.stock_code_client import stock_client_instance
+            await stock_client_instance.initialize()
+            logger.info("✅ 股票代码客户端初始化成功")
+        except Exception as e:
+            logger.warning(f"股票代码客户端初始化失败: {e}")
+
+        # 初始化通达信客户端
+        try:
+            from services.tongdaxin_client import tongdaxin_client
+            success = await tongdaxin_client.initialize()
+            if success:
+                logger.info("✅ 通达信客户端初始化成功")
+            else:
+                logger.warning("❌ 通达信客户端初始化失败，但服务继续运行")
+        except Exception as e:
+            logger.warning(f"通达信客户端初始化失败: {e}")
+
         # 注册到 Nacos
         logger.info("Registering service to Nacos...")
         await initialize_nacos()
@@ -352,6 +397,22 @@ async def shutdown():
     logger.info("Shutting down microservice...")
 
     try:
+        # 关闭股票代码客户端
+        try:
+            from services.stock_code_client import stock_client_instance
+            await stock_client_instance.close()
+            logger.info("✅ 股票代码客户端已关闭")
+        except Exception as e:
+            logger.warning(f"股票代码客户端关闭失败: {e}")
+
+        # 关闭通达信客户端
+        try:
+            from services.tongdaxin_client import tongdaxin_client
+            await tongdaxin_client.close()
+            logger.info("✅ 通达信客户端已关闭")
+        except Exception as e:
+            logger.warning(f"通达信客户端关闭失败: {e}")
+
         # 清理Nacos服务注册
         logger.info("Deregistering from Nacos...")
         await cleanup_nacos()
@@ -380,7 +441,10 @@ def create_app() -> FastAPI:
 
     # 注册路由
     app.include_router(health_router)
-    app.include_router(stock_router)  # 股票数据路由
+    app.include_router(stock_code_router)  # 股票数据路由
+    app.include_router(stock_code_internal_router)  # 股票代码内部路由
+    app.include_router(tick_data_router)  # 分笔数据路由
+    app.include_router(tick_data_internal_router)  # 分笔数据内部路由
 
     return app
 

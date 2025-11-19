@@ -5,6 +5,10 @@ fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
 pydantic>=2.5.0
 
+# HTTP客户端和重试机制
+aiohttp>=3.9.0
+tenacity>=8.2.0
+
 # 服务注册发现
 aiohttp>=3.9.0
 
@@ -13,6 +17,7 @@ sqlalchemy>=1.4.0
 alembic>=1.8.0
 pymysql>=1.0.0
 redis>=5.0.0
+redis[hiredis]>=2.0.0
 
 # 股票数据获取库
 yfinance>=0.2.18                 # Yahoo Finance API
@@ -23,6 +28,7 @@ pandas-datareader>=0.10.0       # 多数据源支持
 akshare>=1.11.0                 # AKShare金融数据接口库
 tushare>=1.2.89                 # Tushare金融数据接口
 mootdx>=0.11.7                  # 通达信数据源（A股、港股、美股）
+pytdx>=1.72                     # 通达信Python版数据接口
 baostock>=0.8.8                 # 证券宝金融数据平台
 
 # 新增A股数据源
