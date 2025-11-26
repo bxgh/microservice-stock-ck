@@ -64,23 +64,12 @@ except ImportError as e:
     async def test_stock_codes():
         return {"message": "股票代码服务测试接口", "status": "placeholder"}
 
-# 导入分笔数据路由
-try:
-    from api.tick_data_routes import router as tick_data_router, internal_router as tick_data_internal_router
-except ImportError as e:
-    print(f"Warning: tick_data_routes not found: {e}")
-    from fastapi import APIRouter
-    tick_data_router = APIRouter(prefix="/api/v1/ticks", tags=["分笔数据"])
-    tick_data_internal_router = APIRouter(prefix="/internal/ticks", tags=["分笔数据内部接口"])
-
-    @tick_data_router.get("/test")
-    async def test_tick_data():
-        return {"message": "分笔数据服务测试接口", "status": "placeholder"}
+# 分笔数据路由已统一到Fenbi架构中，不再需要单独的tick_data_routes
 
 # 导入100%成功策略路由
 try:
     from api.guaranteed_strategy_routes import router as strategy_router, internal_router as strategy_internal_router
-except ImportError as e:
+except Exception as e:
     print(f"Warning: guaranteed_strategy_routes not found: {e}")
     from fastapi import APIRouter
     strategy_router = APIRouter(prefix="/api/v1/strategy", tags=["100%成功策略"])
@@ -89,6 +78,19 @@ except ImportError as e:
     @strategy_router.get("/test")
     async def test_strategy():
         return {"message": "100%成功策略测试接口", "status": "placeholder"}
+
+# 导入Fenbi分笔数据路由
+try:
+    from api.fenbi_routes import router as fenbi_router, internal_router as fenbi_internal_router
+except ImportError as e:
+    print(f"Warning: fenbi_routes not found: {e}")
+    from fastapi import APIRouter
+    fenbi_router = APIRouter(prefix="/api/v1/fenbi", tags=["Fenbi分笔数据"])
+    fenbi_internal_router = APIRouter(prefix="/internal/fenbi", tags=["Fenbi内部接口"])
+
+    @fenbi_router.get("/test")
+    async def test_fenbi():
+        return {"message": "Fenbi分笔数据测试接口", "status": "placeholder"}
 
 try:
     from api.example_routes import stock_router
@@ -473,10 +475,10 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(stock_code_router)  # 股票数据路由
     app.include_router(stock_code_internal_router)  # 股票代码内部路由
-    app.include_router(tick_data_router)  # 分笔数据路由
-    app.include_router(tick_data_internal_router)  # 分笔数据内部路由
     app.include_router(strategy_router)  # 100%成功策略路由
     app.include_router(strategy_internal_router)  # 策略内部路由
+    app.include_router(fenbi_router)  # Fenbi分笔数据路由（包含原tick_data功能）
+    app.include_router(fenbi_internal_router)  # Fenbi内部路由
 
     return app
 
