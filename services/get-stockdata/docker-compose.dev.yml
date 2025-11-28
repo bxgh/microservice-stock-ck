@@ -4,22 +4,34 @@ services:
       context: .
       dockerfile: Dockerfile
     image: get-stockdata:${VERSION:-latest}
-    container_name: get-stockdata-api
+    container_name: get-stockdata-api-dev
     restart: unless-stopped
     ports:
-      - "${SERVICE_PORT:-8086}:8083"  # 外部端口:内部端口
+      - "${SERVICE_PORT:-8086}:8083"
     environment:
       - NACOS_SERVER_URL=${NACOS_SERVER_URL:-http://nacos:8848}
       - SERVICE_NAME=get-stockdata
       - SERVICE_GROUP=DEFAULT_GROUP
       - SERVICE_PORT=8083
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
       - HEARTBEAT_INTERVAL=30
-      - ENVIRONMENT=production
+      - ENVIRONMENT=development
+      - PYTHONUNBUFFERED=1
+    # 🔥 开发模式启动命令 - 启用热加载
+    command: >
+      uvicorn src.main:app
+      --host 0.0.0.0
+      --port 8083
+      --reload
+      --reload-dir /app/src
+      --log-level debug
     networks:
       - microservice-stock
     volumes:
-      # 生产环境仅挂载日志目录
+      # ✅ 源码热加载 - 读写模式
+      - ./src:/app/src
+      - ./config:/app/config
+      - ./tests:/app/tests  # ✅ 挂载测试代码（方便容器内测试）
       - get-stockdata-logs:/app/logs
     healthcheck:
       test: ["CMD", "curl", "--noproxy", "*", "-f", "http://localhost:8083/api/v1/health"]
