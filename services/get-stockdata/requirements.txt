@@ -40,6 +40,8 @@ pytdx>=1.2.2                    # 通达信数据接口Python版
 requests>=2.31.0                # HTTP请求
 pandas>=2.0.0                   # 数据处理
 numpy>=1.24.0                   # 数值计算
+pyarrow>=14.0.0                 # Parquet文件支持
+chinesecalendar>=1.4.0          # 中国节假日/调休判断
 
 # 工具库
 python-multipart>=0.0.5
