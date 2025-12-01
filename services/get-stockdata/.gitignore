@@ -56,10 +56,6 @@ docker-compose.override.yml
 *.strategy.md
 GIT_COMMIT_STRATEGY.md
 
-# Documentation and testing files (local use only)
-docs/
-tests/
-
 # Log files
 *.log
 app.log

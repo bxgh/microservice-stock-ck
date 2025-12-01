@@ -185,9 +185,18 @@ class ClickHouseWriter:
             # 准备数据
             data = [self._to_row(snapshot) for snapshot in self._buffer]
             
-            # 批量插入
+            # 批量插入（明确指定列名，跳过 created_at 使用默认值）
             self.client.execute(
-                'INSERT INTO snapshot_data VALUES',
+                '''INSERT INTO snapshot_data (
+                    snapshot_time, trade_date, stock_code, stock_name, market,
+                    current_price, open_price, high_price, low_price, pre_close,
+                    bid_price1, bid_volume1, bid_price2, bid_volume2, bid_price3, bid_volume3,
+                    bid_price4, bid_volume4, bid_price5, bid_volume5,
+                    ask_price1, ask_volume1, ask_price2, ask_volume2, ask_price3, ask_volume3,
+                    ask_price4, ask_volume4, ask_price5, ask_volume5,
+                    total_volume, total_amount, turnover_rate,
+                    data_source, pool_level
+                ) VALUES''',
                 data
             )
             

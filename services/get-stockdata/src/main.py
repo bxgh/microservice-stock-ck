@@ -18,6 +18,7 @@ import logging
 import sys
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime
 
 from fastapi import FastAPI
 import uvicorn
@@ -338,6 +339,112 @@ logger = logging.getLogger(__name__)
 app = None
 
 
+# 导入调度器和连接管理器
+try:
+    from .core.scheduling.scheduler import AcquisitionScheduler
+    from .data_sources.mootdx.connection import MootdxConnection
+except ImportError as e:
+    print(f"Warning: Scheduler or Connection import failed: {e}")
+    AcquisitionScheduler = None
+    MootdxConnection = None
+
+# 全局采集任务引用
+acquisition_task = None
+
+async def run_acquisition_loop():
+    """
+    后台数据采集主循环
+    """
+    if not AcquisitionScheduler or not MootdxConnection:
+        logger.error("❌ 缺少必要组件，无法启动采集循环")
+        return
+
+    logger.info("🚀 启动自动数据采集服务...")
+    scheduler = AcquisitionScheduler()
+    # 使用 best_ip=True 自动选择最快服务器
+    connection = MootdxConnection(best_ip=True, initial_wait_time=0.5)
+    
+    # 初始化 ClickHouse Writer
+    try:
+        from .storage.clickhouse_writer import ClickHouseWriter, SnapshotData
+        writer = ClickHouseWriter(
+            host='microservice-stock-clickhouse',
+            port=9000,
+            database='stock_data',
+            batch_size=1000
+        )
+        logger.info("✅ ClickHouse Writer 初始化成功")
+    except Exception as e:
+        logger.error(f"❌ ClickHouse Writer 初始化失败: {e}")
+        writer = None
+    
+    try:
+        while True:
+            # 1. 检查是否应该运行
+            if scheduler.should_run_now():
+                try:
+                    # 获取连接
+                    client = await connection.get_client()
+                    if client:
+                        # 示例：采集核心股票池
+                        # 实际生产中应从配置或数据库读取股票列表
+                        target_stocks = ["000001", "600000", "000002", "601398", "601318"]
+                        
+                        # 获取快照
+                        quotes = client.quotes(symbol=target_stocks)
+                        if quotes is not None and not quotes.empty:
+                            logger.info(f"✅ [自动采集] 成功获取 {len(quotes)} 只股票实时行情")
+                            
+                            # 写入 ClickHouse
+                            if writer:
+                                try:
+                                    snapshot_time = datetime.now()
+                                    for _, row in quotes.iterrows():
+                                        snapshot = SnapshotData(
+                                            snapshot_time=snapshot_time,
+                                            trade_date=snapshot_time.date(),
+                                            stock_code=str(row.get('code', '')),
+                                            stock_name=str(row.get('name', '')),
+                                            market='SZ' if str(row.get('code', '')).startswith(('000', '002', '300')) else 'SH',
+                                            current_price=float(row.get('price', 0)),
+                                            open_price=float(row.get('open', 0)),
+                                            high_price=float(row.get('high', 0)),
+                                            low_price=float(row.get('low', 0)),
+                                            pre_close=float(row.get('last_close', 0)),
+                                            total_volume=int(row.get('vol', 0)),
+                                            total_amount=float(row.get('amount', 0)),
+                                            data_source='mootdx',
+                                            pool_level='L1'
+                                        )
+                                        writer.write_snapshot(snapshot)
+                                    
+                                    writer.flush()
+                                    logger.info(f"💾 [数据入库] 成功写入 {len(quotes)} 条快照数据")
+                                except Exception as e:
+                                    logger.error(f"❌ [数据入库] 写入失败: {e}")
+                        else:
+                            logger.warning("⚠️ [自动采集] 获取数据为空")
+                    
+                    # 采集间隔 3 秒
+                    await asyncio.sleep(3)
+                    
+                except Exception as e:
+                    logger.error(f"❌ [自动采集] 发生错误: {e}")
+                    await asyncio.sleep(5) # 出错后稍作等待
+            else:
+                # 2. 如果不该运行，则进入休眠等待
+                logger.info("💤 当前非交易时段，采集服务进入休眠...")
+                await scheduler.wait_for_next_run()
+                logger.info("⏰ 采集服务唤醒，准备开始工作！")
+                
+    except asyncio.CancelledError:
+        logger.info("🛑 采集任务被取消")
+    finally:
+        if writer:
+            writer.close()
+        await connection.close()
+        logger.info("👋 采集服务已停止")
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -345,8 +452,21 @@ async def lifespan(app: FastAPI):
     """
     try:
         await startup()
+        
+        # 启动后台采集任务
+        global acquisition_task
+        acquisition_task = asyncio.create_task(run_acquisition_loop())
+        
         yield
     finally:
+        # 取消后台任务
+        if acquisition_task:
+            acquisition_task.cancel()
+            try:
+                await acquisition_task
+            except asyncio.CancelledError:
+                pass
+                
         await shutdown()
 
 

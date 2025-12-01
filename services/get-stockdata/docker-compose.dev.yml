@@ -17,6 +17,7 @@ services:
       - HEARTBEAT_INTERVAL=30
       - ENVIRONMENT=development
       - PYTHONUNBUFFERED=1
+      - TZ=Asia/Shanghai
     # 🔥 开发模式启动命令 - 启用热加载
     command: >
       uvicorn src.main:app
@@ -43,6 +44,7 @@ services:
 networks:
   microservice-stock:
     external: true
+    name: microservice-stock_microservice-stock
 
 volumes:
   get-stockdata-logs:
