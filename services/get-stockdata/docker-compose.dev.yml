@@ -33,6 +33,7 @@ services:
       - ./src:/app/src
       - ./config:/app/config
       - ./tests:/app/tests  # ✅ 挂载测试代码（方便容器内测试）
+      - ./scripts:/app/scripts # ✅ 挂载脚本目录
       - get-stockdata-logs:/app/logs
     healthcheck:
       test: ["CMD", "curl", "--noproxy", "*", "-f", "http://localhost:8083/api/v1/health"]

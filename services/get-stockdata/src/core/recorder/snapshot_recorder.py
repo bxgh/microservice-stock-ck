@@ -1,16 +1,19 @@
 import asyncio
 import time
+import os
 from datetime import datetime
 from typing import List
 from src.core.stock_pool.manager import StockPoolManager, PoolLevel
 from src.core.storage.parquet_writer import ParquetWriter
+from src.storage.clickhouse_writer import ClickHouseWriter
+from src.core.storage.dual_writer import DualWriter
 from src.core.scheduling.scheduler import AcquisitionScheduler
 from mootdx.quotes import Quotes
 
 class SnapshotRecorder:
     """
     快照录制器
-    负责对L1池进行高频录制
+    负责对L1池进行高频录制，并双写到 Parquet 和 ClickHouse
     """
     
     def __init__(self, pool_manager: StockPoolManager, storage_path: str = "/app/data/snapshots"):
@@ -18,8 +21,23 @@ class SnapshotRecorder:
         self.scheduler = AcquisitionScheduler()
         self.is_running = False
         self.client = None
-        self.writer = ParquetWriter(storage_path)
-        print(f"📦 Storage path: {storage_path}")
+        
+        # 初始化双写存储
+        parquet_writer = ParquetWriter(storage_path)
+        
+        # 从环境变量获取 ClickHouse 配置
+        clickhouse_host = os.getenv('CLICKHOUSE_HOST', 'microservice-stock-clickhouse')
+        clickhouse_port = int(os.getenv('CLICKHOUSE_PORT', 9000))
+        clickhouse_db = os.getenv('CLICKHOUSE_DB', 'stock_data')
+        
+        clickhouse_writer = ClickHouseWriter(
+            host=clickhouse_host,
+            port=clickhouse_port,
+            database=clickhouse_db
+        )
+        
+        self.writer = DualWriter(parquet_writer, clickhouse_writer)
+        print(f"📦 Storage initialized: Parquet({storage_path}) + ClickHouse({clickhouse_host}:{clickhouse_port})")
         
     async def start(self):
         """启动录制"""
@@ -93,13 +111,16 @@ class SnapshotRecorder:
                 # 批次间微小延时，防止瞬时QPS过高
                 await asyncio.sleep(0.1)
             
-            # 保存本轮所有快照
+            # 保存本轮所有快照 (双写)
             if all_snapshots:
                 import pandas as pd
                 combined_df = pd.concat(all_snapshots, ignore_index=True)
-                saved_path = self.writer.save_snapshot(combined_df, round_timestamp)
-                if saved_path:
-                    print(f"  💾 Saved to: {saved_path}")
+                
+                # 使用 DualWriter 异步写入
+                p_success, c_success = await self.writer.write(combined_df, round_timestamp)
+                
+                status_icon = "✅" if (p_success and c_success) else "⚠️"
+                print(f"  {status_icon} Saved: Parquet={'OK' if p_success else 'FAIL'}, ClickHouse={'OK' if c_success else 'FAIL'}")
             
             duration = time.time() - round_start
             print(f"✅ Round {round_count} Complete: {total_snapshots} snapshots in {duration:.2f}s")
@@ -114,8 +135,7 @@ class SnapshotRecorder:
         
         # 关闭连接
         try:
-            # self.client.close() # Mootdx client可能没有close方法或者不需要显式调用
-            pass
+            self.writer.close()
         except:
             pass
 
