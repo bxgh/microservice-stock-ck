@@ -52,3 +52,14 @@ docker-compose.override.yml
 
 # Mac
 .DS_Store
+# Development planning files
+*.strategy.md
+GIT_COMMIT_STRATEGY.md
+
+# Documentation and testing files (local use only)
+docs/
+tests/
+
+# Log files
+*.log
+app.log
