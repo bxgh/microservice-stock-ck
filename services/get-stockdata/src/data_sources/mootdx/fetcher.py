@@ -32,7 +32,8 @@ class MootdxDataSource(DataSourceBase):
                  overlap_ratio: float = 0.2,
                  batch_size: int = 800,
                  max_records: int = 200000,
-                 max_consecutive_empty: int = 5):
+                 max_consecutive_empty: int = 5,
+                 connection_lifetime: int = 300):
         """
         初始化mootdx数据源
 
@@ -43,8 +44,14 @@ class MootdxDataSource(DataSourceBase):
             batch_size: 批次大小
             max_records: 最大记录数
             max_consecutive_empty: 最大连续空返回次数
+            connection_lifetime: 连接生命周期（秒），默认300秒（5分钟）
         """
-        self.connection = MootdxConnection(timeout=timeout, best_ip=best_ip)
+        self.connection = MootdxConnection(
+            timeout=timeout, 
+            best_ip=best_ip,
+            connection_lifetime=connection_lifetime
+        )
+        self.connection_manager = self.connection
         self.overlap_ratio = max(0.1, min(0.3, overlap_ratio))  # 限制在10%-30%
         self.batch_size = batch_size
         self.max_records = max_records
@@ -337,6 +344,7 @@ class MootdxDataSource(DataSourceBase):
             "source_name": self.source_name,
             "is_connected": self.is_connected,
             "connect_time": self.connection.connect_time,
+            "connection_stats": self.connection.get_stats(),
             "stats": self.stats.copy()
         }
 

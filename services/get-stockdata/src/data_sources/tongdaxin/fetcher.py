@@ -15,10 +15,13 @@ try:
     from ..base import DataSourceBase
     from ...services.tongdaxin_client import TongDaXinClient
     from ...models.tick_models import TickData, TickDataRequest, TickDataAdapter
+    from .adapter import TongDaXinConnectionAdapter
 except ImportError:
     from data_sources.base import DataSourceBase
     from services.tongdaxin_client import TongDaXinClient
     from models.tick_models import TickData, TickDataRequest, TickDataAdapter
+    # 临时兼容
+    TongDaXinConnectionAdapter = None
 
 
 class TongDaXinDataSource(DataSourceBase):
@@ -33,6 +36,8 @@ class TongDaXinDataSource(DataSourceBase):
             timeout: 连接超时时间
         """
         self.client = TongDaXinClient(max_connections=max_connections, timeout=timeout)
+        if TongDaXinConnectionAdapter:
+            self.connection_manager = TongDaXinConnectionAdapter(self.client)
         self._connected = False
 
     async def connect(self) -> bool:

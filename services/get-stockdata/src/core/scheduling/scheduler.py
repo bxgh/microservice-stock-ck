@@ -63,12 +63,26 @@ class AcquisitionScheduler:
             self.logger.info(f"😴 System sleeping until {target_time} ({wait_seconds/3600:.2f} hours)")
             print(f"😴 System sleeping until {target_time} ({wait_seconds/3600:.2f} hours)")
             
+            # 冷却连接池
+            try:
+                from ..monitoring.connection_monitor import connection_monitor
+                await connection_monitor.cooldown_all()
+            except Exception as e:
+                self.logger.warning(f"Failed to cooldown connection pools: {e}")
+            
             # 真正的 sleep
             await asyncio.sleep(wait_seconds)
             
             self.state = SystemState.RUNNING
             self.logger.info("⏰ Waking up for trading session!")
             print("⏰ Waking up for trading session!")
+            
+            # 预热连接池
+            try:
+                from ..monitoring.connection_monitor import connection_monitor
+                await connection_monitor.warmup_all()
+            except Exception as e:
+                self.logger.warning(f"Failed to warmup connection pools: {e}")
 
     def _get_next_start_time(self, now: datetime) -> datetime:
         """

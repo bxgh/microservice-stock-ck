@@ -13,12 +13,18 @@ import pandas as pd
 
 try:
     from ..models.tick_models import TickData, TickDataRequest
+    from ..core.interfaces import ConnectionManagerInterface
 except ImportError:
     from models.tick_models import TickData, TickDataRequest
+    # 临时兼容
+    ConnectionManagerInterface = Any
 
 
 class DataSourceBase(ABC):
     """数据源基类，定义统一接口"""
+    
+    def __init__(self):
+        self.connection_manager: Optional[ConnectionManagerInterface] = None
 
     @abstractmethod
     async def connect(self) -> bool:

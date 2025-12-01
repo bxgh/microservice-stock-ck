@@ -9,7 +9,7 @@
 from typing import Dict, Any, Optional
 from .base import DataSourceBase
 from .mootdx.fetcher import MootdxDataSource
-# from .tongdaxin.fetcher import TongDaXinDataSource  # 暂时注释掉，缺少依赖模块
+from .tongdaxin.fetcher import TongDaXinDataSource
 
 # 数据源配置
 DATA_SOURCE_CONFIG = {
@@ -24,7 +24,7 @@ DATA_SOURCE_CONFIG = {
         "max_consecutive_empty": 5
     },
     "tongdaxin": {
-        "class": None,  # TongDaXinDataSource,  # 暂时禁用，缺少依赖模块
+        "class": TongDaXinDataSource,
         "default": False,  # 备用数据源
         "timeout": 30,
         "max_connections": 5
@@ -84,7 +84,18 @@ class DataSourceFactory:
             if field in final_config:
                 constructor_params[field] = final_config[field]
 
-        return source_class(**constructor_params)
+        instance = source_class(**constructor_params)
+        
+        # 注册到监控器
+        try:
+            from ..core.monitoring.connection_monitor import connection_monitor
+            if instance.connection_manager:
+                connection_monitor.register(source_type, instance.connection_manager)
+        except ImportError:
+            # 避免循环导入导致的错误，或者监控模块未准备好
+            pass
+            
+        return instance
 
     @staticmethod
     def create_default_source() -> DataSourceBase:

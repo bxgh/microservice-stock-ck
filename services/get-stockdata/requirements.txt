@@ -18,6 +18,7 @@ alembic>=1.8.0
 pymysql>=1.0.0
 redis>=5.0.0
 redis[hiredis]>=2.0.0
+clickhouse-driver>=0.2.6          # ClickHouse数据库驱动
 
 # 股票数据获取库
 yfinance>=0.2.18                 # Yahoo Finance API
