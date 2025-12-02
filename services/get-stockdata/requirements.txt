@@ -63,3 +63,4 @@ prometheus-client>=0.14.0
 # 其他
 click>=8.0.0
 pyyaml>=6.0
+watchdog>=3.0.0  # File system event monitoring for config hot reload

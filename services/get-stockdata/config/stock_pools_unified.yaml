@@ -1,0 +1,124 @@
+version: "2.0.0"
+updated_at: "2025-12-02T10:55:00+08:00"
+updated_by: "AI System Architect"
+
+# ==================== 全局设置 ====================
+global:
+  default_acquisition_interval: 3  # 默认采集间隔（秒）
+  max_pool_size: 1000             # 股票池最大容量
+  enable_auto_update: true         # 启用自动更新
+
+# ==================== 活跃模式选择 ====================
+# 可选值: "hs300_top100" | "hot_sectors" | "custom"
+active_mode: "hs300_top100"
+
+# ==================== 模式1: 沪深300 Top 100 ====================
+hs300_top100:
+  enabled: true
+  size: 100
+  source: "akshare"
+  acquisition_interval: 3
+  update_schedule: "0 8 * * *"  # 每天8点更新（Cron表达式）
+  volume_lookback_days: 5        # 成交额回看天数
+
+# ==================== 模式2: 热门赛道（未实施）====================
+hot_sectors:
+  enabled: false
+  sectors:
+    tech:
+      name: "科技芯片"
+      size: 20
+      etf_codes: ["512480"]  # 半导体ETF
+    new_energy:
+      name: "新能源车"
+      size: 20
+      etf_codes: ["515030"]  # 新能源车ETF
+    healthcare:
+      name: "医药生物"
+      size: 20
+      etf_codes: ["512010"]  # 医药ETF
+    consumer:
+      name: "消费白酒"
+      size: 15
+      etf_codes: ["512690"]  # 酒ETF
+    finance:
+      name: "金融周期"
+      size: 15
+      etf_codes: ["512000"]  # 券商ETF
+    momentum:
+      name: "超级妖股"
+      size: 10
+      dynamic: true          # 动态监控
+
+# ==================== 模式3: 自定义配置 ====================
+custom:
+  enabled: false
+  groups:
+    - name: "我的策略池"
+      codes: ["600519", "000858", "000001", "601398", "601318"]
+      acquisition_interval: 3
+      
+    - name: "实验池"
+      codes: ["688981", "603259"]
+      acquisition_interval: 5
+
+# ==================== 黑名单过滤 ====================
+blacklist:
+  enabled: true
+  
+  # 模式匹配（支持通配符 *）
+  patterns:
+    - "ST*"         # ST股票
+    - "*ST*"        # 各种ST变体
+    - "退*"         # 退市股
+    - "暂停*"       # 暂停上市
+    - "*退市*"      # 包含退市字样
+  
+  # 手动指定代码（直接黑名单）
+  codes: []
+    # - "600000"    # 示例：手动添加
+  
+  # 规则过滤（高级）
+  rules:
+    - field: "流通市值"
+      operator: "<"
+      value: 100000000    # 过滤小于1亿市值的超小盘股
+      
+    - field: "成交额"
+      operator: "<"
+      value: 10000000     # 过滤成交额小于1000万的无流动性股票
+
+# ==================== 白名单（优先级高于黑名单）====================
+whitelist:
+  enabled: false
+  codes: []
+    # - "600519"    # 贵州茅台（示例：即使名字含ST也保留）
+
+# ==================== 行业分组（用于分析，可选）====================
+industry_groups:
+  金融:
+    - "600000"  # 浦发银行
+    - "600036"  # 招商银行
+    - "601398"  # 工商银行
+    - "601318"  # 中国平安
+    
+  科技:
+    - "688981"  # 中芯国际
+    - "603986"  # 兆易创新
+    - "000063"  # 中兴通讯
+    
+  消费:
+    - "600519"  # 贵州茅台
+    - "000858"  # 五粮液
+    - "600887"  # 伊利股份
+    
+  医药:
+    - "600276"  # 恒瑞医药
+    - "000661"  # 长春高新
+    - "300760"  # 迈瑞医疗
+
+# ==================== 审计日志配置 ====================
+audit:
+  enabled: true
+  log_file: "logs/config_changes.log"
+  retention_days: 30

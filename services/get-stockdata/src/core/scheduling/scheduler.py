@@ -2,8 +2,9 @@ import asyncio
 import logging
 from datetime import datetime, timedelta, time
 from enum import Enum
-from typing import Optional
+from typing import Optional, List
 from src.core.scheduling.calendar_service import CalendarService
+from src.core.stock_pool.manager import StockPoolManager
 
 class SystemState(Enum):
     RUNNING = "RUNNING"   # 正在运行 (交易时段)
@@ -20,6 +21,10 @@ class AcquisitionScheduler:
         self.calendar = calendar_service or CalendarService()
         self.state = SystemState.SLEEPING
         self.logger = logging.getLogger(__name__)
+        
+        # 股票池管理器
+        self.pool_manager = StockPoolManager()
+        self.current_pool: List[str] = []
         
     def should_run_now(self) -> bool:
         """
@@ -108,6 +113,49 @@ class AcquisitionScheduler:
         # 其他情况（下午收盘后，或者非交易日），找下一个交易日的上午开盘
         next_day = self.calendar.get_next_trading_day(current_date)
         return datetime.combine(next_day, time(9, 10))
+    
+    async def initialize(self):
+        """
+        初始化调度器
+        加载股票池等初始化操作
+        """
+        self.logger.info("🚀 Initializing AcquisitionScheduler...")
+        
+        try:
+            # 加载股票池
+            self.current_pool = await self.pool_manager.get_hs300_top100_by_volume(lookback_days=5)
+            self.logger.info(f"✅ Stock pool loaded: {len(self.current_pool)} stocks")
+            
+            if len(self.current_pool) == 0:
+                self.logger.warning("⚠️ Stock pool is empty!")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Failed to initialize stock pool: {e}")
+            raise
+    
+    def get_current_pool(self) -> List[str]:
+        """
+        获取当前股票池
+        
+        Returns:
+            List[str]: 股票代码列表
+        """
+        return self.current_pool.copy()
+    
+    async def refresh_pool(self):
+        """
+        刷新股票池（每日更新时调用）
+        """
+        self.logger.info("🔄 Refreshing stock pool...")
+        try:
+            new_pool = await self.pool_manager.get_hs300_top100_by_volume(lookback_days=5)
+            if len(new_pool) > 0:
+                self.current_pool = new_pool
+                self.logger.info(f"✅ Stock pool refreshed: {len(new_pool)} stocks")
+            else:
+                self.logger.warning("⚠️ Pool refresh returned empty, keeping old pool")
+        except Exception as e:
+            self.logger.error(f"❌ Failed to refresh pool: {e}")
 
 if __name__ == "__main__":
     # 简单测试

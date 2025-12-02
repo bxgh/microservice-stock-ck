@@ -93,6 +93,19 @@ except ImportError as e:
     async def test_fenbi():
         return {"message": "Fenbi分笔数据测试接口", "status": "placeholder"}
 
+# 导入配置管理路由
+try:
+    from api.routers.config import router as config_router, internal_router as config_internal_router
+except ImportError as e:
+    print(f"Warning: config routes not found: {e}")
+    from fastapi import APIRouter
+    config_router = APIRouter(prefix="/api/v1/config", tags=["Configuration"])
+    config_internal_router = APIRouter(prefix="/internal/config", tags=["Config Internal"])
+
+    @config_router.get("/test")
+    async def test_config():
+        return {"message": "配置管理测试接口", "status": "placeholder"}
+
 try:
     from api.example_routes import stock_router
 except ImportError:
@@ -364,6 +377,15 @@ async def run_acquisition_loop():
     # 使用 best_ip=True 自动选择最快服务器
     connection = MootdxConnection(best_ip=True, initial_wait_time=0.5)
     
+    # 初始化调度器和股票池
+    try:
+        await scheduler.initialize()
+        logger.info("✅ 调度器初始化成功")
+    except Exception as e:
+        logger.error(f"❌ 调度器初始化失败: {e}")
+        # 如果初始化失败，使用默认股票池作为降级方案
+        logger.warning("⚠️ 使用默认股票池作为降级方案")
+    
     # 初始化 ClickHouse Writer
     try:
         from .storage.clickhouse_writer import ClickHouseWriter, SnapshotData
@@ -378,6 +400,39 @@ async def run_acquisition_loop():
         logger.error(f"❌ ClickHouse Writer 初始化失败: {e}")
         writer = None
     
+    # 启动每日股票池刷新任务
+    async def daily_pool_refresh():
+        """每日8:00刷新股票池"""
+        while True:
+            try:
+                # 计算距离下一个8:00的时间
+                now = datetime.now()
+                next_refresh = now.replace(hour=8, minute=0, second=0, microsecond=0)
+                if now >= next_refresh:
+                    # 如果已经过了今天的8点，设置为明天8点
+                    next_refresh += timedelta(days=1)
+                
+                wait_seconds = (next_refresh - datetime.now()).total_seconds()
+                logger.info(f"📅 下次股票池刷新时间: {next_refresh} (等待 {wait_seconds/3600:.1f} 小时)")
+                
+                await asyncio.sleep(wait_seconds)
+                
+                # 刷新股票池
+                logger.info("🔄 开始每日股票池刷新...")
+                await scheduler.refresh_pool()
+                logger.info("✅ 每日股票池刷新完成")
+                
+            except asyncio.CancelledError:
+                logger.info("🛑 股票池刷新任务被取消")
+                break
+            except Exception as e:
+                logger.error(f"❌ 股票池刷新失败: {e}")
+                # 出错后等待1小时重试
+                await asyncio.sleep(3600)
+    
+    # 启动刷新任务
+    refresh_task = asyncio.create_task(daily_pool_refresh())
+    
     try:
         while True:
             # 1. 检查是否应该运行
@@ -386,9 +441,15 @@ async def run_acquisition_loop():
                     # 获取连接
                     client = await connection.get_client()
                     if client:
-                        # 示例：采集核心股票池
-                        # 实际生产中应从配置或数据库读取股票列表
-                        target_stocks = ["000001", "600000", "000002", "601398", "601318"]
+                        # 从调度器获取当前股票池（Story 004.01: 100只股票）
+                        target_stocks = scheduler.get_current_pool()
+                        
+                        # 如果股票池为空，使用默认降级方案
+                        if not target_stocks:
+                            logger.warning("⚠️ 股票池为空，使用默认股票池")
+                            target_stocks = ["000001", "600000", "000002", "601398", "601318"]
+                        
+                        logger.debug(f"📊 当前股票池大小: {len(target_stocks)} 只股票")
                         
                         # 获取快照
                         quotes = client.quotes(symbol=target_stocks)
@@ -440,6 +501,13 @@ async def run_acquisition_loop():
     except asyncio.CancelledError:
         logger.info("🛑 采集任务被取消")
     finally:
+        # 取消刷新任务
+        refresh_task.cancel()
+        try:
+            await refresh_task
+        except asyncio.CancelledError:
+            pass
+        
         if writer:
             writer.close()
         await connection.close()
@@ -599,6 +667,8 @@ def create_app() -> FastAPI:
     app.include_router(strategy_internal_router)  # 策略内部路由
     app.include_router(fenbi_router)  # Fenbi分笔数据路由（包含原tick_data功能）
     app.include_router(fenbi_internal_router)  # Fenbi内部路由
+    app.include_router(config_router)  # 配置管理路由（Story 004.05）
+    app.include_router(config_internal_router)  # 配置管理内部路由
 
     return app
 
