@@ -1,0 +1,13 @@
+[Unit]
+Description=Docker Cleanup Service
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c "LOG_FILE=/var/log/docker-cleanup.log /home/bxgh/microservice-stock/services/get-stockdata/scripts/docker-cleanup.sh"
+User=root
+Group=root
+
+[Install]
+WantedBy=multi-user.target

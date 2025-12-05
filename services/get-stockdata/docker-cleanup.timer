@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Docker cleanup service daily at 2 AM
+Requires=docker-cleanup.service
+
+[Timer]
+OnCalendar=*-*-* 02:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

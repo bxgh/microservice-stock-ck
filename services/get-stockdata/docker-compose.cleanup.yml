@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  docker-cleanup:
+    build:
+      context: .
+      dockerfile: docker-cleanup.dockerfile
+    container_name: docker-cleanup-scheduler
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock  # 允许容器管理宿主机的 Docker
+      - /var/log:/var/log:rw                      # 共享日志目录
+    environment:
+      - TZ=Asia/Shanghai
+    # 可以根据需要添加网络配置
+    networks:
+      - microservice-stock
+
+networks:
+  microservice-stock:
+    external: true
+    name: microservice-stock_microservice-stock
