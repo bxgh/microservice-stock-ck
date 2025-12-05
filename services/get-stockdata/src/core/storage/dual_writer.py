@@ -126,7 +126,7 @@ class DualWriter:
                     trade_date=date,
                     stock_code=str(get_val('code')),
                     stock_name=str(get_val('name', '')), # Mootdx quotes 可能不返回 name
-                    market=str(get_val('market', 'SZ')), # 需要根据 code 判断或从上游获取
+                    market=self._map_market(str(get_val('market', 'SZ'))), # 映射 0/1 到 SZ/SH
                     current_price=float(get_val('price', 0)),
                     open_price=float(get_val('open', 0)),
                     high_price=float(get_val('high', 0)),
@@ -157,6 +157,14 @@ class DualWriter:
                 continue
                 
         return snapshots
+
+    def _map_market(self, raw_market: str) -> str:
+        """映射市场代码"""
+        if raw_market == '0':
+            return 'SZ'
+        elif raw_market == '1':
+            return 'SH'
+        return raw_market
 
     def close(self):
         """关闭资源"""

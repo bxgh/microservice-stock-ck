@@ -71,17 +71,21 @@ class AnomalyDetector:
             
             for _, row in latest_data.iterrows():
                 try:
-                    code = str(row["代码"])
-                    name = str(row["名称"])
-                    current_price = float(row["最新价"])
-                    current_turnover = float(row.get("换手率", 0))
+                    # Support both English (mootdx) and Chinese (akshare) column names
+                    code = str(row.get("code") or row.get("代码"))
+                    name = str(row.get("name") or row.get("名称", ""))
+                    current_price = float(row.get("price") or row.get("最新价", 0))
                     
-                    # 准备行数据字典
+                    # Mootdx might not return turnover/change, use 0 default
+                    current_turnover = float(row.get("turnover") or row.get("换手率", 0))
+                    current_change = float(row.get("change") or row.get("涨跌幅", 0))
+                    
+                    # 准备行数据字典 (Internal format uses Chinese keys for consistency)
                     row_dict = {
                         "代码": code,
                         "名称": name,
                         "最新价": current_price,
-                        "涨跌幅": float(row.get("涨跌幅", 0)),
+                        "涨跌幅": current_change,
                         "换手率": current_turnover
                     }
                     

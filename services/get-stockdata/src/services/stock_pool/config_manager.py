@@ -263,8 +263,17 @@ class StockPoolConfigManager:
         Returns:
             dict: 当前股票池配置
         """
-        mode = self.config.get('active_mode', 'hs300_top100')
+        mode = self.get_active_mode()
         return self.config.get(mode, {})
+
+    def get_active_mode(self) -> str:
+        """
+        获取当前激活模式
+        
+        Returns:
+            str: 激活模式 (hs300_top100, hot_sectors, custom)
+        """
+        return self.config.get('active_mode', 'hs300_top100')
     
     def is_blacklisted(self, code: str, stock_info: Optional[Dict[str, Any]] = None) -> bool:
         """

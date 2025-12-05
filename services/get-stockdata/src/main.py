@@ -18,7 +18,7 @@ import logging
 import sys
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import FastAPI
 import uvicorn
@@ -396,9 +396,11 @@ async def run_acquisition_loop():
     try:
         from .storage.clickhouse_writer import ClickHouseWriter, SnapshotData
         writer = ClickHouseWriter(
-            host='microservice-stock-clickhouse',
-            port=9000,
-            database='stock_data',
+            host=os.getenv('CLICKHOUSE_HOST', 'microservice-stock-clickhouse'),
+            port=int(os.getenv('CLICKHOUSE_PORT', '9000')),
+            database=os.getenv('CLICKHOUSE_DB', 'stock_data'),
+            user=os.getenv('CLICKHOUSE_USER', 'default'),
+            password=os.getenv('CLICKHOUSE_PASSWORD', ''),
             batch_size=1000
         )
         logger.info("✅ ClickHouse Writer 初始化成功")
