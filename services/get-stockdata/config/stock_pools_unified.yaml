@@ -28,27 +28,76 @@ hot_sectors:
     tech:
       name: "科技芯片"
       size: 20
-      etf_codes: ["512480"]  # 半导体ETF
+      sources:
+        - type: "etf"
+          code: "512760"  # 芯片ETF
+          top_n: 10
+        - type: "etf"
+          code: "512480"  # 半导体ETF
+          top_n: 10
+      filters:
+        min_avg_amount: 1000000000  # 10亿
+
     new_energy:
-      name: "新能源车"
+      name: "新能源 & 电动车"
       size: 20
-      etf_codes: ["515030"]  # 新能源车ETF
+      sources:
+        - type: "etf"
+          code: "159806"  # 新能源车ETF
+          top_n: 12
+        - type: "etf"
+          code: "515790"  # 光伏ETF
+          top_n: 8
+
     healthcare:
       name: "医药生物"
       size: 20
-      etf_codes: ["512010"]  # 医药ETF
+      sources:
+        - type: "etf"
+          code: "512290"  # 生物医药ETF
+          top_n: 15
+        - type: "manual"
+          codes: ["300760", "688981", "603259", "002821", "300015"]
+
     consumer:
       name: "消费白酒"
       size: 15
-      etf_codes: ["512690"]  # 酒ETF
+      sources:
+        - type: "etf"
+          code: "512690"  # 白酒ETF
+          top_n: 10
+        - type: "manual"
+          codes: ["600519", "000858", "000568", "002304", "603369"]
+
     finance:
       name: "金融周期"
       size: 15
-      etf_codes: ["512000"]  # 券商ETF
-    momentum:
+      sources:
+        - type: "etf"
+          code: "512000"  # 券商ETF
+          top_n: 5
+        - type: "etf"
+          code: "512800"  # 银行ETF
+          top_n: 5
+        - type: "etf"
+          code: "512400"  # 有色金属ETF
+          top_n: 5
+
+    monster:
       name: "超级妖股"
       size: 10
-      dynamic: true          # 动态监控
+      dynamic: true
+      update_frequency: "weekly"
+      criteria:
+        - field: "涨跌幅"
+          operator: ">"
+          value: 9.0
+        - field: "换手率"
+          operator: ">"
+          value: 10.0
+        - field: "流通市值"
+          operator: "<"
+          value: 50000000000  # 500亿
 
 # ==================== 模式3: 自定义配置 ====================
 custom:

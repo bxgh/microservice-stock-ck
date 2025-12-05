@@ -95,12 +95,18 @@ except ImportError as e:
 
 # 导入配置管理路由
 try:
-    from api.routers.config import router as config_router, internal_router as config_internal_router
+    from api.routers.config import router as config_router
+    from services.stock_pool.config_manager import StockPoolConfigManager
+    # Story 004.03: Dynamic Promotion
+    from services.stock_pool.anomaly_detector import AnomalyDetector
+    from services.stock_pool.dynamic_pool_manager import DynamicPoolManager, internal_router as config_internal_router
+    from api.routers.stock_pool import router as stock_pool_router
 except ImportError as e:
     print(f"Warning: config routes not found: {e}")
     from fastapi import APIRouter
     config_router = APIRouter(prefix="/api/v1/config", tags=["Configuration"])
     config_internal_router = APIRouter(prefix="/internal/config", tags=["Config Internal"])
+    stock_pool_router = APIRouter(prefix="/api/v1/stock_pool", tags=["Stock Pool"])
 
     @config_router.get("/test")
     async def test_config():
@@ -433,26 +439,50 @@ async def run_acquisition_loop():
     # 启动刷新任务
     refresh_task = asyncio.create_task(daily_pool_refresh())
     
+    # Story 004.03: Initialize Dynamic Promotion Components
+    anomaly_detector = AnomalyDetector()
+    dynamic_manager = DynamicPoolManager(max_dynamic_size=10)
+    
+    # Store dynamic manager in app state for API access
+    app.state.dynamic_manager = dynamic_manager
+
     try:
         while True:
-            # 1. 检查是否应该运行
             if scheduler.should_run_now():
                 try:
-                    # 获取连接
                     client = await connection.get_client()
                     if client:
-                        # 从调度器获取当前股票池（Story 004.01: 100只股票）
-                        target_stocks = scheduler.get_current_pool()
+                        # From scheduler, get the current stock pool (Story 004.01: 100 stocks)
+                        core_pool = scheduler.get_current_pool()
+
+                        # If pool is empty, use default fallback
+                        if not core_pool:
+                            logger.warning("⚠️ Stock pool is empty, using default pool")
+                            core_pool = ["000001", "600000", "000002", "601398", "601318"]
                         
-                        # 如果股票池为空，使用默认降级方案
-                        if not target_stocks:
-                            logger.warning("⚠️ 股票池为空，使用默认股票池")
-                            target_stocks = ["000001", "600000", "000002", "601398", "601318"]
+                        # Story 004.03: Get dynamic pool and merge
+                        dynamic_pool = await dynamic_manager.get_all_dynamic_stocks()
                         
-                        logger.debug(f"📊 当前股票池大小: {len(target_stocks)} 只股票")
+                        # Merge pools (dynamic stocks + core pool), de-duplicate
+                        target_stocks = list(set(core_pool + dynamic_pool))
                         
-                        # 获取快照
+                        logger.debug(f"📊 Current pool: Core {len(core_pool)} + Dynamic {len(dynamic_pool)} = Total {len(target_stocks)}")
+                        
+                        # Fetch snapshot
                         quotes = client.quotes(symbol=target_stocks)
+                        
+                        # Story 004.03: Anomaly Detection & Promotion
+                        # Only detect anomalies for stocks NOT already in dynamic pool (to avoid redundant checks)
+                        # Actually, we should check all stocks to update their status or detect new anomalies
+                        anomalies = await anomaly_detector.detect_anomalies(quotes)
+                        
+                        for anomaly in anomalies:
+                            # Only promote if not in core pool (optional, but good for tracking)
+                            # Or just promote everything to ensure they stay in dynamic pool if they fall out of core
+                            await dynamic_manager.promote(anomaly)
+                            
+                        # Cleanup expired dynamic stocks
+                        await dynamic_manager.cleanup_expired()
                         if quotes is not None and not quotes.empty:
                             logger.info(f"✅ [自动采集] 成功获取 {len(quotes)} 只股票实时行情")
                             
@@ -513,18 +543,51 @@ async def run_acquisition_loop():
         await connection.close()
         logger.info("👋 采集服务已停止")
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    应用生命周期管理
+    生命周期管理器
+    负责应用启动和关闭时的资源管理
     """
+    # 尝试初始化配置管理器
+    config_manager = None
+    scheduler = None
+    
+    try:
+        from services.stock_pool.config_manager import StockPoolConfigManager
+        config_manager = StockPoolConfigManager()
+        config_manager.start_watching()
+        logger.info("✅ Config manager initialized and watching")
+    except Exception as e:
+        logger.warning(f"⚠️ Config manager not available: {e}")
+    
+    # 尝试初始化调度器
+    try:
+        if AcquisitionScheduler:
+            scheduler = AcquisitionScheduler(config_manager=config_manager)
+            
+            # 注册配置重载回调
+            if config_manager:
+                async def on_config_reload(new_config):
+                    logger.info("Configuration reloaded, refreshing scheduler pool...")
+                    if scheduler:
+                        await scheduler.refresh_pool()
+                
+                config_manager.register_reload_callback(on_config_reload)
+            
+            # 初始化调度器
+            await scheduler.initialize()
+            logger.info("✅ Scheduler initialized")
+    except Exception as e:
+        logger.warning(f"⚠️ Scheduler initialization failed: {e}")
+    
+    # 启动后台采集任务
+    global acquisition_task
+    acquisition_task = asyncio.create_task(run_acquisition_loop())
+        
     try:
         await startup()
-        
-        # 启动后台采集任务
-        global acquisition_task
-        acquisition_task = asyncio.create_task(run_acquisition_loop())
-        
         yield
     finally:
         # 取消后台任务
@@ -533,9 +596,17 @@ async def lifespan(app: FastAPI):
             try:
                 await acquisition_task
             except asyncio.CancelledError:
-                pass
+                logger.info("Acquisition task cancelled")
                 
+        # 停止配置监控
+        if config_manager:
+            try:
+                config_manager.stop_watching()
+            except Exception as e:
+                logger.warning(f"Error stopping config watcher: {e}")
+        
         await shutdown()
+        logger.info("Service shutdown complete")
 
 
 async def startup():
@@ -632,6 +703,17 @@ async def shutdown():
             logger.info("✅ 100%成功策略引擎已关闭")
         except Exception as e:
             logger.warning(f"100%成功策略引擎关闭失败: {e}")
+
+        # Story 004.03: 清理动态推广组件
+        try:
+            if hasattr(app, 'state') and hasattr(app.state, 'dynamic_manager'):
+                # DynamicPoolManager cleanup (if it has a close method)
+                dynamic_manager = app.state.dynamic_manager
+                if hasattr(dynamic_manager, 'close'):
+                    await dynamic_manager.close()
+                logger.info("✅ 动态股票池管理器已关闭")
+        except Exception as e:
+            logger.warning(f"动态推广组件关闭失败: {e}")
 
         # 清理Nacos服务注册
         logger.info("Deregistering from Nacos...")

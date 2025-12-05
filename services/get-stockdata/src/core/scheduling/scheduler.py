@@ -17,13 +17,13 @@ class AcquisitionScheduler:
     负责控制采集任务的运行、休眠和唤醒
     """
     
-    def __init__(self, calendar_service: Optional[CalendarService] = None):
+    def __init__(self, calendar_service: Optional[CalendarService] = None, config_manager=None):
         self.calendar = calendar_service or CalendarService()
         self.state = SystemState.SLEEPING
         self.logger = logging.getLogger(__name__)
         
         # 股票池管理器
-        self.pool_manager = StockPoolManager()
+        self.pool_manager = StockPoolManager(config_manager=config_manager)
         self.current_pool: List[str] = []
         
     def should_run_now(self) -> bool:
@@ -123,7 +123,7 @@ class AcquisitionScheduler:
         
         try:
             # 加载股票池
-            self.current_pool = await self.pool_manager.get_hs300_top100_by_volume(lookback_days=5)
+            self.current_pool = await self.pool_manager.get_current_pool()
             self.logger.info(f"✅ Stock pool loaded: {len(self.current_pool)} stocks")
             
             if len(self.current_pool) == 0:
@@ -148,7 +148,7 @@ class AcquisitionScheduler:
         """
         self.logger.info("🔄 Refreshing stock pool...")
         try:
-            new_pool = await self.pool_manager.get_hs300_top100_by_volume(lookback_days=5)
+            new_pool = await self.pool_manager.get_current_pool()
             if len(new_pool) > 0:
                 self.current_pool = new_pool
                 self.logger.info(f"✅ Stock pool refreshed: {len(new_pool)} stocks")

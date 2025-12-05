@@ -3,7 +3,7 @@ import json
 import logging
 import yaml
 from enum import Enum
-from typing import List, Set, Dict, Optional
+from typing import List, Optional, Dict, Set
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -11,6 +11,7 @@ import akshare as ak
 import pandas as pd
 from pydantic import BaseModel
 import fnmatch
+from services.stock_pool.hot_sectors_manager import HotSectorsManager
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +63,10 @@ class StockPoolManager:
         # 使用ConfigManager（如果提供），否则使用旧的内联配置
         self.config_manager = config_manager
         
-        # 保持向后兼容：如果没有ConfigManager，使用旧方式
+        # Initialize HotSectorsManager
+        self.hot_sectors_manager = HotSectorsManager(config_manager) if config_manager else None
+        
+        # Backward compatible: use old inline config if no ConfigManager
         if not self.config_manager:
             self.config_path = Path("config/stock_pools.yaml")
             self.blacklist_enabled = False
@@ -129,9 +133,40 @@ class StockPoolManager:
             # 降级到旧方式
             return self._is_blacklisted(code, name)
     
+    async def get_current_pool(self) -> List[str]:
+        """
+        获取当前激活的股票池 (支持模式切换)
+        Story 004.02: Support switching between HS300 and Hot Sectors
+        """
+        if not self.config_manager:
+            # Fallback to legacy behavior
+            return await self.get_hs300_top100_by_volume()
+            
+        mode = self.config_manager.get_active_mode()
+        logger.info(f"Fetching stock pool for mode: {mode}")
+        
+        stocks = []
+        if mode == "hs300_top100":
+            stocks = await self.get_hs300_top100_by_volume()
+        elif mode == "hot_sectors":
+            if self.hot_sectors_manager:
+                stocks = await self.hot_sectors_manager.get_pool()
+            else:
+                logger.error("HotSectorsManager not initialized")
+                stocks = []
+        elif mode == "custom":
+            # Story 004.05: Custom pool support (placeholder)
+            stocks = self.config_manager.get_config().get("custom", {}).get("groups", [])[0].get("codes", [])
+        else:
+            logger.warning(f"Unknown mode {mode}, falling back to HS300")
+            stocks = await self.get_hs300_top100_by_volume()
+            
+        return stocks
+
     async def get_hs300_top100_by_volume(self, lookback_days: int = 5) -> List[str]:
         """
         获取沪深300成分股按最近N日平均成交额Top 100
+        Story 004.01 Implementation
         
         Args:
             lookback_days: 成交额回看天数，默认5天
