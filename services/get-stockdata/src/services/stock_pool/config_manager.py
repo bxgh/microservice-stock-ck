@@ -140,6 +140,15 @@ class StockPoolConfigManager:
                 logger.warning("⚠️ 保留旧配置继续运行")
                 return self.config
     
+    def get_config(self) -> Dict[str, Any]:
+        """
+        获取当前配置
+        
+        Returns:
+            dict: 当前配置字典
+        """
+        return self.config
+    
     def _validate_config(self, config: Dict[str, Any]):
         """
         验证配置文件格式

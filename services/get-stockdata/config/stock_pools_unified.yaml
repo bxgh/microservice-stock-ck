@@ -86,8 +86,23 @@ hot_sectors:
     monster:
       name: "超级妖股"
       size: 10
-      dynamic: true
+      dynamic: false    # Switch to manual mode
       update_frequency: "weekly"
+      sources:
+        - type: "manual"
+          codes: 
+            - "300059"  # 东方财富
+            - "601138"  # 工业富联
+            - "600418"  # 江淮汽车
+            - "000063"  # 中兴通讯
+            - "002230"  # 科大讯飞
+            - "603019"  # 中科曙光
+            - "300308"  # 中际旭创
+            - "002371"  # 北方华创
+            - "600150"  # 中国船舶
+            - "601360"  # 三六零
+            
+      # Criteria kept for reference/future use
       criteria:
         - field: "涨跌幅"
           operator: ">"

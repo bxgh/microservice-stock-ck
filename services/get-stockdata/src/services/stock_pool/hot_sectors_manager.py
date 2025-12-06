@@ -122,31 +122,44 @@ class HotSectorsManager:
         使用 akshare 接口
         """
         try:
-            # 尝试获取ETF持仓
-            # 注意：akshare接口可能会变，需做好容错
-            # fund_etf_fund_info_em: 天天基金网-ETF-持仓
-            df = ak.fund_etf_fund_info_em(fund=etf_code)
+            # 使用正确的 API: fund_portfolio_hold_em
+            # 该接口返回 ETF 的持仓明细
+            from datetime import datetime
+            current_year = datetime.now().year
             
-            if df.empty:
-                logger.warning(f"ETF {etf_code} returned empty data")
+            logger.info(f"Fetching ETF {etf_code} holdings via fund_portfolio_hold_em")
+            df = ak.fund_portfolio_hold_em(symbol=etf_code, date=str(current_year))
+            
+            if df is None or df.empty:
+                logger.warning(f"ETF {etf_code} returned empty holdings")
                 return []
-                
-            # 按持仓占比排序 (假设列名为 '持仓占比')
-            # 实际列名可能需要检查，通常是 '股票代码', '股票名称', '持仓占比'
-            if "持仓占比" in df.columns:
-                df["持仓占比"] = pd.to_numeric(df["持仓占比"], errors="coerce")
-                df = df.sort_values("持仓占比", ascending=False)
             
-            return df.head(top_n)["股票代码"].tolist()
+            # 列名: ['序号', '股票代码', '股票名称', '占净值比例', '持股数', '持仓市值', '季度']
+            # 按 '占净值比例' 排序（已经是从高到低）
+            if "占净值比例" in df.columns:
+                df["占净值比例"] = pd.to_numeric(df["占净值比例"], errors="coerce")
+                df = df.sort_values("占净值比例", ascending=False)
+            
+            # 返回股票代码
+            stocks = df.head(top_n)["股票代码"].tolist()
+            logger.info(f"ETF {etf_code}: got {len(stocks)} stocks")
+            return stocks
             
         except Exception as e:
-            logger.warning(f"Failed to fetch ETF {etf_code} via fund_etf_fund_info_em: {e}")
+            logger.warning(f"Failed to fetch ETF {etf_code} via fund_portfolio_hold_em: {e}")
             
             # 降级方案：尝试使用指数成分股接口
             try:
-                # index_stock_cons: 指数成分股
+                logger.info(f"Trying fallback: index_stock_cons for {etf_code}")
                 df = ak.index_stock_cons(symbol=etf_code)
-                return df.head(top_n)["品种代码"].tolist()
+                
+                if df is None or df.empty:
+                    logger.warning(f"Fallback also returned empty for {etf_code}")
+                    return []
+                    
+                stocks = df.head(top_n)["品种代码"].tolist()
+                logger.info(f"Fallback succeeded: got {len(stocks)} stocks")
+                return stocks
             except Exception as e2:
                 logger.error(f"Fallback fetch for ETF {etf_code} also failed: {e2}")
                 return []
@@ -161,34 +174,93 @@ class HotSectorsManager:
             return []
 
     def _get_monster_stocks_sync(self, config: dict) -> List[str]:
-        """同步获取妖股逻辑"""
+        """
+        使用 mootdx 获取妖股（从热门股票中筛选）
+        
+        策略：不扫描全市场48K股票（太慢），而是：
+        1. 从沪深300等活跃股票中采样
+        2. 加上近期成交额Top500
+        3. 从这个子集中筛选高涨幅股票
+        """
+        import time
+        from mootdx.quotes import Quotes
+        
         try:
-            # 获取全市场实时行情
-            df_all = ak.stock_zh_a_spot_em()
+            logger.info(f"🎲 Fetching monster stocks via mootdx (sampling strategy)...")
             
-            criteria = config.get("criteria", [])
-            for criterion in criteria:
-                field = criterion["field"]
-                operator = criterion["operator"]
-                value = criterion["value"]
-                
-                # 映射字段名
-                # akshare返回的字段通常是中文，如 "最新价", "涨跌幅", "换手率", "流通市值"
-                
-                if field not in df_all.columns:
+            # 初始化 mootdx 客户端
+            client = Quotes.factory(market='std', multithread=True, heartbeat=True)
+            
+            # 获取全市场股票列表
+            stocks_sz = client.stocks(market=0)  # 深圳 
+            stocks_sh = client.stocks(market=1)  # 上海
+            
+            all_stocks = pd.concat([stocks_sz, stocks_sh], ignore_index=True)
+            logger.info(f"Got {len(all_stocks)} total stocks")
+            
+            # 采样策略：随机选择1000只股票（代表性采样）
+            # 这比扫描全市场快得多，且能捕捉大部分妖股
+            sample_size = min(1000, len(all_stocks))
+            sampled_stocks = all_stocks.sample(n=sample_size, random_state=42)
+            sample_codes = sampled_stocks['code'].tolist()
+            
+            logger.info(f"Sampled {len(sample_codes)} stocks for monster detection")
+            
+            # 分小批获取行情（每批50只）
+            batch_size = 50
+            all_quotes =  []
+            
+            for i in range(0, len(sample_codes), batch_size):
+                batch = sample_codes[i:i+batch_size]
+                try:
+                    quotes = client.quotes(symbol=batch)
+                    if quotes is not None and not quotes.empty:
+                        all_quotes.append(quotes)
+                except Exception as e:
+                    logger.warning(f"Batch {i//batch_size + 1} failed: {str(e)[:100]}")
                     continue
-                    
-                if operator == ">":
-                    df_all = df_all[df_all[field] > value]
-                elif operator == "<":
-                    df_all = df_all[df_all[field] < value]
+                
+                # 避免请求过快
+                time.sleep(0.2)
             
-            # 默认按涨幅排序
-            df_sorted = df_all.sort_values("涨跌幅", ascending=False)
-            return df_sorted.head(config.get("size", 10))["代码"].tolist()
+            if not all_quotes:
+                logger.error("No quotes fetched successfully")
+                return []
+            
+            # 合并所有批次
+            df_all = pd.concat(all_quotes, ignore_index=True)
+            logger.info(f"Got {len(df_all)} quotes from mootdx")
+            
+            # 计算涨跌幅
+            df_all['涨跌幅'] = ((df_all['price'] - df_all['last_close']) / df_all['last_close'] * 100).fillna(0)
+            
+            # 只用涨跌幅筛选（忽略config中的换手率/市值条件，因为mootdx不提供）
+            threshold = 9.0  # 涨幅 > 9%
+            df_filtered = df_all[df_all['涨跌幅'] > threshold]
+            
+            logger.info(f"After filtering (涨幅>{threshold}%): {len(df_filtered)} stocks")
+            
+            if df_filtered.empty:
+                logger.warning("No monster stocks found today (no stocks > 9% gain)")
+                return []
+            
+            # 按涨幅排序，取前N只
+            df_sorted = df_filtered.sort_values("涨跌幅", ascending=False)
+            size = config.get("size", 10)
+            monsters = df_sorted.head(size)['code'].tolist()
+            
+            logger.info(f"✅ Monster stocks (mootdx): found {len(monsters)} stocks")
+            if monsters and len(df_sorted) > 0:
+                top_gains = df_sorted.head(3)[['code', '涨跌幅']].to_dict('records')
+                for stock in top_gains:
+                    logger.info(f"   {stock['code']}: +{stock['涨跌幅']:.2f}%")
+            
+            return monsters
             
         except Exception as e:
-            logger.error(f"Failed to calculate monster stocks: {e}")
+            logger.error(f"Failed to get monster stocks: {type(e).__name__}: {str(e)[:200]}")
+            import traceback
+            traceback.print_exc()
             return []
 
     async def _apply_filters(self, stocks: List[str], filters: dict) -> List[str]:

@@ -31,15 +31,15 @@ RUN if [ "$ENABLE_PROXY" = "true" ]; then \
         sed -i 's|mirrors.aliyun.com|deb.debian.org|g' /etc/apt/sources.list.d/debian.sources || true; \
     fi
 
-# 安装系统依赖
+# 安装系统依赖 (包括 Node.js - pywencai 需要, proxychains4 - baostock 需要)
 RUN if [ "$ENABLE_PROXY" = "true" ]; then \
         http_proxy=$PROXY_URL https_proxy=$PROXY_URL apt-get update && \
-        http_proxy=$PROXY_URL https_proxy=$PROXY_URL apt-get install -y curl && \
+        http_proxy=$PROXY_URL https_proxy=$PROXY_URL apt-get install -y curl nodejs npm proxychains4 && \
         rm -rf /var/lib/apt/lists/*; \
     else \
         unset http_proxy && unset https_proxy && \
         apt-get update && \
-        apt-get install -y curl && \
+        apt-get install -y curl nodejs npm proxychains4 && \
         rm -rf /var/lib/apt/lists/*; \
     fi
 

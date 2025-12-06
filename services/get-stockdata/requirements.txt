@@ -33,9 +33,9 @@ pytdx>=1.72                     # 通达信Python版数据接口
 baostock>=0.8.8                 # 证券宝金融数据平台
 
 # 新增A股数据源
-easyquotation>=0.4.0            # 简单易用的行情接口库
+easyquotation>=0.4.0            # 简单易用的行情接口库（多源：sina/tencent）
+pywencai>=0.1.0                 # 同花顺i问财接口（自然语言选股，需Node.js）
 qstock>=1.1.5                   # 专业股票数据获取库
-pytdx>=1.2.2                    # 通达信数据接口Python版
 
 # 通用依赖
 requests>=2.31.0                # HTTP请求
