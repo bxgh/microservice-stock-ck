@@ -43,6 +43,15 @@ RUN if [ "$ENABLE_PROXY" = "true" ]; then \
         rm -rf /var/lib/apt/lists/*; \
     fi
 
+# 配置 proxychains4 代理 (baostock 需要 TCP 代理)
+# 使用 dynamic_chain 模式，允许代理失败时跳过
+ARG PROXY_HOST=192.168.151.18
+ARG PROXY_PORT=3128
+RUN sed -i 's/^strict_chain/#strict_chain/' /etc/proxychains4.conf && \
+    sed -i 's/^#dynamic_chain/dynamic_chain/' /etc/proxychains4.conf && \
+    sed -i 's/^socks4.*127.0.0.1.*9050/#socks4 127.0.0.1 9050/' /etc/proxychains4.conf && \
+    echo "http ${PROXY_HOST} ${PROXY_PORT}" >> /etc/proxychains4.conf
+
 # 配置pip使用国内源和代理
 RUN mkdir -p ~/.pip && \
     echo '[global]' > ~/.pip/pip.conf && \

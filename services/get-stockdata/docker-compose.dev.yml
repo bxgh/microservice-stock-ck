@@ -21,10 +21,11 @@ services:
       - ENVIRONMENT=development
       - PYTHONUNBUFFERED=1
       - TZ=Asia/Shanghai
-      - HTTP_PROXY=http://127.0.0.1:8118
-      - HTTPS_PROXY=http://127.0.0.1:8118
-      - http_proxy=http://127.0.0.1:8118
-      - https_proxy=http://127.0.0.1:8118
+      # 注释掉无效的代理配置
+      # - HTTP_PROXY=http://127.0.0.1:8118
+      # - HTTPS_PROXY=http://127.0.0.1:8118
+      # - http_proxy=http://127.0.0.1:8118
+      # - https_proxy=http://127.0.0.1:8118
       - CLICKHOUSE_HOST=${CLICKHOUSE_HOST:-microservice-stock-clickhouse}
       - CLICKHOUSE_PORT=${CLICKHOUSE_PORT:-9000}
       - CLICKHOUSE_DB=${CLICKHOUSE_DB:-stock_data}

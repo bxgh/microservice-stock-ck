@@ -149,10 +149,12 @@ class AkshareProvider(DataProvider):
             loop = asyncio.get_event_loop()
             
             # 根据类型选择 API
+            symbol = kwargs.get('symbol', '火箭发射')  # 异动类型参数
+            
             api_map = {
                 "hot": lambda: self._ak.stock_hot_rank_em(),
                 "surge": lambda: self._ak.stock_hot_up_em(),
-                "anomaly": lambda: self._ak.stock_changes_em(),
+                "anomaly": lambda: self._ak.stock_changes_em(symbol=symbol),  # 传递异动类型
                 "limit_up": lambda: self._ak.stock_zt_pool_em(date=today),
                 "continuous_limit_up": lambda: self._ak.stock_zt_pool_strong_em(date=today),
                 "dragon_tiger": lambda: self._ak.stock_lhb_detail_em(

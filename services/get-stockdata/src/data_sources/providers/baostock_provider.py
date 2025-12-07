@@ -173,6 +173,7 @@ class BaostockProvider(DataProvider):
         end_date: Optional[str] = None,
         frequency: str = "d",
         fields: str = "date,open,high,low,close,volume,amount,pctChg",
+        adjustflag: str = "3",  # 默认不复权: 1=后复权, 2=前复权, 3=不复权
         **kwargs
     ) -> DataResult:
         """获取历史K线数据
@@ -183,6 +184,7 @@ class BaostockProvider(DataProvider):
             end_date: 结束日期 (YYYY-MM-DD), 默认今天
             frequency: 周期 ("d"=日, "w"=周, "m"=月, "5"=5分钟, ...)
             fields: 返回字段
+            adjustflag: 复权类型 (1=后复权, 2=前复权, 3=不复权)
         
         Returns:
             DataFrame 包含 OHLCV 等数据
@@ -209,7 +211,8 @@ class BaostockProvider(DataProvider):
                 lambda: self._bs.query_history_k_data_plus(
                     bs_code, fields,
                     start_date=start, end_date=end,
-                    frequency=frequency
+                    frequency=frequency,
+                    adjustflag=adjustflag,  # 复权参数
                 )
             )
             

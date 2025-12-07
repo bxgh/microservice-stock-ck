@@ -10,7 +10,8 @@ EPIC-007 数据服务标准化 Schema 定义
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any
+from enum import Enum
 import pandas as pd
 
 
@@ -132,37 +133,270 @@ class QuoteWithOrderbookSchema(QuoteSchema):
         return cols
 
 
-# 为 Story 007.02b (TickService) 预留
+# ========== Story 007.02b: TickService Schema ==========
+
 @dataclass
 class TickSchema:
-    """分笔成交标准字段定义（预留）
+    """分笔成交标准字段定义
     
-    用于 Story 007.02b TickService。
+    所有 Provider 返回的分笔数据必须符合此格式。
+    
+    字段说明:
+        - code: 股票代码 (6位数字字符串)
+        - time: 成交时间 (HH:MM:SS)
+        - price: 成交价格
+        - volume: 成交量 (手)
+        - amount: 成交额 (元)
+        - direction: 买卖方向 (B=主动买入, S=主动卖出, N=中性)
+        - tick_type: 成交类型 (0=买盘, 1=卖盘, 2=中性)
+        - timestamp: 数据时间戳
     """
     code: str
     time: str  # HH:MM:SS
     price: float
     volume: int  # 手
     amount: float  # 元
-    direction: str  # B/S/N (买/卖/中性)
+    direction: str = 'N'  # B/S/N (买/卖/中性)
+    tick_type: int = 2  # 0=买盘, 1=卖盘, 2=中性
     timestamp: datetime = field(default_factory=datetime.now)
-
-
-# 为 Story 007.03 (RankingService) 预留
-@dataclass
-class RankingSchema:
-    """榜单数据标准字段定义（预留）
     
-    用于 Story 007.03 RankingService。
+    @staticmethod
+    def get_required_columns() -> List[str]:
+        """获取必需字段列表"""
+        return ['code', 'time', 'price', 'volume', 'amount']
+    
+    @staticmethod
+    def get_optional_columns() -> List[str]:
+        """获取可选字段列表"""
+        return ['direction', 'tick_type', 'timestamp']
+    
+    @staticmethod
+    def validate_dataframe(df: pd.DataFrame) -> bool:
+        """验证 DataFrame 是否符合标准格式"""
+        required = set(TickSchema.get_required_columns())
+        actual = set(df.columns)
+        return required.issubset(actual)
+
+
+@dataclass
+class CapitalFlowResult:
+    """资金流向分析结果
+    
+    字段说明:
+        - code: 股票代码
+        - date: 交易日期
+        - total_buy_amount: 主动买入总金额 (元)
+        - total_sell_amount: 主动卖出总金额 (元)
+        - net_inflow: 净流入 (元, 正数=流入, 负数=流出)
+        - large_order_count: 大单笔数 (金额 >= 阈值)
+        - large_order_amount: 大单总金额 (元)
+        - buy_sell_ratio: 买卖比 (买入金额 / 卖出金额)
+        - time_analysis: 分时段资金分析 (可选)
     """
+    code: str
+    date: str
+    total_buy_amount: float
+    total_sell_amount: float
+    net_inflow: float
+    large_order_count: int
+    large_order_amount: float
+    buy_sell_ratio: float
+    time_analysis: Optional[Dict[str, Dict]] = None  # 分时段分析
+    timestamp: datetime = field(default_factory=datetime.now)
+    
+    @property
+    def is_inflow(self) -> bool:
+        """是否净流入"""
+        return self.net_inflow > 0
+    
+    @property
+    def inflow_strength(self) -> str:
+        """流入强度评级"""
+        if self.net_inflow > 10_000_000:
+            return "强流入"
+        elif self.net_inflow > 5_000_000:
+            return "中等流入"
+        elif self.net_inflow > 0:
+            return "弱流入"
+        elif self.net_inflow > -5_000_000:
+            return "弱流出"
+        elif self.net_inflow > -10_000_000:
+            return "中等流出"
+        else:
+            return "强流出"
+
+
+# ========== Story 007.03: RankingService Schema ==========
+
+class AnomalyType(str, Enum):
+    """盘口异动类型枚举（完整的16种）
+    
+    基于东方财富网的盘口异动分类。
+    """
+    # === 上涨机会 (8种) ===
+    ROCKET_LAUNCH = "火箭发射"        # 短时急涨(5分钟>3%)
+    QUICK_REBOUND = "快速反弹"        # 从低位快速反弹
+    LIMIT_UP_SEALED = "封涨停板"      # 封住涨停板
+    LIMIT_DOWN_OPENED = "打开跌停板"  # 跌停板被打开
+    TOUCH_LIMIT_UP = "触及涨停"       # 触及涨停未封住
+    LARGE_BUY = "大笔买入"            # 大单买入(>50万)
+    LARGE_BUY_QUEUE = "有大买盘"      # 大买盘堆积
+    AUCTION_RALLY = "竞价上涨"        # 集合竞价大涨
+    
+    # === 风险预警 (8种) ===
+    ACCELERATED_DECLINE = "加速下跌"  # 短时快速下跌
+    HIGH_DIVE = "高台跳水"            # 高位急速跳水
+    LIMIT_DOWN_SEALED = "封跌停板"    # 封住跌停板
+    LIMIT_UP_OPENED = "打开涨停板"    # 涨停板被打开
+    TOUCH_LIMIT_DOWN = "触及跌停"     # 触及跌停未封住
+    LARGE_SELL = "大笔卖出"           # 大单卖出
+    LARGE_SELL_QUEUE = "有大卖盘"     # 大卖盘堆积
+    AUCTION_DECLINE = "竞价下跌"      # 集合竞价大跌
+    
+    # === 全部 ===
+    ALL_ANOMALIES = "盘中异动"        # 全部类型异动
+
+
+@dataclass
+class RankingItem:
+    """榜单项标准字段定义
+    
+    通用榜单数据结构，适用于人气榜、飙升榜等。
+    
+    字段说明:
+        - rank: 排名
+        - code: 股票代码 (6位数字字符串)
+        - name: 股票名称
+        - score: 评分/热度值 (可选)
+        - change_pct: 涨跌幅 (%)
+        - latest_price: 最新价 (元)
+        - volume: 成交量 (手)
+        - amount: 成交额 (元)
+        - turnover_rate: 换手率 (%, 可选)
+        - timestamp: 数据时间戳
+        - metadata: 扩展字段（存储特殊榜单的额外信息）
+    """
+    # 基础标识
     rank: int
     code: str
     name: str
+    
+    # 核心字段
     change_pct: float
-    price: float
-    volume: float
-    amount: float
+    latest_price: float
+    
+    # 成交统计
+    volume: float = 0.0  # 手
+    amount: float = 0.0  # 元
+    
+    # 可选字段
+    score: Optional[float] = None  # 热度值/评分
+    turnover_rate: Optional[float] = None  # 换手率
     timestamp: datetime = field(default_factory=datetime.now)
+    
+    # 扩展字段（存储特殊信息）
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    
+    @staticmethod
+    def from_dict(data: Dict[str, Any]) -> 'RankingItem':
+        """从字典创建RankingItem"""
+        return RankingItem(
+            rank=data.get('rank', 0),
+            code=data.get('code', ''),
+            name=data.get('name', ''),
+            change_pct=data.get('change_pct', 0.0),
+            latest_price=data.get('latest_price', 0.0),
+            volume=data.get('volume', 0.0),
+            amount=data.get('amount', 0.0),
+            score=data.get('score'),
+            turnover_rate=data.get('turnover_rate'),
+            metadata=data.get('metadata', {})
+        )
+
+
+@dataclass
+class LimitUpItem(RankingItem):
+    """涨停池/连板榜单项
+    
+    扩展标准榜单，增加涨停特有字段。
+    
+    字段说明:
+        - limit_up_time: 涨停时间 (HH:MM:SS)
+        - open_count: 开板次数
+        - continuous_days: 连板天数
+        - first_limit_up_time: 首次涨停时间 (可选)
+        - reason: 涨停原因/概念 (可选)
+    """
+    limit_up_time: str = ""  # 涨停时间
+    open_count: int = 0  # 开板次数
+    continuous_days: int = 0  # 连板天数
+    first_limit_up_time: Optional[str] = None  # 首次涨停时间
+    reason: Optional[str] = None  # 涨停原因
+    
+    @staticmethod
+    def from_ranking_item(item: RankingItem, **kwargs) -> 'LimitUpItem':
+        """从RankingItem创建LimitUpItem"""
+        return LimitUpItem(
+            rank=item.rank,
+            code=item.code,
+            name=item.name,
+            change_pct=item.change_pct,
+            latest_price=item.latest_price,
+            volume=item.volume,
+            amount=item.amount,
+            score=item.score,
+            turnover_rate=item.turnover_rate,
+            timestamp=item.timestamp,
+            metadata=item.metadata,
+            **kwargs
+        )
+
+
+@dataclass
+class DragonTigerItem(RankingItem):
+    """龙虎榜榜单项
+    
+    扩展标准榜单，增加龙虎榜特有字段。
+    
+    字段说明:
+        - net_amount: 净买入额 (元, 正数=净买入, 负数=净卖出)
+        - buy_amount: 买入总额 (元)
+        - sell_amount: 卖出总额 (元)
+        - reason: 上榜原因 (如"日涨幅偏离值达7%")
+        - institution_count: 机构席位数
+    """
+    net_amount: float = 0.0  # 净买入额
+    buy_amount: float = 0.0  # 买入总额
+    sell_amount: float = 0.0  # 卖出总额
+    reason: str = ""  # 上榜原因
+    institution_count: int = 0  # 机构席位数
+    
+    @property
+    def is_net_buy(self) -> bool:
+        """是否净买入"""
+        return self.net_amount > 0
+    
+    @staticmethod
+    def from_ranking_item(item: RankingItem, **kwargs) -> 'DragonTigerItem':
+        """从RankingItem创建DragonTigerItem"""
+        return DragonTigerItem(
+            rank=item.rank,
+            code=item.code,
+            name=item.name,
+            change_pct=item.change_pct,
+            latest_price=item.latest_price,
+            volume=item.volume,
+            amount=item.amount,
+            score=item.score,
+            turnover_rate=item.turnover_rate,
+            timestamp=item.timestamp,
+            metadata=item.metadata,
+            **kwargs
+        )
+
+
+# Legacy alias for backward compatibility
+RankingSchema = RankingItem
 
 
 # 字段映射工具
@@ -204,6 +438,52 @@ class FieldMapper:
         'ask_vol4': 'ask_volume4',
         'ask5': 'ask_price5',
         'ask_vol5': 'ask_volume5',
+    }
+    
+    # mootdx 分笔数据字段映射
+    MOOTDX_TICK_MAPPING = {
+        'time': 'time',      # 成交时间
+        'price': 'price',    # 成交价格
+        'vol': 'volume',     # 成交量 (手)
+        'amount': 'amount',  # 成交额 (元)
+        'type': 'tick_type', # 成交类型 (0=买盘, 1=卖盘, 2=中性)
+    }
+    
+    # akshare 榜单字段映射 (Story 007.03)
+    AKSHARE_RANKING_MAPPING = {
+        # 通用榜单字段
+        '序号': 'rank',
+        '排名': 'rank',
+        '代码': 'code',
+        '股票代码': 'code',
+        '名称': 'name',
+        '股票名称': 'name',
+        '最新价': 'latest_price',
+        '现价': 'latest_price',
+        '涨跌幅': 'change_pct',
+        '成交量': 'volume',
+        '成交额': 'amount',
+        '换手率': 'turnover_rate',
+        '人气': 'score',
+        '热度': 'score',
+        
+        # 涨停池特有字段
+        '涨停价格': 'latest_price',
+        '首次封板时间': 'limit_up_time',
+        '封板时间': 'limit_up_time',
+        '连板数': 'continuous_days',
+        '连续涨停天数': 'continuous_days',
+        '开板次数': 'open_count',
+        '涨停原因': 'reason',
+        '所属概念': 'reason',
+        
+        # 龙虎榜特有字段
+        '净买入': 'net_amount',
+        '净额': 'net_amount',
+        '买入额': 'buy_amount',
+        '卖出额': 'sell_amount',
+        '上榜原因': 'reason',
+        '机构数': 'institution_count',
     }
     
     # easyquotation 字段映射 (实际返回字段)

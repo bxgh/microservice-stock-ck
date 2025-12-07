@@ -9,58 +9,79 @@ EPIC-007 数据服务层模块
 - TickService: 分笔成交服务 (Story 007.02b)
 - HistoryService: 历史K线服务 (Story 007.04)
 - RankingService: 榜单数据服务 (Story 007.03)
-
-使用示例:
-    from src.data_services import QuotesService
-    
-    service = QuotesService()
-    await service.initialize()
-    
-    # 获取行情
-    df = await service.get_quotes(['000001', '600519'])
-    
-    # 涨停股票
-    limit_up = await service.get_limit_up_stocks()
-    
-    await service.close()
+- IndexService: 指数与ETF服务 (Story 007.05)
 
 @author: EPIC-007
 @date: 2025-12-06
 """
 
-# 核心服务
 from .quotes_service import QuotesService
-
-# 基础组件
-from .cache_manager import (
-    CacheManager,
-    CacheTTLStrategy,
-    TradingAwareTTL,
-    FixedTTL,
-)
-
+from .tick_service import TickService
+from .ranking_service import RankingService
+from .history_service import HistoryService, AdjustType, Frequency
+from .index_service import IndexService
+from .cache_manager import CacheManager, TradingAwareTTL
 from .schemas import (
     QuoteSchema,
     QuoteWithOrderbookSchema,
     TickSchema,
+    CapitalFlowResult,
     RankingSchema,
+    RankingItem,
+    LimitUpItem,
+    DragonTigerItem,
+    AnomalyType,
     FieldMapper,
+)
+from .tick_analyzer import TickAnalyzer
+from .market_utils import (
+    is_st_stock,
+    get_board_type,
+    get_price_limit,
+    is_limit_up,
+    is_limit_down,
+    calculate_change_pct,
+    validate_price_change,
 )
 
 __all__ = [
-    # 服务
+    # Services
     'QuotesService',
+    'TickService',
+    'RankingService',
+    'HistoryService',
+    'IndexService',
     
-    # 缓存
+    # History Types
+    'AdjustType',
+    'Frequency',
+    
+    # Components
     'CacheManager',
-    'CacheTTLStrategy',
     'TradingAwareTTL',
-    'FixedTTL',
+    'TickAnalyzer',
     
-    # Schema
+    # Market Utils
+    'is_st_stock',
+    'get_board_type',
+    'get_price_limit',
+    'is_limit_up',
+    'is_limit_down',
+    'calculate_change_pct',
+    'validate_price_change',
+    
+    # Schemas
     'QuoteSchema',
     'QuoteWithOrderbookSchema',
     'TickSchema',
+    'CapitalFlowResult',
     'RankingSchema',
+    'RankingItem',
+    'LimitUpItem',
+    'DragonTigerItem',
+    'AnomalyType',
     'FieldMapper',
 ]
+
+
+

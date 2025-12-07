@@ -201,14 +201,20 @@ class MootdxProvider(DataProvider):
     async def _fetch_tick(
         self,
         code: str,
+        date: str = None,
         start: int = 0,
         count: int = 1000,
         **kwargs
     ) -> DataResult:
         """获取分笔成交数据
         
+        支持两种模式:
+        1. 历史分笔 (date != None): 获取指定日期的分笔数据
+        2. 实时分笔 (date == None): 获取当日最新分笔 (仅盘中有效)
+        
         Args:
             code: 股票代码
+            date: 日期 (YYYY-MM-DD 或 YYYYMMDD)，None 表示实时分笔
             start: 起始位置 (0=最新)
             count: 获取数量
         
@@ -222,23 +228,51 @@ class MootdxProvider(DataProvider):
                 return DataResult(success=False, error="Client not available")
             
             loop = asyncio.get_event_loop()
-            df = await loop.run_in_executor(
-                None,
-                lambda: self._client.transactions(symbol=code, start=start, offset=count)
-            )
+            
+            # 根据是否传入 date 参数，选择不同的获取方式
+            if date:
+                # 历史分笔模式: 传入 date 参数
+                # 标准化日期格式: YYYY-MM-DD -> YYYYMMDD
+                date_str = date.replace('-', '')
+                
+                df = await loop.run_in_executor(
+                    None,
+                    lambda: self._client.transactions(
+                        symbol=code,
+                        date=date_str,
+                        start=start,
+                        count=count
+                    )
+                )
+                mode = f"历史分笔 ({date_str})"
+            else:
+                # 实时分笔模式: 不传 date，使用 offset
+                df = await loop.run_in_executor(
+                    None,
+                    lambda: self._client.transactions(
+                        symbol=code,
+                        start=start,
+                        offset=count
+                    )
+                )
+                mode = "实时分笔"
             
             latency_ms = (time.time() - start_time) * 1000
             
             if df is not None and len(df) > 0:
+                logger.debug(f"MootdxProvider {mode}: {len(df)} records")
                 return DataResult(
                     success=True,
                     data=df,
                     latency_ms=latency_ms,
                 )
             else:
+                error_msg = f"No tick data ({mode})"
+                if not date:
+                    error_msg += " - possibly non-trading hours"
                 return DataResult(
                     success=False,
-                    error="No tick data (possibly non-trading hours)",
+                    error=error_msg,
                     latency_ms=latency_ms,
                 )
                 
