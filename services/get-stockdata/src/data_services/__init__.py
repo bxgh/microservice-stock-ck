@@ -11,6 +11,7 @@ EPIC-007 数据服务层模块
 - RankingService: 榜单数据服务 (Story 007.03)
 - IndexService: 指数与ETF服务 (Story 007.05)
 - SectorService: 板块数据服务 (Story 007.06)
+- FinancialService: 财务报表服务 (Story 007.08)
 
 @author: EPIC-007
 @date: 2025-12-06
@@ -22,6 +23,8 @@ from .ranking_service import RankingService
 from .history_service import HistoryService, AdjustType, Frequency
 from .index_service import IndexService
 from .sector_service import SectorService
+from .financial_service import FinancialService
+from .fund_flow_service import FundFlowService
 from .cache_manager import CacheManager, TradingAwareTTL
 from .time_aware_strategy import TimeAwareStrategy, get_time_strategy
 from .schemas import (
@@ -55,6 +58,8 @@ __all__ = [
     'HistoryService',
     'IndexService',
     'SectorService',
+    'FinancialService',
+    'FundFlowService',
     
     # Strategy
     'TimeAwareStrategy',
