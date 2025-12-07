@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  quant-strategy:
+    image: quant-strategy:latest
+    container_name: quant-strategy
+    restart: unless-stopped
+    ports:
+      - "8084:8084"
+    environment:
+      - NACOS_SERVER_URL=http://nacos:8848
+      - SERVICE_NAME=quant-strategy
+      - SERVICE_GROUP=DEFAULT_GROUP
+      - SERVICE_PORT=8084
+      - LOG_LEVEL=INFO
+      - HEARTBEAT_INTERVAL=30
+      - QS_STOCKDATA_SERVICE_URL=http://get-stockdata:8080
+    networks:
+      - microservice-stock_microservice-stock
+    volumes:
+      - quant-strategy-logs:/app/logs
+      - quant-strategy-data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "--noproxy", "*", "-f", "http://localhost:8084/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  microservice-stock_microservice-stock:
+    external: true
+
+volumes:
+  quant-strategy-logs:
+    driver: local
+  quant-strategy-data:
+    driver: local
