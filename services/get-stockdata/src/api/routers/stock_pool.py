@@ -109,3 +109,137 @@ async def stop_promotion_monitor(request: Request):
     await promotion_monitor.stop()
     return {"message": "晋升监控器已停止"}
 
+
+# ======== Auto-Scaler Endpoints (US-004.04) ========
+
+@router.get("/scaling/status")
+async def get_scaling_status(request: Request):
+    """
+    获取自动扩容器状态
+    
+    返回当前层级、容量、自动模式状态、冷却状态等信息
+    """
+    auto_scaler = getattr(request.app.state, "auto_scaler", None)
+    if not auto_scaler:
+        raise HTTPException(status_code=503, detail="AutoScaler not initialized")
+    
+    return auto_scaler.get_stats()
+
+
+@router.post("/scaling/scale-up")
+async def manual_scale_up(
+    request: Request, 
+    force: bool = Query(False, description="是否强制扩容（忽略冷却期）")
+):
+    """
+    手动触发扩容
+    
+    将股票池容量提升到下一个层级
+    """
+    auto_scaler = getattr(request.app.state, "auto_scaler", None)
+    if not auto_scaler:
+        raise HTTPException(status_code=503, detail="AutoScaler not initialized")
+    
+    success = await auto_scaler.scale_up(force=force)
+    if success:
+        return {
+            "success": True,
+            "message": f"扩容成功，当前容量: {auto_scaler.get_current_capacity()}",
+            "stats": auto_scaler.get_stats()
+        }
+    else:
+        raise HTTPException(status_code=400, detail="扩容失败，可能已达最大容量或在冷却期内")
+
+
+@router.post("/scaling/scale-down")
+async def manual_scale_down(
+    request: Request,
+    force: bool = Query(False, description="是否强制缩容")
+):
+    """
+    手动触发缩容
+    
+    将股票池容量降低到上一个层级
+    """
+    auto_scaler = getattr(request.app.state, "auto_scaler", None)
+    if not auto_scaler:
+        raise HTTPException(status_code=503, detail="AutoScaler not initialized")
+    
+    success = await auto_scaler.scale_down(force=force)
+    if success:
+        return {
+            "success": True,
+            "message": f"缩容成功，当前容量: {auto_scaler.get_current_capacity()}",
+            "stats": auto_scaler.get_stats()
+        }
+    else:
+        raise HTTPException(status_code=400, detail="缩容失败，可能已达最小容量或在冷却期内")
+
+
+@router.post("/scaling/set-tier/{tier}")
+async def set_scaling_tier(request: Request, tier: int):
+    """
+    手动设置扩容层级
+    
+    Args:
+        tier: 目标层级 (0-5)，对应容量: 0=100, 1=150, 2=200, 3=300, 4=500, 5=800
+    """
+    auto_scaler = getattr(request.app.state, "auto_scaler", None)
+    if not auto_scaler:
+        raise HTTPException(status_code=503, detail="AutoScaler not initialized")
+    
+    success = await auto_scaler.set_tier(tier)
+    if success:
+        return {
+            "success": True,
+            "message": f"层级设置成功，当前容量: {auto_scaler.get_current_capacity()}",
+            "stats": auto_scaler.get_stats()
+        }
+    else:
+        raise HTTPException(status_code=400, detail=f"无效的层级: {tier}")
+
+
+@router.put("/scaling/auto-mode")
+async def toggle_auto_mode(
+    request: Request,
+    enabled: bool = Query(..., description="是否启用自动扩容")
+):
+    """
+    开关自动扩容模式
+    
+    启用后，系统会自动根据健康指标调整池大小
+    """
+    auto_scaler = getattr(request.app.state, "auto_scaler", None)
+    if not auto_scaler:
+        raise HTTPException(status_code=503, detail="AutoScaler not initialized")
+    
+    auto_scaler.set_auto_mode(enabled)
+    return {
+        "success": True,
+        "message": f"自动扩容模式已{'开启' if enabled else '关闭'}",
+        "auto_mode": enabled
+    }
+
+
+@router.post("/scaling/check")
+async def check_scale_conditions(request: Request):
+    """
+    手动检查扩容条件
+    
+    返回当前是否满足扩容/缩容条件
+    """
+    auto_scaler = getattr(request.app.state, "auto_scaler", None)
+    if not auto_scaler:
+        raise HTTPException(status_code=503, detail="AutoScaler not initialized")
+    
+    decision = await auto_scaler.check_scale_conditions()
+    return {
+        "should_scale": decision.should_scale,
+        "direction": decision.direction.value,
+        "reason": decision.reason,
+        "current_tier": decision.current_tier,
+        "target_tier": decision.target_tier,
+        "current_size": decision.current_size,
+        "target_size": decision.target_size,
+        "metrics": decision.metrics
+    }

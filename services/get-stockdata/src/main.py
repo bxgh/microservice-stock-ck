@@ -101,6 +101,8 @@ try:
     from services.stock_pool.anomaly_detector import AnomalyDetector
     from services.stock_pool.dynamic_pool_manager import DynamicPoolManager
     from services.stock_pool.promotion_monitor import PromotionMonitor
+    # US-004.04: Auto-Scaler
+    from services.stock_pool.auto_scaler import AutoScaler
     from api.routers.stock_pool import router as stock_pool_router
     # EPIC-005: Metrics and Monitoring
     from api.routers.metrics import router as metrics_router
@@ -115,6 +117,7 @@ except ImportError as e:
     PromotionMonitor = None
     PrometheusMiddleware = None
     DynamicPoolManager = None
+    AutoScaler = None
 
     @config_router.get("/test")
     async def test_config():
@@ -621,6 +624,25 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"⚠️ PromotionMonitor initialization failed: {e}")
     
+    # US-004.04: Initialize AutoScaler
+    try:
+        if AutoScaler:
+            # Get stock_pool_manager if available
+            stock_pool_manager = getattr(app.state, 'stock_pool_manager', None)
+            
+            auto_scaler = AutoScaler(
+                stock_pool_manager=stock_pool_manager,
+                check_interval=300,  # 5 minutes
+                auto_mode=False  # Start with auto mode disabled
+            )
+            app.state.auto_scaler = auto_scaler
+            
+            # Start the background check loop (but auto_mode is off)
+            auto_scaler.start()
+            logger.info("✅ AutoScaler initialized (auto_mode: OFF)")
+    except Exception as e:
+        logger.warning(f"⚠️ AutoScaler initialization failed: {e}")
+    
     # 启动后台采集任务
     global acquisition_task
     acquisition_task = asyncio.create_task(run_acquisition_loop())
@@ -644,6 +666,15 @@ async def lifespan(app: FastAPI):
                 logger.info("✅ PromotionMonitor stopped")
             except Exception as e:
                 logger.warning(f"Error stopping PromotionMonitor: {e}")
+        
+        # US-004.04: Stop AutoScaler
+        auto_scaler = getattr(app.state, 'auto_scaler', None)
+        if auto_scaler:
+            try:
+                auto_scaler.stop()
+                logger.info("✅ AutoScaler stopped")
+            except Exception as e:
+                logger.warning(f"Error stopping AutoScaler: {e}")
                 
         # 停止配置监控
         if config_manager:

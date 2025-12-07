@@ -70,6 +70,9 @@ class StockPoolManager:
         # Initialize DynamicPoolManager for promoted stocks (Story 004.03)
         self.dynamic_pool = DynamicPoolManager(max_dynamic_size=20)
         
+        # US-004.04: Dynamic pool size limit (controlled by AutoScaler)
+        self.max_pool_size = 100  # Initial capacity
+        
         # Backward compatible: use old inline config if no ConfigManager
         if not self.config_manager:
             self.config_path = Path("config/stock_pools.yaml")
@@ -177,6 +180,11 @@ class StockPoolManager:
         # 3. Merge: promoted stocks first (priority), then core pool
         # Use dict.fromkeys to preserve order and deduplicate
         full_pool = list(dict.fromkeys(promoted_stocks + core_pool))
+        
+        # US-004.04: Limit pool size based on max_pool_size
+        if len(full_pool) > self.max_pool_size:
+            logger.info(f"📊 Limiting pool from {len(full_pool)} to {self.max_pool_size}")
+            full_pool = full_pool[:self.max_pool_size]
         
         return full_pool
 
