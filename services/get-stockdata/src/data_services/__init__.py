@@ -10,6 +10,7 @@ EPIC-007 数据服务层模块
 - HistoryService: 历史K线服务 (Story 007.04)
 - RankingService: 榜单数据服务 (Story 007.03)
 - IndexService: 指数与ETF服务 (Story 007.05)
+- SectorService: 板块数据服务 (Story 007.06)
 
 @author: EPIC-007
 @date: 2025-12-06
@@ -20,7 +21,9 @@ from .tick_service import TickService
 from .ranking_service import RankingService
 from .history_service import HistoryService, AdjustType, Frequency
 from .index_service import IndexService
+from .sector_service import SectorService
 from .cache_manager import CacheManager, TradingAwareTTL
+from .time_aware_strategy import TimeAwareStrategy, get_time_strategy
 from .schemas import (
     QuoteSchema,
     QuoteWithOrderbookSchema,
@@ -51,6 +54,11 @@ __all__ = [
     'RankingService',
     'HistoryService',
     'IndexService',
+    'SectorService',
+    
+    # Strategy
+    'TimeAwareStrategy',
+    'get_time_strategy',
     
     # History Types
     'AdjustType',
