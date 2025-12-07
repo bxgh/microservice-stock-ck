@@ -12,6 +12,7 @@ import pandas as pd
 from pydantic import BaseModel
 import fnmatch
 from services.stock_pool.hot_sectors_manager import HotSectorsManager
+from services.stock_pool.dynamic_pool_manager import DynamicPoolManager
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,9 @@ class StockPoolManager:
         
         # Initialize HotSectorsManager
         self.hot_sectors_manager = HotSectorsManager(config_manager) if config_manager else None
+        
+        # Initialize DynamicPoolManager for promoted stocks (Story 004.03)
+        self.dynamic_pool = DynamicPoolManager(max_dynamic_size=20)
         
         # Backward compatible: use old inline config if no ConfigManager
         if not self.config_manager:
@@ -135,33 +139,46 @@ class StockPoolManager:
     
     async def get_current_pool(self) -> List[str]:
         """
-        获取当前激活的股票池 (支持模式切换)
+        获取当前激活的股票池 (支持模式切换和动态晋升)
         Story 004.02: Support switching between HS300 and Hot Sectors
+        Story 004.03: Include dynamically promoted stocks
         """
+        # 1. Get core pool based on mode
         if not self.config_manager:
             # Fallback to legacy behavior
-            return await self.get_hs300_top100_by_volume()
-            
-        mode = self.config_manager.get_active_mode()
-        logger.info(f"Fetching stock pool for mode: {mode}")
-        
-        stocks = []
-        if mode == "hs300_top100":
-            stocks = await self.get_hs300_top100_by_volume()
-        elif mode == "hot_sectors":
-            if self.hot_sectors_manager:
-                stocks = await self.hot_sectors_manager.get_pool()
-            else:
-                logger.error("HotSectorsManager not initialized")
-                stocks = []
-        elif mode == "custom":
-            # Story 004.05: Custom pool support (placeholder)
-            stocks = self.config_manager.get_config().get("custom", {}).get("groups", [])[0].get("codes", [])
+            core_pool = await self.get_hs300_top100_by_volume()
         else:
-            logger.warning(f"Unknown mode {mode}, falling back to HS300")
-            stocks = await self.get_hs300_top100_by_volume()
+            mode = self.config_manager.get_active_mode()
+            logger.info(f"Fetching stock pool for mode: {mode}")
             
-        return stocks
+            if mode == "hs300_top100":
+                core_pool = await self.get_hs300_top100_by_volume()
+            elif mode == "hot_sectors":
+                if self.hot_sectors_manager:
+                    core_pool = await self.hot_sectors_manager.get_pool()
+                else:
+                    logger.error("HotSectorsManager not initialized")
+                    core_pool = []
+            elif mode == "custom":
+                # Story 004.05: Custom pool support
+                custom_config = self.config_manager.get_config().get("custom", {})
+                groups = custom_config.get("groups", [])
+                core_pool = groups[0].get("codes", []) if groups else []
+            else:
+                logger.warning(f"Unknown mode {mode}, falling back to HS300")
+                core_pool = await self.get_hs300_top100_by_volume()
+        
+        # 2. Get dynamically promoted stocks (Story 004.03)
+        promoted_stocks = await self.dynamic_pool.get_all_dynamic_stocks()
+        
+        if promoted_stocks:
+            logger.info(f"🚀 Including {len(promoted_stocks)} promoted stocks in pool")
+        
+        # 3. Merge: promoted stocks first (priority), then core pool
+        # Use dict.fromkeys to preserve order and deduplicate
+        full_pool = list(dict.fromkeys(promoted_stocks + core_pool))
+        
+        return full_pool
 
     async def get_hs300_top100_by_volume(self, lookback_days: int = 5) -> List[str]:
         """

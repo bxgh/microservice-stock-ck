@@ -1,0 +1,15 @@
+# Grafana Dashboard Provisioning
+# Auto-loads dashboards from the configured folder
+
+apiVersion: 1
+
+providers:
+  - name: 'Stock Data Dashboards'
+    orgId: 1
+    folder: 'Get-StockData'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards

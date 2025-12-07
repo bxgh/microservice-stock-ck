@@ -95,18 +95,26 @@ except ImportError as e:
 
 # 导入配置管理路由
 try:
-    from api.routers.config import router as config_router
+    from api.routers.config import router as config_router, internal_router as config_internal_router
     from services.stock_pool.config_manager import StockPoolConfigManager
     # Story 004.03: Dynamic Promotion
     from services.stock_pool.anomaly_detector import AnomalyDetector
-    from services.stock_pool.dynamic_pool_manager import DynamicPoolManager, internal_router as config_internal_router
+    from services.stock_pool.dynamic_pool_manager import DynamicPoolManager
+    from services.stock_pool.promotion_monitor import PromotionMonitor
     from api.routers.stock_pool import router as stock_pool_router
+    # EPIC-005: Metrics and Monitoring
+    from api.routers.metrics import router as metrics_router
+    from api.middleware.metrics_middleware import PrometheusMiddleware
 except ImportError as e:
     print(f"Warning: config routes not found: {e}")
     from fastapi import APIRouter
     config_router = APIRouter(prefix="/api/v1/config", tags=["Configuration"])
     config_internal_router = APIRouter(prefix="/internal/config", tags=["Config Internal"])
     stock_pool_router = APIRouter(prefix="/api/v1/stock_pool", tags=["Stock Pool"])
+    metrics_router = APIRouter(tags=["Monitoring"])
+    PromotionMonitor = None
+    PrometheusMiddleware = None
+    DynamicPoolManager = None
 
     @config_router.get("/test")
     async def test_config():
@@ -443,7 +451,7 @@ async def run_acquisition_loop():
     
     # Story 004.03: Initialize Dynamic Promotion Components
     anomaly_detector = AnomalyDetector()
-    dynamic_manager = DynamicPoolManager(max_dynamic_size=10)
+    dynamic_manager = DynamicPoolManager(max_dynamic_size=20)  # Increased to 20
     
     # Store dynamic manager in app state for API access
     app.state.dynamic_manager = dynamic_manager
@@ -555,6 +563,7 @@ async def lifespan(app: FastAPI):
     # 尝试初始化配置管理器
     config_manager = None
     scheduler = None
+    promotion_monitor = None
     
     try:
         from services.stock_pool.config_manager import StockPoolConfigManager
@@ -584,6 +593,34 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"⚠️ Scheduler initialization failed: {e}")
     
+    # Story 004.03: Initialize PromotionMonitor
+    try:
+        if PromotionMonitor:
+            from data_services.ranking_service import RankingService
+            
+            # Create DynamicPoolManager for the monitor
+            dynamic_pool = DynamicPoolManager(max_dynamic_size=20)
+            app.state.dynamic_manager = dynamic_pool
+            
+            # Create RankingService instance
+            ranking_service = RankingService()
+            
+            # Create and start PromotionMonitor
+            promotion_monitor = PromotionMonitor(
+                dynamic_pool=dynamic_pool,
+                ranking_service=ranking_service,
+                scan_interval=300,  # 5 minutes
+                top_n=20,
+                ttl_minutes=30
+            )
+            app.state.promotion_monitor = promotion_monitor
+            
+            # Start the monitor (it will only run during trading hours)
+            await promotion_monitor.start()
+            logger.info("✅ PromotionMonitor initialized and started")
+    except Exception as e:
+        logger.warning(f"⚠️ PromotionMonitor initialization failed: {e}")
+    
     # 启动后台采集任务
     global acquisition_task
     acquisition_task = asyncio.create_task(run_acquisition_loop())
@@ -599,6 +636,14 @@ async def lifespan(app: FastAPI):
                 await acquisition_task
             except asyncio.CancelledError:
                 logger.info("Acquisition task cancelled")
+        
+        # Story 004.03: Stop PromotionMonitor
+        if promotion_monitor:
+            try:
+                await promotion_monitor.stop()
+                logger.info("✅ PromotionMonitor stopped")
+            except Exception as e:
+                logger.warning(f"Error stopping PromotionMonitor: {e}")
                 
         # 停止配置监控
         if config_manager:
@@ -742,6 +787,10 @@ def create_app() -> FastAPI:
     # 添加中间件
     app.middleware("http")(add_cors_headers)
     app.middleware("http")(log_requests)
+    
+    # EPIC-005: Add Prometheus metrics middleware
+    if PrometheusMiddleware:
+        app.add_middleware(PrometheusMiddleware)
 
     # 注册路由
     app.include_router(health_router)
@@ -753,6 +802,8 @@ def create_app() -> FastAPI:
     app.include_router(fenbi_internal_router)  # Fenbi内部路由
     app.include_router(config_router)  # 配置管理路由（Story 004.05）
     app.include_router(config_internal_router)  # 配置管理内部路由
+    app.include_router(stock_pool_router)  # Story 004.03: 股票池管理路由
+    app.include_router(metrics_router)  # EPIC-005: Prometheus metrics
 
     return app
 
