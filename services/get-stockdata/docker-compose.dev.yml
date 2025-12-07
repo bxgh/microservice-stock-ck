@@ -1,0 +1,64 @@
+services:
+  get-stockdata:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - ENABLE_PROXY=true
+        - PROXY_URL=http://192.168.151.18:3128
+    image: get-stockdata:${VERSION:-latest}
+    container_name: get-stockdata-api-dev
+    restart: unless-stopped
+    ports:
+      - "${SERVICE_PORT:-8086}:8083"
+    environment:
+      - NACOS_SERVER_URL=${NACOS_SERVER_URL:-http://127.0.0.1:8848}
+      - SERVICE_NAME=get-stockdata
+      - SERVICE_GROUP=DEFAULT_GROUP
+      - SERVICE_PORT=8083
+      - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
+      - HEARTBEAT_INTERVAL=30
+      - ENVIRONMENT=development
+      - PYTHONUNBUFFERED=1
+      - TZ=Asia/Shanghai
+      # 注释掉无效的代理配置
+      # - HTTP_PROXY=http://127.0.0.1:8118
+      # - HTTPS_PROXY=http://127.0.0.1:8118
+      # - http_proxy=http://127.0.0.1:8118
+      # - https_proxy=http://127.0.0.1:8118
+      - CLICKHOUSE_HOST=${CLICKHOUSE_HOST:-microservice-stock-clickhouse}
+      - CLICKHOUSE_PORT=${CLICKHOUSE_PORT:-9000}
+      - CLICKHOUSE_DB=${CLICKHOUSE_DB:-stock_data}
+      - CLICKHOUSE_USER=${CLICKHOUSE_USER:-admin}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-admin123}
+    # 🔥 开发模式启动命令 - 启用热加载
+    command: >
+      uvicorn src.main:app
+      --host 0.0.0.0
+      --port 8083
+      --reload
+      --reload-dir /app/src
+      --log-level debug
+    network_mode: host
+    volumes:
+      # ✅ 源码热加载 - 读写模式
+      - ./src:/app/src
+      - ./config:/app/config
+      - ./tests:/app/tests  # ✅ 挂载测试代码（方便容器内测试）
+      - ./scripts:/app/scripts # ✅ 挂载脚本目录
+      - get-stockdata-logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "--noproxy", "*", "-f", "http://localhost:8083/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  microservice-stock:
+    external: true
+    name: microservice-stock_microservice-stock
+
+volumes:
+  get-stockdata-logs:
+    driver: local

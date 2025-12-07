@@ -1,0 +1,23 @@
+# Docker 定时清理任务示例
+# 使用方法: crontab -e 然后添加这些任务
+
+# 每天凌晨 2 点执行完整的 Docker 清理
+0 2 * * * /home/bxgh/microservice-stock/services/get-stockdata/scripts/docker-cleanup.sh
+
+# 每周日凌晨 3 点执行深度清理（包括未使用卷）
+0 3 * * 0 /home/bxgh/microservice-stock/services/get-stockdata/scripts/docker-cleanup.sh && docker volume prune -f
+
+# 每小时清理已停止的容器
+0 * * * * docker container prune -f
+
+# 每 6 小时清理未使用网络
+0 */6 * * * docker network prune -f
+
+# 每天清理超过 30 天的镜像
+0 1 * * * docker image prune -a -f --filter "until=720h"
+
+# 每周一显示磁盘使用情况报告
+0 9 * * 1 docker system df >> /var/log/docker-weekly-report.log
+
+# 每天清理构建缓存（注意：这会增加构建时间）
+0 4 * * * docker builder prune -f

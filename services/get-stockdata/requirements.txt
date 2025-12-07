@@ -1,12 +1,13 @@
-# Task Scheduler 微服务完整依赖
+# Get Stock Data 微服务完整依赖
 
 # Web框架
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
 pydantic>=2.5.0
 
-# 任务调度
-apscheduler>=3.10.0
+# HTTP客户端和重试机制
+aiohttp>=3.9.0
+tenacity>=8.2.0
 
 # 服务注册发现
 aiohttp>=3.9.0
@@ -16,6 +17,32 @@ sqlalchemy>=1.4.0
 alembic>=1.8.0
 pymysql>=1.0.0
 redis>=5.0.0
+redis[hiredis]>=2.0.0
+clickhouse-driver>=0.2.6          # ClickHouse数据库驱动
+
+# 股票数据获取库
+yfinance>=0.2.18                 # Yahoo Finance API
+alpha-vantage>=2.3.1            # Alpha Vantage API
+pandas-datareader>=0.10.0       # 多数据源支持
+
+# 中国股票数据获取库
+akshare>=1.11.0                 # AKShare金融数据接口库
+tushare>=1.2.89                 # Tushare金融数据接口
+mootdx>=0.11.7                  # 通达信数据源（A股、港股、美股）
+pytdx>=1.72                     # 通达信Python版数据接口
+baostock>=0.8.8                 # 证券宝金融数据平台
+
+# 新增A股数据源
+easyquotation>=0.4.0            # 简单易用的行情接口库（多源：sina/tencent）
+pywencai>=0.1.0                 # 同花顺i问财接口（自然语言选股，需Node.js）
+qstock>=1.1.5                   # 专业股票数据获取库
+
+# 通用依赖
+requests>=2.31.0                # HTTP请求
+pandas>=2.0.0                   # 数据处理
+numpy>=1.24.0                   # 数值计算
+pyarrow>=14.0.0                 # Parquet文件支持
+chinesecalendar>=1.4.0          # 中国节假日/调休判断
 
 # 工具库
 python-multipart>=0.0.5
@@ -36,3 +63,4 @@ prometheus-client>=0.14.0
 # 其他
 click>=8.0.0
 pyyaml>=6.0
+watchdog>=3.0.0  # File system event monitoring for config hot reload

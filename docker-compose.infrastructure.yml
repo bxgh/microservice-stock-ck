@@ -112,10 +112,15 @@ services:
       - '--web.enable-lifecycle'
     volumes:
       - prometheus_data:/prometheus
+      # EPIC-005: Mount custom prometheus config for get-stockdata
+      - ./services/get-stockdata/monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     ports:
       - "9091:9090"
     networks:
       - microservice-stock
+    extra_hosts:
+      # Allow Prometheus to access host services (for network_mode: host services)
+      - "host.docker.internal:host-gateway"
     depends_on:
       - nacos
 
@@ -130,6 +135,10 @@ services:
       - GF_USERS_ALLOW_SIGN_UP=false
     volumes:
       - grafana_data:/var/lib/grafana
+      # EPIC-005: Mount Grafana provisioning and dashboards
+      - ./services/get-stockdata/monitoring/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./services/get-stockdata/monitoring/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./services/get-stockdata/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
     ports:
       - "3000:3000"
     networks:

@@ -1,0 +1,34 @@
+version: "1.0.0"
+updated_at: "2025-12-01"
+
+# L1 核心池配置
+L1_pool:
+  enabled: true
+  size: 100
+  acquisition_interval: 3  # 秒
+  
+  # 数据源配置
+  source:
+    type: "hs300_top100_by_volume"
+    update_schedule: "0 8 * * *"  # 每天8点更新（Cron表达式）
+    volume_lookback_days: 5  # 成交额回看天数
+  
+  # 降级策略
+  fallback:
+    use_cache: true
+    max_cache_age_days: 7
+    warn_if_cache_older_than_days: 3
+
+# 黑名单（过滤ST股和退市股）
+blacklist:
+  enabled: true
+  patterns:
+    - "ST*"      # ST股票
+    - "*ST*"     # *ST股票
+    - "退*"      # 退市股票
+  codes: []      # 可手动添加特定股票代码
+
+# 白名单（未来扩展）
+whitelist:
+  enabled: false
+  codes: []

@@ -1,0 +1,42 @@
+# 量化策略服务配置
+service:
+  name: quant-strategy
+  version: 1.0.0
+  environment: development
+
+# 策略引擎配置
+strategy:
+  max_concurrent: 20
+  signal_window_seconds: 60
+  backtest_enabled: true
+
+# 支持的策略类型
+strategy_types:
+  - name: ofi
+    description: 主动买卖单失衡策略 (Order Flow Imbalance)
+    enabled: true
+  - name: smart_money
+    description: 大单资金流向追踪
+    enabled: true
+  - name: order_book
+    description: 盘口深度压力分析
+    enabled: true
+  - name: vwap
+    description: 日内VWAP乖离策略
+    enabled: true
+  - name: liquidity_shock
+    description: 流动性冲击监控
+    enabled: true
+
+# 数据源配置
+data_sources:
+  stockdata:
+    url: http://get-stockdata:8080
+    timeout: 30
+    retry: 3
+
+# 风控配置
+risk_control:
+  max_single_loss_pct: 2.0      # 单股最大亏损 2%
+  max_drawdown_pct: 15.0        # 总回撤上限 15%
+  take_profit_pct: 20.0         # 止盈阈值 20%

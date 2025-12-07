@@ -1,0 +1,13 @@
+# Grafana Datasource Provisioning
+# Auto-configures Prometheus as the default datasource
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    # For infrastructure compose, use container name
+    url: http://microservice-stock-prometheus:9090
+    isDefault: true
+    editable: true

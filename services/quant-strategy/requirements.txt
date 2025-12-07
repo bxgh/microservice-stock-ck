@@ -1,0 +1,33 @@
+# Quant Strategy 微服务依赖
+
+# Web框架
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+pydantic>=2.5.0
+
+# 服务注册发现
+aiohttp>=3.9.0
+
+# 数据处理 (量化计算)
+pandas>=2.0.0
+numpy>=1.24.0
+
+# 数据库支持
+sqlalchemy>=1.4.0
+redis>=5.0.0
+
+# 工具库
+python-multipart>=0.0.5
+python-jose[cryptography]>=3.3.0
+python-dateutil>=2.8.0
+
+# 开发工具
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+
+# 监控和日志
+structlog>=22.0.0
+prometheus-client>=0.14.0
+
+# 其他
+pyyaml>=6.0

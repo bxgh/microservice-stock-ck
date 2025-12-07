@@ -1,19 +1,18 @@
-version: '3.8'
-
 services:
   # 服务注册发现
   consul:
     image: consul:1.16
     container_name: microservice-stock-consul
     restart: unless-stopped
-    command: >
-      consul agent
-      -server
-      -bootstrap-expect=1
-      -ui
-      -bind=0.0.0.0
-      -client=0.0.0.0
-      -datacenter=dc1
+    command:
+      - "consul"
+      - "agent"
+      - "-server"
+      - "-bootstrap-expect=1"
+      - "-ui"
+      - "-bind=0.0.0.0"
+      - "-client=0.0.0.0"
+      - "-datacenter=dc1"
     volumes:
       - consul_data:/consul/data
       - ./infrastructure/consul/config/consul.hcl:/consul/config/consul.hcl
@@ -61,24 +60,31 @@ services:
     image: python:3.12-slim
     container_name: microservice-stock-task-scheduler
     restart: unless-stopped
-    command: >
-      bash -c "
+    command:
+      - /bin/bash
+      - -c
+      - |
         apt-get update &&
         apt-get install -y curl &&
         pip install fastapi uvicorn python-dotenv &&
-        echo 'from fastapi import FastAPI
-import uvicorn
-app = FastAPI()
-@app.get(\"/api/v1/health\")
-async def health():
-    return {\"status\": \"healthy\", \"service\": \"TaskScheduler\"}
-@app.get(\"/\")
-async def root():
-    return {\"message\": \"TaskScheduler is running\", \"docs\": \"/docs\"}
-if __name__ == \"__main__\":
-    uvicorn.run(app, host=\"0.0.0.0\", port=8080)' > /app/app.py &&
-        python app.py
-      "
+        cat > /app/app.py << 'EOF'
+        from fastapi import FastAPI
+        import uvicorn
+        
+        app = FastAPI()
+        
+        @app.get("/api/v1/health")
+        async def health():
+            return {"status": "healthy", "service": "TaskScheduler"}
+        
+        @app.get("/")
+        async def root():
+            return {"message": "TaskScheduler is running", "docs": "/docs"}
+        
+        if __name__ == "__main__":
+            uvicorn.run(app, host="0.0.0.0", port=8080)
+        EOF
+        python /app/app.py
     environment:
       - APP_NAME=TaskScheduler
       - DEBUG=true
