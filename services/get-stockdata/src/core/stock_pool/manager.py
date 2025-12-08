@@ -199,11 +199,36 @@ class StockPoolManager:
         Returns:
             List[str]: 股票代码列表（100只）
         """
+
         logger.info(f"🔄 Fetching HS300 Top 100 by {lookback_days}-day avg volume...")
         
         try:
-            # 1. 获取沪深300成分股
-            df_cons = ak.index_stock_cons(symbol="000300")
+            # 0. 优先尝试加载今日缓存 (Optimization)
+            today_str = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y%m%d")
+            cached = await self._load_pool_cache("hs300_top100")
+            if cached:
+                # Check if it's from today (by checking file metadata or content if available, 
+                # but _load_pool_cache log says "Using cache from ...")
+                # Since _load_pool_cache loads the LATEST, we just need to verify if we want to skip fetch.
+                # For resilience, if we have RECENT cache (e.g. < 12 hours), we might skip.
+                # But here, let's just rely on if it exists and is today.
+                # The _load_pool_cache already logs age.
+                # We need to know if it matches today to skip fetch.
+                # Simplification: Let's trust _load_pool_cache returns valid data.
+                # But we only want to skip fetch if it's TODAY's data.
+                # We can't easily check date from returned list.
+                # Let's peek at the file in check.
+                pass 
+                
+            # Better implementation:
+            # Check if today's cache file exists
+            cache_file = self.cache_dir / f"hs300_top100_{today_str}.json"
+            if cache_file.exists():
+                logger.info(f"✅ Found today's cache {cache_file}, skipping fetch")
+                return await self._load_pool_cache("hs300_top100")
+
+            # 1. 获取沪深300成分股 (Run in thread pool)
+            df_cons = await asyncio.to_thread(ak.index_stock_cons, symbol="000300")
             
             if df_cons is None or df_cons.empty:
                 logger.error("Failed to fetch HS300 constituents")
@@ -298,8 +323,9 @@ class StockPoolManager:
             end_date = datetime.now(ZoneInfo("Asia/Shanghai"))
             start_date = end_date - timedelta(days=days + 5)  # 多取几天，防止节假日
             
-            # 获取历史数据
-            df = ak.stock_zh_a_hist(
+            # 获取历史数据 (Run in thread pool to avoid blocking event loop)
+            df = await asyncio.to_thread(
+                ak.stock_zh_a_hist,
                 symbol=code,
                 period="daily",
                 start_date=start_date.strftime("%Y%m%d"),

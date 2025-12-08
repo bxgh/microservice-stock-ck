@@ -254,7 +254,7 @@ async def test_data_sources(
             DataType.REALTIME: DataCategory.PRICE_DATA,
             DataType.HISTORICAL: DataCategory.PRICE_DATA,
             DataType.TICK: DataCategory.VOLUME_DATA,
-            DataType.FINANCIAL: DataCategory.FINANCIAL
+            DataType.FINANCIAL: DataCategory.FINANCIAL_DATA
         }
         category = category_mapping.get(data_type_enum, DataCategory.MARKET_DATA)
 
@@ -267,7 +267,7 @@ async def test_data_sources(
                 start_time = datetime.now()
 
                 if data_type == "realtime":
-                    data = await stock_service.get_real_time_data(symbol)
+                    data = await stock_service.get_realtime_data(symbol)
                 elif data_type == "historical":
                     data = await stock_service.get_historical_data(symbol)
                 elif data_type == "tick":

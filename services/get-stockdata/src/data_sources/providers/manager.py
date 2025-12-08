@@ -86,9 +86,13 @@ class DataServiceManager:
         # 状态
         self._initialized = False
         self._lock = asyncio.Lock()
+        
+        # 懒加载状态追踪
+        self._initialized_providers = set()  # 已初始化的provider名称
+        self._init_locks = {}  # 每个provider的初始化锁
     
     async def initialize(self) -> bool:
-        """初始化所有数据源
+        """初始化数据源（混合策略：核心顺序+可选懒加载）
         
         Returns:
             bool: 是否成功
@@ -97,37 +101,68 @@ class DataServiceManager:
             if self._initialized:
                 return True
             
-            logger.info("Initializing DataServiceManager...")
+            logger.info("=== Initializing DataServiceManager (Hybrid Strategy) ===")
             
-            # 创建 Provider 实例
-            self._providers = [
-                MootdxProvider(),
-                EasyquotationProvider(),
-                AkshareProvider(),
-                PywencaiProvider(),
-                # BaostockProvider 需要 proxychains4, 默认不启用
-                # 可通过 add_provider 手动添加
-            ]
+            # 创建所有 Provider 实例（但不立即初始化）
+            provider_instances = {
+                'mootdx': MootdxProvider(),
+                'akshare': AkshareProvider(),
+                'easyquotation': EasyquotationProvider(),
+                'pywencai': PywencaiProvider(),
+            }
             
-            # 可选: 添加 baostock (需要特殊环境)
-            if self._config.get("enable_baostock", False):
-                self._providers.append(BaostockProvider())
+            # 可选: 添加 baostock
+            if self._config.get("enable_baostock", True):  # 默认启用
+                provider_instances['baostock'] = BaostockProvider()
             
-            # 初始化所有 Provider
+            # 核心 provider（启动时顺序初始化）
+            core_providers = ['mootdx', 'akshare']
+            
+            # 可选 provider（懒加载）
+            optional_providers = ['easyquotation', 'pywencai']
+            if 'baostock' in provider_instances:
+                optional_providers.append('baostock')
+            
+            logger.info(f"Core providers: {core_providers}")
+            logger.info(f"Optional providers (lazy-load): {optional_providers}")
+            
+            # === Phase 1: 顺序初始化核心 Provider ===
+            logger.info("Phase 1: Initializing core providers sequentially...")
             init_results = {}
-            for provider in self._providers:
+            
+            for name in core_providers:
+                provider = provider_instances[name]
+                logger.info(f"Initializing {name}...")
+                
                 try:
                     success = await provider.initialize()
-                    init_results[provider.name] = success
+                    init_results[name] = success
+                    
                     if success:
-                        logger.info(f"Provider {provider.name} initialized")
+                        self._providers.append(provider)
+                        self._initialized_providers.add(name)
+                        logger.info(f"✅ {name} initialized successfully")
                     else:
-                        logger.warning(f"Provider {provider.name} init failed")
+                        logger.warning(f"⚠️ {name} initialization failed")
+                    
+                    # 延迟200ms，避免并发冲突
+                    await asyncio.sleep(0.2)
+                    
                 except Exception as e:
-                    logger.error(f"Provider {provider.name} init error: {e}")
-                    init_results[provider.name] = False
+                    logger.error(f"❌ {name} initialization error: {e}")
+                    init_results[name] = False
+            
+            # === Phase 2: 准备可选 Provider（不初始化） ===
+            logger.info("Phase 2: Registering optional providers for lazy-loading...")
+            
+            for name in optional_providers:
+                provider = provider_instances[name]
+                self._providers.append(provider)  # 添加到列表，但不初始化
+                self._init_locks[name] = asyncio.Lock()  # 创建锁
+                logger.info(f"📌 {name} registered (will be lazy-loaded on first use)")
             
             # 创建 ProviderChain
+            logger.info("Creating provider chains...")
             for data_type in DataType:
                 chain = ProviderChain(
                     providers=self._providers,
@@ -139,8 +174,62 @@ class DataServiceManager:
                     logger.info(f"Chain {data_type.value}: {[p.name for p in chain.providers]}")
             
             self._initialized = True
-            logger.info(f"DataServiceManager initialized with {len(self._providers)} providers")
+            logger.info(f"\n✅ DataServiceManager initialized:")
+            logger.info(f"   - Core providers ready: {list(self._initialized_providers)}")
+            logger.info(f"   - Optional providers: {optional_providers}")
+            logger.info(f"   - Total providers: {len(self._providers)}")
             return True
+    
+    async def _ensure_provider_initialized(self, provider_name: str) -> bool:
+        """确保provider已初始化（懒加载+线程安全）
+        
+        Args:
+            provider_name: provider名称
+            
+        Returns:
+            bool: 是否成功初始化
+        """
+        # 快速路径：已初始化
+        if provider_name in self._initialized_providers:
+            return True
+        
+        # 核心provider应该已经初始化了
+        if provider_name in ['mootdx', 'akshare']:
+            logger.warning(f"{provider_name} should be initialized during startup")
+            return provider_name in self._initialized_providers
+        
+        # 可选provider：懒加载
+        if provider_name not in self._init_locks:
+            logger.error(f"Unknown provider: {provider_name}")
+            return False
+        
+        async with self._init_locks[provider_name]:
+            # Double-check（避免重复初始化）
+            if provider_name in self._initialized_providers:
+                return True
+            
+            logger.info(f"🔄 Lazy-loading provider: {provider_name}...")
+            
+            try:
+                # 找到provider实例
+                provider = next((p for p in self._providers if p.name == provider_name), None)
+                if not provider:
+                    logger.error(f"Provider {provider_name} not found in providers list")
+                    return False
+                
+                success = await provider.initialize()
+                
+                if success:
+                    self._initialized_providers.add(provider_name)
+                    logger.info(f"✅ {provider_name} lazy-loaded successfully")
+                    return True
+                else:
+                    logger.warning(f"⚠️ {provider_name} initialization failed")
+                    return False
+                    
+            except Exception as e:
+                logger.error(f"❌ {provider_name} lazy-load error: {e}")
+                return False
     
     async def close(self) -> None:
         """关闭所有数据源"""

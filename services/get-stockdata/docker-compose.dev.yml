@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        - ENABLE_PROXY=true
+        - ENABLE_PROXY=true  # 构建时使用代理+国内源加速
         - PROXY_URL=http://192.168.151.18:3128
     image: get-stockdata:${VERSION:-latest}
     container_name: get-stockdata-api-dev
@@ -21,16 +21,20 @@ services:
       - ENVIRONMENT=development
       - PYTHONUNBUFFERED=1
       - TZ=Asia/Shanghai
-      # 注释掉无效的代理配置
-      # - HTTP_PROXY=http://127.0.0.1:8118
-      # - HTTPS_PROXY=http://127.0.0.1:8118
-      # - http_proxy=http://127.0.0.1:8118
-      # - https_proxy=http://127.0.0.1:8118
+      - PROXY_URL=http://127.0.0.1:8118  # SSH隧道代理 (更广的接口范围)
+      # 代理由 entrypoint.sh 配置
       - CLICKHOUSE_HOST=${CLICKHOUSE_HOST:-microservice-stock-clickhouse}
       - CLICKHOUSE_PORT=${CLICKHOUSE_PORT:-9000}
       - CLICKHOUSE_DB=${CLICKHOUSE_DB:-stock_data}
       - CLICKHOUSE_USER=${CLICKHOUSE_USER:-admin}
       - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-admin123}
+      # MySQL Config (From .env)
+      - GSD_DATABASE_TYPE=${GSD_DATABASE_TYPE:-mysql}
+      - GSD_DB_HOST=${GSD_DB_HOST}
+      - GSD_DB_PORT=${GSD_DB_PORT}
+      - GSD_DB_NAME=${GSD_DB_NAME}
+      - GSD_DB_USER=${GSD_DB_USER}
+      - GSD_DB_PASSWORD=${GSD_DB_PASSWORD}
     # 🔥 开发模式启动命令 - 启用热加载
     command: >
       uvicorn src.main:app

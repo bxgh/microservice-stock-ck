@@ -46,15 +46,28 @@ class PywencaiProvider(DataProvider):
         self,
         perpage: int = 50,
         priority: Optional[Dict[DataType, int]] = None,
+        cache_enabled: bool = True,
+        cache_ttl: int = 300,  # 5分钟
+        cache_max_size: int = 100,  # 最多缓存100个查询
     ):
         """初始化
         
         Args:
             perpage: 每页结果数
             priority: 自定义优先级
+            cache_enabled: 是否启用缓存
+            cache_ttl: 缓存过期时间（秒）
+            cache_max_size: 缓存最大条目数
         """
         self._perpage = perpage
         self._pw = None
+        
+        # 缓存配置
+        self._cache_enabled = cache_enabled
+        self._cache_ttl = cache_ttl
+        self._cache_max_size = cache_max_size
+        self._cache: Dict[str, Dict[str, Any]] = {}  # {query: {data, timestamp, hits}}
+        self._cache_stats = {"hits": 0, "misses": 0, "evictions": 0}
         
         # 默认优先级
         self._priority = priority or {
@@ -129,10 +142,22 @@ class PywencaiProvider(DataProvider):
         return True
     
     async def _query(self, query: str, perpage: Optional[int] = None) -> Optional[pd.DataFrame]:
-        """执行查询"""
+        """执行查询（带缓存）"""
         if not await self._ensure_pw():
             return None
         
+        # 检查缓存
+        if self._cache_enabled:
+            cache_key = f"{query}:{perpage or self._perpage}"
+            cached = self._get_cache(cache_key)
+            if cached is not None:
+                self._cache_stats["hits"] += 1
+                logger.debug(f"Cache hit for query: {query}")
+                return cached
+            else:
+                self._cache_stats["misses"] += 1
+        
+        # 执行查询
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(
             None,
@@ -140,8 +165,62 @@ class PywencaiProvider(DataProvider):
         )
         
         if hasattr(result, 'shape'):
+            # 保存到缓存
+            if self._cache_enabled:
+                self._set_cache(cache_key, result)
             return result
         return None
+    
+    def _get_cache(self, cache_key: str) -> Optional[pd.DataFrame]:
+        """从缓存获取数据"""
+        if cache_key in self._cache:
+            entry = self._cache[cache_key]
+            # 检查是否过期
+            if time.time() - entry["timestamp"] < self._cache_ttl:
+                entry["hits"] += 1
+                return entry["data"].copy()  # 返回副本
+            else:
+                # 过期，删除
+                del self._cache[cache_key]
+        return None
+    
+    def _set_cache(self, cache_key: str, data: pd.DataFrame) -> None:
+        """设置缓存"""
+        # 检查缓存大小，必要时清理
+        if len(self._cache) >= self._cache_max_size:
+            # 删除最旧的或使用次数最少的条目
+            oldest_key = min(self._cache.items(), key=lambda x: (x[1]["hits"], x[1]["timestamp"]))[0]
+            del self._cache[oldest_key]
+            self._cache_stats["evictions"] += 1
+            logger.debug(f"Cache evicted: {oldest_key}")
+        
+        self._cache[cache_key] = {
+            "data": data.copy(),
+            "timestamp": time.time(),
+            "hits": 0
+        }
+    
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """获取缓存统计信息"""
+        total_requests = self._cache_stats["hits"] + self._cache_stats["misses"]
+        hit_rate = (self._cache_stats["hits"] / total_requests * 100) if total_requests > 0 else 0
+        
+        return {
+            "enabled": self._cache_enabled,
+            "size": len(self._cache),
+            "max_size": self._cache_max_size,
+            "ttl": self._cache_ttl,
+            "hits": self._cache_stats["hits"],
+            "misses": self._cache_stats["misses"],
+            "evictions": self._cache_stats["evictions"],
+            "hit_rate": f"{hit_rate:.2f}%"
+        }
+    
+    def clear_cache(self) -> None:
+        """清空缓存"""
+        self._cache.clear()
+        self._cache_stats = {"hits": 0, "misses": 0, "evictions": 0}
+        logger.info("Pywencai cache cleared")
     
     async def _fetch_screening(
         self,

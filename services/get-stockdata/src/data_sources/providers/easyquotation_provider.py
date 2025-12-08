@@ -234,7 +234,8 @@ class EasyquotationProvider(DataProvider):
         
         # 确保code是字符串
         if 'code' in df.columns:
-            df['code'] = df['code'].astype(str).str.zfill(6)
+            # 先转换为字符串，再使用str accessor
+            df['code'] = df['code'].apply(lambda x: str(x).zfill(6))
         
         return df
 

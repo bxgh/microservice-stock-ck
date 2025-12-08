@@ -829,12 +829,22 @@ def create_app() -> FastAPI:
     app.include_router(stock_code_internal_router)  # 股票代码内部路由
     app.include_router(strategy_router)  # 100%成功策略路由
     app.include_router(strategy_internal_router)  # 策略内部路由
-    app.include_router(fenbi_router)  # Fenbi分笔数据路由（包含原tick_data功能）
+    app.include_router(fenbi_router)  # Fenbi分笔数据路由
     app.include_router(fenbi_internal_router)  # Fenbi内部路由
-    app.include_router(config_router)  # 配置管理路由（Story 004.05）
+    app.include_router(config_router)  # 配置管理路由
     app.include_router(config_internal_router)  # 配置管理内部路由
-    app.include_router(stock_pool_router)  # Story 004.03: 股票池管理路由
-    app.include_router(metrics_router)  # EPIC-005: Prometheus metrics
+    app.include_router(stock_pool_router)  # 股票池管理路由
+    
+    # 动态导入为了避免循环依赖
+    try:
+        from api.data_source_routes import data_source_router
+        app.include_router(data_source_router)  # 数据源测试与管理
+    except ImportError as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Could not import data_source_router: {e}")
+
+    if PrometheusMiddleware:
+        app.include_router(metrics_router)  # EPIC-005: Prometheus metrics
 
     return app
 

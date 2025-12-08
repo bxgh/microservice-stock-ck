@@ -148,6 +148,9 @@ class AkshareProvider(DataProvider):
             today = date_str or datetime.now().strftime("%Y%m%d")
             loop = asyncio.get_event_loop()
             
+            # DEBUG
+
+
             # 根据类型选择 API
             symbol = kwargs.get('symbol', '火箭发射')  # 异动类型参数
             
@@ -156,7 +159,10 @@ class AkshareProvider(DataProvider):
                 "surge": lambda: self._ak.stock_hot_up_em(),
                 "anomaly": lambda: self._ak.stock_changes_em(symbol=symbol),  # 传递异动类型
                 "limit_up": lambda: self._ak.stock_zt_pool_em(date=today),
+                # Note: stock_dt_pool_em doesn't exist in akshare, removed limit_down
                 "continuous_limit_up": lambda: self._ak.stock_zt_pool_strong_em(date=today),
+                "amount": lambda: self._ak.stock_zh_a_spot_em(),  # 全市场，后续按成交额排序
+                "turnover": lambda: self._ak.stock_zh_a_spot_em(),  # 全市场，后续按换手率排序
                 "dragon_tiger": lambda: self._ak.stock_lhb_detail_em(
                     start_date=today, end_date=today
                 ),
@@ -169,22 +175,57 @@ class AkshareProvider(DataProvider):
                     error=f"Unknown ranking type: {ranking_type}"
                 )
             
-            df = await loop.run_in_executor(None, api_func)
-            latency_ms = (time.time() - start_time) * 1000
+            # 添加重试逻辑处理代理错误（SSH隧道偶尔不稳定）
+            max_retries = 5  # 增加到5次重试
+            retry_delay = 2.0  # 初始延迟2秒
             
-            if df is not None and len(df) > 0:
-                return DataResult(
-                    success=True,
-                    data=df,
-                    latency_ms=latency_ms,
-                    extra={"ranking_type": ranking_type, "date": today},
-                )
-            else:
-                return DataResult(
-                    success=False,
-                    error=f"No {ranking_type} data (possibly non-trading day)",
-                    latency_ms=latency_ms,
-                )
+            for attempt in range(max_retries):
+                try:
+                    df = await loop.run_in_executor(None, api_func)
+                    latency_ms = (time.time() - start_time) * 1000
+                    
+                    if df is not None and len(df) > 0:
+                        # 后处理：按指定字段排序
+                        if ranking_type == "amount":
+                            # 按成交额降序排序，取前100
+                            df = df.sort_values(by='成交额', ascending=False).head(100)
+                        elif ranking_type == "turnover":
+                            # 按换手率降序排序，取前100
+                            df = df.sort_values(by='换手率', ascending=False).head(100)
+                        
+                        if attempt > 0:
+                            logger.info(f"✅ Retry {attempt} succeeded for {ranking_type}")
+                        return DataResult(
+                            success=True,
+                            data=df,
+                            latency_ms=latency_ms,
+                            extra={"ranking_type": ranking_type, "date": today},
+                        )
+                    else:
+                        return DataResult(
+                            success=False,
+                            error=f"No {ranking_type} data (possibly non-trading day)",
+                            latency_ms=latency_ms,
+                        )
+                        
+                except Exception as retry_error:
+                    error_str = str(retry_error)
+                    
+                    # 检查是否为代理错误
+                    is_proxy_error = 'ProxyError' in error_str or 'RemoteDisconnected' in error_str
+                    
+                    if is_proxy_error and attempt < max_retries - 1:
+                        # 代理错误且还有重试机会
+                        logger.warning(
+                            f"⚠️ Proxy error on attempt {attempt + 1}/{max_retries} "
+                            f"for {ranking_type}, retrying in {retry_delay}s..."
+                        )
+                        await asyncio.sleep(retry_delay)
+                        retry_delay *= 2  # 指数退避
+                        continue
+                    else:
+                        # 非代理错误或重试次数用尽
+                        raise retry_error
                 
         except Exception as e:
             logger.error(f"AkshareProvider fetch ranking error: {e}")

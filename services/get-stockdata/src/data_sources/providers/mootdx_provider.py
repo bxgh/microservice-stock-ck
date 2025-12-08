@@ -84,11 +84,18 @@ class MootdxProvider(DataProvider):
             
             logger.info("Initializing MootdxProvider with MootdxConnection...")
             
+            # 紧急修复: 禁用 bestip 以避免超时 (>3分钟)
+            # TODO: 后续实现 bestip 超时保护机制
             self._connection = MootdxConnection(
                 timeout=self._timeout,
-                best_ip=True,  # 自动运行 bestip
+                best_ip=False,  # 禁用 bestip，使用固定服务器
                 connection_lifetime=300,  # 5分钟生命周期
-                initial_wait_time=0.5
+                initial_wait_time=0.5,
+                fixed_servers=[
+                    '124.71.186.252:7727',  # 通达信服务器 1
+                    '60.12.136.250:7727',   # 通达信服务器 2  
+                    '114.80.63.12:7727',    # 通达信服务器 3
+                ]
             )
             
             # 初始化并获取客户端

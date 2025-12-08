@@ -69,15 +69,17 @@ class MootdxConnection(ConnectionManagerInterface):
                  timeout: int = 60, 
                  best_ip: bool = True,
                  connection_lifetime: int = 300,
-                 initial_wait_time: float = 0.5):
+                 initial_wait_time: float = 0.5,
+                 fixed_servers: Optional[list] = None):
         """
         初始化连接管理器
         
         Args:
             timeout: 连接超时时间（秒）
-            best_ip: 是否自动选择最佳服务器
+            best_ip: 是否自动选择最佳服务器 (fixed_servers存在时忽略此参数)
             connection_lifetime: 连接生命周期（秒），默认300秒（5分钟）
             initial_wait_time: 连接创建后的初始等待时间（秒），默认0.5秒
+            fixed_servers: 固定服务器列表，格式为 ['ip:port', ...] (优先于bestip)
         """
         self.client: Optional[Quotes] = None
         self._connected = False
@@ -89,8 +91,9 @@ class MootdxConnection(ConnectionManagerInterface):
         
         self._config = {
             'timeout': timeout,
-            'best_ip': best_ip,
-            'initial_wait_time': initial_wait_time
+            'best_ip': best_ip and not fixed_servers,  # 有固定服务器时禁用bestip
+            'initial_wait_time': initial_wait_time,
+            'fixed_servers': fixed_servers or []
         }
         
         # 统计信息
@@ -213,8 +216,11 @@ class MootdxConnection(ConnectionManagerInterface):
         try:
             logger.info("🔌 Creating new Mootdx connection...")
             
-            # 首先运行bestip获取最佳服务器
-            if self._config['best_ip']:
+            # 优先使用固定服务器，否则运行bestip获取最佳服务器
+            if self._config['fixed_servers']:
+                logger.info(f"Using fixed servers: {self._config['fixed_servers']}")
+                # 固定服务器模式：直接创建连接，无需bestip
+            elif self._config['best_ip']:
                 await self._run_bestip()
             
             # 使用成功验证的参数创建连接
