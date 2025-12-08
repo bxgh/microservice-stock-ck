@@ -91,7 +91,7 @@ MANIFEST
 openspec/
 
 # 文档和测试目录 - 本地使用，不需要跟踪
-docs/
+/docs/
 tests/
 
 # VSCode工作区配置 - 分支特定配置
