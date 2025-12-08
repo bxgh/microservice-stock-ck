@@ -4,6 +4,7 @@
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
 pydantic>=2.5.0
+pydantic-settings>=2.0.0
 
 # HTTP客户端和重试机制
 aiohttp>=3.9.0
@@ -16,6 +17,8 @@ aiohttp>=3.9.0
 sqlalchemy>=1.4.0
 alembic>=1.8.0
 pymysql>=1.0.0
+aiomysql>=0.2.0           # Async MySQL driver
+cryptography>=3.4.7       # Authentication support
 redis>=5.0.0
 redis[hiredis]>=2.0.0
 clickhouse-driver>=0.2.6          # ClickHouse数据库驱动

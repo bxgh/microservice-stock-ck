@@ -1,90 +1,27 @@
-# Get Stock Data 微服务 Dockerfile
-FROM python:3.12-slim
+# Get Stock Data 微服务 - 应用镜像
+# 基于预构建的基础镜像，只包含应用代码
+FROM get-stockdata-base:latest
 
-# 设置代理环境变量（可选，通过build args控制）
-ARG ENABLE_PROXY=false
-ARG PROXY_URL=http://192.168.151.18:3128
+# 设置PYTHONPATH
+ENV PYTHONPATH=/app/src
 
-# 根据build args设置代理环境变量
-ENV http_proxy=${ENABLE_PROXY:+$PROXY_URL} \
-    https_proxy=${ENABLE_PROXY:+$PROXY_URL} \
-    HTTP_PROXY=${ENABLE_PROXY:+$PROXY_URL} \
-    HTTPS_PROXY=${ENABLE_PROXY:+$PROXY_URL}
-
-# 设置工作目录
-WORKDIR /app
-
-# 设置环境变量
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app/src
-
-# 配置apt使用源和代理（可选）
-RUN if [ "$ENABLE_PROXY" = "true" ]; then \
-        echo 'Acquire::http::Proxy "'$PROXY_URL'";' > /etc/apt/apt.conf.d/00proxy && \
-        echo 'Acquire::https::Proxy "'$PROXY_URL'";' >> /etc/apt/apt.conf.d/00proxy && \
-        export http_proxy=$PROXY_URL && export https_proxy=$PROXY_URL && \
-        sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources; \
-    else \
-        rm -f /etc/apt/apt.conf.d/00proxy && \
-        unset http_proxy && unset https_proxy && \
-        sed -i 's|mirrors.aliyun.com|deb.debian.org|g' /etc/apt/sources.list.d/debian.sources || true; \
-    fi
-
-# 安装系统依赖 (包括 Node.js - pywencai 需要, proxychains4 - baostock 需要)
-RUN if [ "$ENABLE_PROXY" = "true" ]; then \
-        http_proxy=$PROXY_URL https_proxy=$PROXY_URL apt-get update && \
-        http_proxy=$PROXY_URL https_proxy=$PROXY_URL apt-get install -y curl nodejs npm proxychains4 && \
-        rm -rf /var/lib/apt/lists/*; \
-    else \
-        unset http_proxy && unset https_proxy && \
-        apt-get update && \
-        apt-get install -y curl nodejs npm proxychains4 && \
-        rm -rf /var/lib/apt/lists/*; \
-    fi
-
-# 配置 proxychains4 代理 (baostock 需要 TCP 代理)
-# 使用 dynamic_chain 模式，允许代理失败时跳过
-ARG PROXY_HOST=192.168.151.18
-ARG PROXY_PORT=3128
-RUN sed -i 's/^strict_chain/#strict_chain/' /etc/proxychains4.conf && \
-    sed -i 's/^#dynamic_chain/dynamic_chain/' /etc/proxychains4.conf && \
-    sed -i 's/^socks4.*127.0.0.1.*9050/#socks4 127.0.0.1 9050/' /etc/proxychains4.conf && \
-    echo "http ${PROXY_HOST} ${PROXY_PORT}" >> /etc/proxychains4.conf
-
-# 配置pip使用国内源和代理
-RUN mkdir -p ~/.pip && \
-    echo '[global]' > ~/.pip/pip.conf && \
-    echo 'index-url = https://pypi.tuna.tsinghua.edu.cn/simple/' >> ~/.pip/pip.conf && \
-    echo 'trusted-host = pypi.tuna.tsinghua.edu.cn' >> ~/.pip/pip.conf && \
-    echo 'timeout = 120' >> ~/.pip/pip.conf
-
-# 升级pip (使用国内源)
-RUN pip install --no-cache-dir --upgrade pip -i https://pypi.tuna.tsinghua.edu.cn/simple
-
-# 复制完整依赖文件
-COPY requirements.txt .
-
-# 安装Python依赖 (优先使用国内源)
-RUN pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple || \
-    pip install --no-cache-dir -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple || \
-    pip install --no-cache-dir -r requirements.txt -i https://pypi.douban.com/simple/ || \
-    pip install --no-cache-dir -r requirements.txt
-
-# 复制FastAPI应用代码
+# 复制应用代码和配置
 COPY src/ ./src/
 COPY config/ ./config/
+COPY entrypoint.sh /app/entrypoint.sh
 
-# 创建非root用户和日志目录
-RUN useradd --create-home --shell /bin/bash app && \
-    mkdir -p /app/logs && \
-    chown -R app:app /app
+# 设置权限
+RUN chmod +x /app/entrypoint.sh && \
+    chown -R app:app /app/src /app/config /app/entrypoint.sh
 
 # 切换到非root用户
 USER app
 
 # 暴露端口
 EXPOSE 8086
+
+# 使用entrypoint配置运行时代理
+ENTRYPOINT ["/app/entrypoint.sh"]
 
 # 启动命令
 CMD ["python", "src/main.py"]
