@@ -577,6 +577,8 @@ async def lifespan(app: FastAPI):
         logger.warning(f"⚠️ Config manager not available: {e}")
     
     # 尝试初始化调度器
+    # DISABLED: Stock pool management moved to dedicated microservice
+    # This prevents blocking startup with HS300 data fetching
     try:
         if AcquisitionScheduler:
             scheduler = AcquisitionScheduler(config_manager=config_manager)
@@ -590,9 +592,9 @@ async def lifespan(app: FastAPI):
                 
                 config_manager.register_reload_callback(on_config_reload)
             
-            # 初始化调度器
-            await scheduler.initialize()
-            logger.info("✅ Scheduler initialized")
+            # 初始化调度器 - DISABLED to allow fast startup
+            # await scheduler.initialize()
+            logger.info("✅ Scheduler created (pool initialization skipped)")
     except Exception as e:
         logger.warning(f"⚠️ Scheduler initialization failed: {e}")
     
