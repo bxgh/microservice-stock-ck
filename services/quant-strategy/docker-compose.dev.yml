@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  quant-strategy:
+    image: quant-strategy:latest
+    container_name: quant-strategy-dev
+    volumes:
+      - ./src:/app/src
+      - ./unit_tests:/app/unit_tests
+      - ./tests:/app/tests
+      - ./config:/app/config
+    environment:
+      - PYTHONPATH=/app
+      - NACOS_SERVER_URL=http://nacos:8848
+      - LOG_LEVEL=DEBUG
+    networks:
+      - microservice-stock_microservice-stock
+
+networks:
+  microservice-stock_microservice-stock:
+    external: true

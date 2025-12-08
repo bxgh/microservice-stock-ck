@@ -33,6 +33,9 @@ from api.middleware import add_cors_headers, log_requests
 # 导入服务注册发现
 from registry.nacos_registry_simple import initialize_nacos, register_to_nacos, cleanup_nacos
 
+from core.looper import InternalLooper
+from adapters.stock_data_provider import data_provider
+
 # 配置日志
 logging.basicConfig(
     level=getattr(logging, settings.log_level.upper()),
@@ -47,6 +50,7 @@ logger = logging.getLogger(__name__)
 
 # 全局变量
 app = None
+internal_looper = InternalLooper()
 
 
 @asynccontextmanager
@@ -72,6 +76,19 @@ async def startup():
 
     try:
         logger.info("Starting Quant Strategy microservice...")
+
+        # 初始化数据适配器
+        await data_provider.initialize()
+        logger.info("✅ 数据适配器初始化成功")
+
+        # 启动内部循环任务
+        # 示例：每 60 秒打印一次心跳
+        async def heartbeat():
+            logger.debug("💓 Internal heartbeat check")
+
+        internal_looper.add_loop(heartbeat, 60, "Heartbeat")
+        await internal_looper.start()
+        logger.info("✅ 内部循环管理器已启动")
 
         # 注册到 Nacos
         logger.info("Registering service to Nacos...")
@@ -108,6 +125,13 @@ async def shutdown():
         logger.info("Deregistering from Nacos...")
         await cleanup_nacos()
         logger.info("Nacos deregistration completed")
+
+        # 停止内部循环
+        if internal_looper:
+            await internal_looper.stop()
+
+        # 关闭数据提供者
+        await data_provider.close()
 
         logger.info("Quant Strategy microservice shutdown completed")
 
