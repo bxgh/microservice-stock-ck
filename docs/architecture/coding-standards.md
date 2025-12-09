@@ -15,8 +15,8 @@
 
 | Element | Frontend | Backend | Example |
 |---------|----------|---------|---------|
-| Components | PascalCase | - | `UserProfile.tsx` |
-| Hooks | camelCase with 'use' | - | `useAuth.ts` |
+| Components | PascalCase | - | `UserProfile.vue` |
+| Composables | camelCase with 'use' | - | `useAuth.ts` |
 | API Routes | - | kebab-case | `/api/user-profile` |
 | Database Tables | - | snake_case | `user_profiles` |
 | Environment Variables | UPPER_SNAKE_CASE | UPPER_SNAKE_CASE | `DATABASE_URL` |
