@@ -49,7 +49,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # 全局变量
-app = None
 internal_looper = InternalLooper()
 
 
@@ -65,14 +64,41 @@ async def lifespan(app: FastAPI):
         await shutdown()
 
 
+def validate_environment() -> None:
+    """验证必要的环境变量"""
+    import os
+    
+    required_vars = {
+        'QS_DB_HOST': '数据库主机地址',
+        'QS_DB_USER': '数据库用户名',
+        'QS_DB_PASSWORD': '数据库密码'
+    }
+    
+    missing_vars = []
+    for var, description in required_vars.items():
+        value = os.getenv(var)
+        if not value:
+            missing_vars.append(f"{var} ({description})")
+    
+    if missing_vars:
+        logger.error("❌ 缺少必要的环境变量:")
+        for var in missing_vars:
+            logger.error(f"   - {var}")
+        logger.error("请在 docker-compose.dev.yml 或 .env 文件中配置这些环境变量")
+        sys.exit(1)
+    
+    logger.info("✅ 环境变量验证通过")
+
+
 async def startup():
     """
     服务启动初始化
     """
-    global app
-
     logger.info(f"Starting {settings.name} v{settings.version}")
     logger.info(f"Configuration: debug={settings.debug}, log_level={settings.log_level}")
+
+    # 验证必要的环境变量
+    validate_environment()
 
     try:
         logger.info("Starting Quant Strategy microservice...")
@@ -161,13 +187,14 @@ def create_app() -> FastAPI:
     return app
 
 
+# 创建应用实例（供 uvicorn 使用）
+app = create_app()
+
+
 def main():
     """
-    主函数
+    主函数（仅用于直接运行，uvicorn 会直接使用 app 实例）
     """
-    global app
-    app = create_app()
-
     uvicorn.run(
         app,
         host=settings.host,
