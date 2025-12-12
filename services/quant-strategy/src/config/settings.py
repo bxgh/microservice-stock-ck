@@ -27,12 +27,20 @@ class Settings(BaseSettings):
     token_expire_hours: int = 24
 
     # 数据库配置
-    database_type: str = "sqlite"
+    database_type: str = "sqlite"  # sqlite or mysql
     database_path: str = "data/quant-strategy.db"
+    
+    # MySQL配置 (when database_type="mysql")
+    db_host: str = "sh-cdb-h7flpxu4.sql.tencentcdb.com"
+    db_port: int = 26300
+    db_user: str = "root"
+    db_password: str = "alwaysup@888"
+    db_name: str = "alwaysup"
+    
     connection_pool_size: int = 10
 
-    # Redis配置
-    redis_url: str = "redis://localhost:6379"
+    # Redis配置  
+    redis_url: str = "redis://:redis123@localhost:6379"
     redis_max_connections: int = 20
     redis_retry_on_timeout: bool = True
 
@@ -61,8 +69,8 @@ class Settings(BaseSettings):
     signal_window_seconds: int = 60
     backtest_enabled: bool = True
 
-    # 数据源配置
-    stockdata_service_url: str = "http://get-stockdata:8080"
+    # 数据源配置 (host network mode, service on port 8083)
+    stockdata_service_url: str = "http://127.0.0.1:8083"
 
     class Config:
         env_file = ".env"

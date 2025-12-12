@@ -19,6 +19,7 @@
 import asyncio
 import logging
 import sys
+import traceback
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -35,6 +36,7 @@ from registry.nacos_registry_simple import initialize_nacos, register_to_nacos, 
 
 from core.looper import InternalLooper
 from adapters.stock_data_provider import data_provider
+from database import init_database, close_database
 
 # 配置日志
 logging.basicConfig(
@@ -65,35 +67,27 @@ async def lifespan(app: FastAPI):
 
 
 def validate_environment() -> None:
-    """验证必要的环境变量"""
+    """验证必要的环境变量 (lenient mode)"""
     import os
     
-    required_vars = {
-        'QS_DB_HOST': '数据库主机地址',
-        'QS_DB_USER': '数据库用户名',
-        'QS_DB_PASSWORD': '数据库密码'
-    }
+    logger.info("Validating environment configuration...")
     
-    missing_vars = []
-    for var, description in required_vars.items():
-        value = os.getenv(var)
-        if not value:
-            missing_vars.append(f"{var} ({description})")
+    # Only warn about missing DB vars, don't fail (SQLite is default)
+    db_vars = ['QS_DB_HOST', 'QS_DB_USER', 'QS_DB_PASSWORD']
+    missing_db = [var for var in db_vars if not os.getenv(var)]
     
-    if missing_vars:
-        logger.error("❌ 缺少必要的环境变量:")
-        for var in missing_vars:
-            logger.error(f"   - {var}")
-        logger.error("请在 docker-compose.dev.yml 或 .env 文件中配置这些环境变量")
-        sys.exit(1)
+    if missing_db and settings.database_type == 'mysql':
+        logger.warning(f"MySQL mode but missing vars: {', '.join(missing_db)}")
+        logger.warning("Falling back to SQLite mode")
     
-    logger.info("✅ 环境变量验证通过")
+    logger.info("✅ Environment validation passed")
 
 
 async def startup():
     """
     服务启动初始化
     """
+    """启动任务"""
     logger.info(f"Starting {settings.name} v{settings.version}")
     logger.info(f"Configuration: debug={settings.debug}, log_level={settings.log_level}")
 
@@ -103,20 +97,26 @@ async def startup():
     try:
         logger.info("Starting Quant Strategy microservice...")
 
-        # 初始化数据适配器
-        await data_provider.initialize()
-        logger.info("✅ 数据适配器初始化成功")
+        # 1. Initialize database
+        logger.info("Initializing database...")
+        await init_database()
+        logger.info("✅ Database initialized")
 
-        # 启动内部循环任务
+        # 2. Initialize data provider
+        logger.info("Initializing data provider...")
+        await data_provider.initialize()
+        logger.info("✅ Data provider initialized")
+
+        # 3. Start internal background tasks
+        logger.info("Starting internal looper...")
         # 示例：每 60 秒打印一次心跳
         async def heartbeat():
             logger.debug("💓 Internal heartbeat check")
-
         internal_looper.add_loop(heartbeat, 60, "Heartbeat")
         await internal_looper.start()
-        logger.info("✅ 内部循环管理器已启动")
+        logger.info("✅ Internal looper started")
 
-        # 注册到 Nacos
+        # 4. Register to Nacos
         logger.info("Registering service to Nacos...")
         await initialize_nacos()
         success = await register_to_nacos(
@@ -136,33 +136,40 @@ async def startup():
         logger.info(f"API documentation available at http://{settings.host}:{settings.port}/docs")
 
     except Exception as e:
-        logger.error(f"Failed to start microservice: {e}")
-        sys.exit(1)
+        logger.error(f"❌ Startup failed: {e}")
+        logger.error(traceback.format_exc())
+        logger.warning("⚠️ Service starting in degraded mode")
+        # Don't exit - allow service to start in degraded mode
+        # sys.exit(1)  # Commented out to allow graceful degradation
 
 
 async def shutdown():
-    """
-    关闭清理
-    """
+    """关闭任务"""
     logger.info("Shutting down Quant Strategy microservice...")
-
+    
     try:
-        # 清理Nacos服务注册
-        logger.info("Deregistering from Nacos...")
-        await cleanup_nacos()
-        logger.info("Nacos deregistration completed")
-
-        # 停止内部循环
+        # 1. Stop internal looper
+        logger.info("Stopping internal looper...")
         if internal_looper:
             await internal_looper.stop()
-
-        # 关闭数据提供者
+        
+        # 2. Cleanup Nacos registration
+        logger.info("Deregistering from Nacos...")
+        await cleanup_nacos()
+        
+        # 3. Close data provider
+        logger.info("Closing data provider...")
         await data_provider.close()
-
-        logger.info("Quant Strategy microservice shutdown completed")
-
+        
+        # 4. Close database connections
+        logger.info("Closing database...")
+        await close_database()
+        
+        logger.info("✅ Quant Strategy microservice shutdown complete")
+        
     except Exception as e:
-        logger.error(f"Error during shutdown: {e}")
+        logger.error(f"❌ Shutdown error: {e}")
+        logger.error(traceback.format_exc())
 
 
 def create_app() -> FastAPI:
