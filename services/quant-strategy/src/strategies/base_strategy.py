@@ -113,6 +113,25 @@ class BaseStrategy(ABC):
         self._initialized = True
         logger.info(f"Strategy {self.name} initialized")
     
+    async def backtest(self, signals: List[Signal]) -> 'BacktestResult':
+        """
+        回测策略信号
+        
+        Args:
+            signals: 信号列表
+            
+        Returns:
+            BacktestResult对象
+        """
+        from backtest.vectorized_engine import VectorizedBacktester
+        from models.backtest import BacktestResult
+        
+        backtester = VectorizedBacktester()
+        result = await backtester.backtest_signals(signals, self.name)
+        
+        logger.info(f"Backtest completed for {self.name}")
+        return result
+    
     def is_initialized(self) -> bool:
         """检查策略是否已初始化"""
         return self._initialized
