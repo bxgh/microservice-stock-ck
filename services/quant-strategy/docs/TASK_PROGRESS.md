@@ -10,7 +10,7 @@
 
 | EPIC | 优先级 | 依赖 | 状态 | 完成度 |
 |------|--------|------|------|--------|
-| EPIC-001 基础设施 | **P0 (基石)** | - | 🚧 进行中 | 60% |
+| EPIC-001 基础设施 | **P0 (基石)** | - | ✅ 已完成 | 100% |
 | EPIC-002 长线配置 | **P1** | EPIC-001 | 📅 待开始 | 0% |
 | EPIC-003 波段增强 | **P2** | EPIC-001 | 📅 待开始 | 0% |
 | EPIC-004 风控系统 | **P1** | EPIC-001 | 📅 待开始 | 0% |
@@ -20,7 +20,7 @@
 ## 🎯 EPIC-001: 策略引擎基础设施 (P0 - 当前聚焦)
 
 **优先级**: P0 (最高优先级，所有其他EPIC的基石)  
-**完成度**: 60% (3/5 stories)
+**完成度**: 100% (7/7 stories)
 
 ### ✅ Story 1.1: 服务框架 (已完成)
 - [x] FastAPI服务初始化
@@ -56,6 +56,14 @@
 - [x] MySQL/SQLite双支持
 - [x] CRUD操作验证
 
+### ✅ Story 1.7: 风险控制模块 (已完成)
+**依赖**: Story 1.6, EventBus
+- [相关文档]: [技术方案](plans/stories/epic001/story_1.7_implementation_plan.md) | [验收演示](plans/stories/epic001/story_1.7_walkthrough.md)
+
+- [x] 实现 RiskManager 和 RiskRule 基础架构
+- [x] 实现静态黑名单和交易时间检查规则
+- [x] 集成到策略执行流程
+
 ### ✅ Story 1.5: 基础回测引擎 (已完成)
 **依赖**: Story 1.3
 - [相关文档]: [技术方案](plans/stories/epic001/story_1.5_implementation_plan.md) | [验收演示](plans/stories/epic001/story_1.5_walkthrough.md)
@@ -73,8 +81,6 @@
 - [x] 实现内部事件驱动框架 (Asyncio Task Manager)
 - [x] 优雅停机与任务状态监控
 - [x] 对接 task-scheduler 微服务 (API侧就绪)
-
-### 📅 Story 1.7: 风险控制模块 (待开始)
 
 ---
 

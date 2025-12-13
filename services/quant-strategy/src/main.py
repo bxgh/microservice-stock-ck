@@ -111,8 +111,19 @@ async def startup():
         logger.info("Initializing data provider...")
         await data_provider.initialize()
         logger.info("✅ Data provider initialized")
+        
+        # 3. Initialize Risk Manager
+        from core.risk import RiskManager
+        from strategies.rules import StaticBlacklistRule, TradingHoursRule, PriceLimitRule
+        
+        risk_manager = RiskManager()
+        # 添加默认规则
+        risk_manager.add_rule(StaticBlacklistRule(blacklist=["000000"])) # 示例黑名单
+        risk_manager.add_rule(TradingHoursRule())
+        risk_manager.add_rule(PriceLimitRule())
+        logger.info("✅ Risk Manager initialized with default rules")
 
-        # 3. Start internal background tasks
+        # 4. Start internal background tasks
         logger.info("Starting internal looper...")
         # 示例：每 60 秒打印一次心跳
         async def heartbeat():
