@@ -11,6 +11,10 @@ import logging
 
 from .signal import Signal
 
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from adapters.stock_data_provider import StockDataProvider
+
 logger = logging.getLogger(__name__)
 
 
@@ -53,7 +57,7 @@ class BaseStrategy(ABC):
         self,
         strategy_id: str,
         config: Dict[str, Any],
-        data_provider: Any  # 避免循环导入，实际类型为 StockDataProvider
+        data_provider: 'StockDataProvider' 
     ):
         """初始化策略实例
         

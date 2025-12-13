@@ -137,35 +137,23 @@ class BacktestEngine:
             
             # 调用策略
             try:
+                # 1. 更新策略状态
                 # 注意：BaseStrategy.on_bar 是 async 的
                 await strategy.on_bar(bar_data)
                 
-                # 获取产生的信号
-                # BaseStrategy.generate_signal() 通常返回最近生成的信号
-                # 这里假设策略内部状态更新后，我们可以调用generate_signal获取决策
-                # 或者我们需要修改BaseStrategy以支持返回信号
+                # 2. 获取产生的信号
+                # 策略状态更新后，通过工厂方法获取决策
+                new_signal = strategy.generate_signal()
                 
-                # 临时方案：假设调用 on_bar 后策略会返回信号，或者我们需要Mock
-                # 根据 Story 1.3 的实现，on_bar 是处理逻辑，generate_signal 是工厂方法
-                # 我们需要在 on_bar 中包含生成逻辑。
-                # 实际上，标准做法是：
-                # 策略收到 on_bar -> 更新内部指标 -> 触发 _check_signal -> 可能调用 generate_signal
-                # 但 BaseStrategy.on_bar 返回 None。
-                
-                # 为了通用性，回测引擎应该依赖策略的一个统一接口，比如 next()
-                # 鉴于 Story 1.3 的 BaseStrategy 比较简单，我们这里假设:
-                # 策略实现了自定义的逻辑，如果产生信号，会通过某种方式（比如内部列表）暴露，
-                # 或者我们这里简单的调用 strategy.generate_signal() 并检查是否针对当前Bar有效。
-                pass 
+                if new_signal:
+                    if strategy.validate_signal(new_signal):
+                        signals.append(new_signal)
+                    else:
+                        logger.warning(f"Invalid signal generated at {idx}: {new_signal}")
                 
             except Exception as e:
                 logger.error(f"Error in strategy execution at {idx}: {e}")
                 
-        # 由于 BaseStrategy 实现细节未完全统一回测接口，
-        # 这里为了演示，我们先加上一个 mock 的信号生成逻辑，
-        # 或者假设 data 已经包含了 signals 列（如果是向量化策略）。
-        
-        # 真实实现需要策略配合。此处留白，待集成测试时具体化。
         return signals
 
     def _simulate_trading(
