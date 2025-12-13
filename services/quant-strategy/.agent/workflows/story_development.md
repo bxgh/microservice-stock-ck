@@ -196,9 +196,25 @@ docker compose -f docker-compose.dev.yml run --rm quant-strategy pytest tests/ -
 
 ---
 
-## Phase 7: Story完成
+## Phase 7: 代码交付 (Delivery)
 
-### 7.1 最终验收
+### 7.1 清理环境
+- 移除临时的测试文件或配置
+- 确保 .gitignore 配置正确
+
+### 7.2 Git提交
+- 遵循Conventional Commits规范
+- 格式: `feat(scope): descriptions`
+- 示例: `feat(strategy): implement base strategy class for story 1.3`
+
+### 7.3 通知用户
+- 告知Story完成并已提交代码
+
+---
+
+## Phase 8: Story完成
+
+### 8.1 最终验收
 确认清单:
 - [ ] 所有验收标准满足
 - [ ] 质量门控通过
@@ -206,7 +222,7 @@ docker compose -f docker-compose.dev.yml run --rm quant-strategy pytest tests/ -
 - [ ] 文档完整
 - [ ] 代码已审查
 
-### 7.2 标记Story完成
+### 8.2 标记Story完成
 在 `TASK_PROGRESS.md` 中:
 ```markdown
 ### ✅ Story X.X: [Story名称] (已完成)
