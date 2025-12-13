@@ -19,7 +19,7 @@ description: Story完整开发流程
 提示词: "请为Story [编号] [名称] 创建技术设计方案，使用templates/story_implementation_plan.md模板"
 ```
 
-**AI模型推荐**: Claude 4.5 Sonnet（设计理解力强）
+**必选动作**: 切换至 **Claude 4.5 Sonnet** (或模拟其思维模式) 进行深度分析
 
 **交付物**: `docs/plans/stories/epic00X/story_X.X_implementation_plan.md`
 
@@ -58,10 +58,10 @@ mkdir -p src/new_module tests/new_module
 - 资源管理（初始化和清理）"
 ```
 
-**AI模型推荐**: 
-- 常规代码: GPT-4o（速度快）
-- 核心逻辑: Claude 4.5 Sonnet（质量高）
-- 算法代码: o1（推理强）
+**必选动作**: 根据代码类型切换模型
+- 常规逻辑/CRUD → **GPT-4o** (速度优先)
+- 核心架构/并发 → **Claude 4.5 Sonnet** (质量优先)
+- 复杂算法/数学 → **o1** (推理优先)
 
 ---
 
@@ -125,7 +125,9 @@ bandit -r src/
 提示词: "参考test_mootdx_connection_concurrency.py风格，为Story [编号]生成并发测试"
 ```
 
-**AI模型推荐**: Claude 4.5 Sonnet（并发场景理解好）
+**必选动作**: 
+- 常规测试 → **GPT-4o**
+- 并发/复杂测试 → **Claude 4.5 Sonnet**
 
 ### 4.3 性能测试（如适用）
 如果是性能关键路径:
@@ -158,7 +160,7 @@ docker compose -f docker-compose.dev.yml run --rm quant-strategy pytest tests/ -
 - 安全问题"
 ```
 
-**AI模型推荐**: Claude 4.5 Sonnet（审查最细致）
+**必选动作**: 切换至 **Claude 4.5 Sonnet** 进行深度审查
 
 ### 5.2 人工审查
 人工审查关键部分:
