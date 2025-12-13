@@ -110,6 +110,70 @@ df = validate_quotes(df)  # 必须验证
 
 ---
 
+### 7. 数据库规范 (腾讯云 MySQL) ⭐ **强制规则**
+
+**目标数据库**: 腾讯云 MySQL
+- **Host**: `sh-cdb-h7flpxu4.sql.tencentcdb.com`
+- **Port**: `26300`
+- **Database**: `alwaysup`
+
+**规则**:
+1. **所有业务数据必须持久化到腾讯云 MySQL**，而非本地 SQLite
+2. 开发环境可使用 SQLite 进行快速迭代，但 **生产环境强制使用 MySQL**
+3. 使用 `database_type="mysql"` 配置项切换
+
+**配置方式**:
+```python
+# .env 文件配置
+QS_DATABASE_TYPE=mysql
+QS_DB_HOST=sh-cdb-h7flpxu4.sql.tencentcdb.com
+QS_DB_PORT=26300
+QS_DB_USER=root
+QS_DB_PASSWORD=xxx  # 使用环境变量，禁止硬编码
+QS_DB_NAME=alwaysup
+```
+
+**异步连接**:
+```python
+# 使用 aiomysql 驱动
+DATABASE_URL = "mysql+aiomysql://user:pass@host:port/db"
+```
+
+**必须遵守**:
+- ✅ 使用 SQLAlchemy 异步 ORM
+- ✅ 连接池大小 ≤ 10 (避免超过云数据库限制)
+- ✅ 所有查询带超时 (10s)
+- ❌ 禁止在代码中硬编码数据库密码
+
+---
+
+### 8. 任务调度规范 ⭐ **强制规则**
+
+**规则**: 定时任务由 `task-scheduler` 微服务统一管理
+
+**禁止**:
+- ❌ 在服务内部使用 APScheduler 或 BackgroundScheduler 进行定时任务
+- ❌ 使用 `asyncio.create_task()` 实现周期性后台任务
+
+**正确方式**:
+```python
+# 暴露 API 端点供 task-scheduler 调用
+@router.post("/api/v1/jobs/refresh-pool")
+async def trigger_refresh():
+    return await pool_service.refresh()
+```
+
+**task-scheduler 配置**:
+```yaml
+jobs:
+  - name: refresh_universe_pool
+    cron: "0 22 * * 0"  # 每周日 22:00
+    target:
+      service: quant-strategy
+      endpoint: /api/v1/pools/universe/refresh
+      method: POST
+```
+
 ## 安全规范 ⭐ 强制要求
 
 ### 密钥管理

@@ -29,6 +29,7 @@ import uvicorn
 from config.settings import settings
 from api.health_routes import health_router
 from api.strategy_routes import strategy_router
+from api.stock_pool_routes import router as stock_pool_router
 from api.middleware import add_cors_headers, log_requests
 
 # 导入服务注册发现
@@ -211,6 +212,7 @@ def create_app() -> FastAPI:
     # 注册路由
     app.include_router(health_router)
     app.include_router(strategy_router)
+    app.include_router(stock_pool_router)
 
     return app
 

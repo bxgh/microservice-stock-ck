@@ -271,5 +271,72 @@ class StockDataProvider:
             logger.error(f"Failed to search stocks for '{query}': {e}")
             return []
 
+    async def get_all_stocks(self, limit: int = 5000) -> List[Dict[str, Any]]:
+        """
+        获取全市场股票列表
+        
+        调用 get-stockdata 的 /api/v1/stocks/list 接口获取股票列表。
+        结果缓存1小时。
+        
+        Args:
+            limit: 返回数量限制，默认5000
+            
+        Returns:
+            股票信息列表，每个元素包含 code, name, exchange 等字段
+        """
+        cache_key = f"stock_list:all:{limit}"
+        
+        # 1. 尝试从缓存获取
+        try:
+            cached_data = await redis_client.get(cache_key)
+            if cached_data:
+                logger.debug("Stock list cache hit")
+                return json.loads(cached_data)
+        except Exception as e:
+            logger.warning(f"Cache read failed: {e}")
+        
+        # 2. 从 API 获取
+        logger.info(f"Fetching all stocks from API (limit={limit})")
+        
+        try:
+            # 使用 get-stockdata 的 /api/v1/stocks/list 端点
+            data = await self._make_request(
+                'GET', 
+                '/api/v1/stocks/list',
+                params={'limit': limit}
+            )
+            
+            # 处理响应格式
+            if isinstance(data, list):
+                stocks = data
+            elif isinstance(data, dict):
+                # 可能是分页响应
+                stocks = data.get('data', data.get('stocks', []))
+                if not isinstance(stocks, list):
+                    stocks = []
+            else:
+                stocks = []
+            
+            logger.info(f"Fetched {len(stocks)} stocks from API")
+            
+            # 3. 缓存结果 (1小时)
+            if stocks:
+                try:
+                    await redis_client.set(
+                        cache_key,
+                        json.dumps(stocks),
+                        ttl=3600  # 1 hour
+                    )
+                except Exception as cache_err:
+                    logger.warning(f"Failed to cache stock list: {cache_err}")
+            
+            return stocks
+            
+        except Exception as e:
+            logger.error(f"Failed to fetch stock list: {e}")
+            return []
+
+
 # 全局单例
 data_provider = StockDataProvider()
+

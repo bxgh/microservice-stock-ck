@@ -1,0 +1,60 @@
+# Justfile - Command Runner (类似于 Makefile 但更现代化)
+
+# 默认只显示帮助
+default:
+    @just --list
+
+# ===============================================
+# Environment
+# ===============================================
+
+# 安装开发依赖 (需要 pip)
+install:
+    pip install -e ".[dev]"
+
+# ===============================================
+# Code Quality (Hard Constraints)
+# ===============================================
+
+# 格式化代码 (Auto-fix)
+format:
+    .venv/bin/ruff format src tests
+    .venv/bin/ruff check --fix src tests
+
+# 代码风格检查 (Lint)
+lint:
+    @echo "Running Ruff..."
+    .venv/bin/ruff check src tests
+
+# 类型检查 (Type Check) - Strict mode
+type-check:
+    @echo "Running Mypy (Strict)..."
+    .venv/bin/mypy src
+
+# 运行所有静态检查
+check: lint type-check
+
+# ===============================================
+# Testing
+# ===============================================
+
+# 运行所有测试
+test:
+    @echo "Running All Tests..."
+    .venv/bin/pytest
+
+# 运行单元测试
+test-unit:
+    .venv/bin/pytest -m unit
+
+# 运行并发测试
+test-concurrent:
+    .venv/bin/pytest -k "concurrency"
+
+# ===============================================
+# Run (Local)
+# ===============================================
+
+# 本地启动应用
+run:
+    python -m src.main
