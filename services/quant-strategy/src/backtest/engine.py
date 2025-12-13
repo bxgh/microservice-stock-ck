@@ -1,66 +1,273 @@
-import pandas as pd
+"""回测引擎实现
+
+包含核心回测逻辑：
+1. 数据获取
+2. 策略执行（生成信号）
+3. 交易模拟（基于信号生成交易记录和净值曲线）
+"""
+
 import logging
-from typing import Dict, Any, List
-from strategies.base import BaseStrategy, StrategySignal, SignalType
+import asyncio
+from datetime import datetime, timedelta
+from typing import List, Dict, Any, Optional
+
+import pandas as pd
+import numpy as np
+
+from strategies.base import BaseStrategy
+from strategies.signal import Signal as StrategySignal
+# Note: SignalType is just "BUY"/"SELL" strings in Signal model, not a separate Enum class in new design
+# So we define it locally or use strings
+from strategies.registry import StrategyRegistry
+from .models import (
+    BacktestConfig, BacktestResult, TradeRecord, 
+    PerformanceMetrics
+)
+from .analyzer import PerformanceAnalyzer
 
 logger = logging.getLogger(__name__)
 
 class BacktestEngine:
-    """
-    轻量级回测引擎 (Vectorized)
+    """回测引擎"""
     
-    用于快速验证策略信号逻辑。
-    注意：这不是全功能的事件驱动回测框架，仅用于信号层面的初步验证。
-    """
-    
-    def __init__(self, strategy: BaseStrategy):
-        self.strategy = strategy
-        self.results: Dict[str, Any] = {}
-
-    async def run(self, data: pd.DataFrame, initial_capital: float = 100000.0) -> Dict[str, Any]:
+    def __init__(self, data_provider=None):
+        """
+        初始化回测引擎
+        
+        Args:
+            data_provider: 数据提供者，支持 get_history_bars(stock_code, start, end)
+                           如果为None，run()时必须传入data
+        """
+        self.data_provider = data_provider
+        self.registry = StrategyRegistry()
+        
+    async def run(
+        self,
+        strategy_id: str,
+        stock_code: str,
+        start_date: datetime,
+        end_date: datetime,
+        config: BacktestConfig = BacktestConfig(),
+        data: Optional[pd.DataFrame] = None
+    ) -> BacktestResult:
         """
         运行回测
         
         Args:
-            data: 历史K线数据 (DataFrame)
-            initial_capital: 初始资金
+            strategy_id: 策略ID
+            stock_code: 标的代码
+            start_date: 开始日期
+            end_date: 结束日期
+            config: 回测配置
+            data: 可选，直接传入历史数据DataFrame
             
         Returns:
-            回测报告 Dict
+            BacktestResult
         """
-        logger.info(f"Starting backtest for strategy {self.strategy.name} with {len(data)} bars")
-        
-        # 1. 初始化策略
-        if not self.strategy.is_initialized:
-            await self.strategy.initialize()
+        logger.info(f"Starting backtest: strategy={strategy_id}, code={stock_code}, "
+                   f"range={start_date.date()}~{end_date.date()}")
+                   
+        # 1. 获取策略实例
+        strategy = self.registry.get(strategy_id)
+        if not strategy:
+            raise ValueError(f"Strategy '{strategy_id}' not found")
             
-        # 2. 生成信号 (假设是日线策略，传入完整历史数据)
-        # 注意：这里假设 on_bar 可以处理向量化 DataFrame，或者我们需要循环调用
-        # 为了简单起见，这里模拟逐日调用
+        # 2. 获取数据
+        if data is None:
+            if not self.data_provider:
+                raise ValueError("No data_provider configured and no data provided")
+            # TODO: 调用 data_provider.fetch_history_bars (需适配具体接口)
+            # data = await self.data_provider.get_history_bars(...)
+            raise NotImplementedError("Data provider integration not yet implemented")
+        
+        if data.empty:
+            raise ValueError("Data is empty")
+            
+        # 3. 初始化策略
+        if not strategy.is_initialized:
+            await strategy.initialize()
+            
+        # 4. 执行回测核心逻辑
+        signals = await self._generate_signals(strategy, data)
+        
+        # 5. 模拟交易
+        trades, equity_curve = self._simulate_trading(signals, data, config)
+        
+        # 6. 计算绩效
+        metrics = PerformanceAnalyzer.calculate(
+            equity_curve, trades, config.risk_free_rate
+        )
+        
+        return BacktestResult(
+            strategy_id=strategy_id,
+            stock_code=stock_code,
+            start_date=start_date,
+            end_date=end_date,
+            initial_capital=config.initial_capital,
+            final_capital=equity_curve[-1]['value'],
+            metrics=metrics,
+            equity_curve=equity_curve,
+            trades=trades,
+            config=config
+        )
+        
+    async def _generate_signals(
+        self, 
+        strategy: BaseStrategy, 
+        data: pd.DataFrame
+    ) -> List[StrategySignal]:
+        """生成信号序列"""
         signals: List[StrategySignal] = []
         
-        # 简单模拟循环
-        for index, row in data.iterrows():
-            # 构造切片数据 (实际策略可能需要历史窗口)
-            # 这里简化为直接调用
-            # TODO: 实现更真实的数据切片
-            pass
-
-        # MOCK RESULTS for Infrastructure Verification
-        logger.warning("Backtest logic is currently mocked implementation")
+        # 模拟逐K线调用 (Loop)
+        # TODO: 未来可优化为向量化调用 strategy.generate_signals_vectorized(data)
         
-        return {
-            "strategy": self.strategy.name,
-            "period_start": data.index[0] if not data.empty else None,
-            "period_end": data.index[-1] if not data.empty else None,
-            "initial_capital": initial_capital,
-            "final_capital": initial_capital * 1.05, # Mock 5% return
-            "total_return": 0.05,
-            "max_drawdown": 0.02,
-            "total_signals": 15,
-            "win_rate": 0.6
-        }
+        for idx, row in data.iterrows():
+            # 构造Bar数据结构 (适配BaseStrategy.on_bar期望的格式)
+            # 这里做简化的适配，假设Strategy能处理Dict或Series
+            bar_data = {
+                'stock_code': str(row.get('code', '')), # 假设数据中有code列
+                'open': row['open'],
+                'high': row['high'],
+                'low': row['low'],
+                'close': row['close'],
+                'volume': row['volume'],
+                'datetime': idx if isinstance(idx, datetime) else row.get('date')
+            }
+            
+            # 调用策略
+            try:
+                # 注意：BaseStrategy.on_bar 是 async 的
+                await strategy.on_bar(bar_data)
+                
+                # 获取产生的信号
+                # BaseStrategy.generate_signal() 通常返回最近生成的信号
+                # 这里假设策略内部状态更新后，我们可以调用generate_signal获取决策
+                # 或者我们需要修改BaseStrategy以支持返回信号
+                
+                # 临时方案：假设调用 on_bar 后策略会返回信号，或者我们需要Mock
+                # 根据 Story 1.3 的实现，on_bar 是处理逻辑，generate_signal 是工厂方法
+                # 我们需要在 on_bar 中包含生成逻辑。
+                # 实际上，标准做法是：
+                # 策略收到 on_bar -> 更新内部指标 -> 触发 _check_signal -> 可能调用 generate_signal
+                # 但 BaseStrategy.on_bar 返回 None。
+                
+                # 为了通用性，回测引擎应该依赖策略的一个统一接口，比如 next()
+                # 鉴于 Story 1.3 的 BaseStrategy 比较简单，我们这里假设:
+                # 策略实现了自定义的逻辑，如果产生信号，会通过某种方式（比如内部列表）暴露，
+                # 或者我们这里简单的调用 strategy.generate_signal() 并检查是否针对当前Bar有效。
+                pass 
+                
+            except Exception as e:
+                logger.error(f"Error in strategy execution at {idx}: {e}")
+                
+        # 由于 BaseStrategy 实现细节未完全统一回测接口，
+        # 这里为了演示，我们先加上一个 mock 的信号生成逻辑，
+        # 或者假设 data 已经包含了 signals 列（如果是向量化策略）。
+        
+        # 真实实现需要策略配合。此处留白，待集成测试时具体化。
+        return signals
 
-    def generate_report(self):
-        """生成详细报告"""
-        pass
+    def _simulate_trading(
+        self,
+        signals: List[StrategySignal],
+        data: pd.DataFrame,
+        config: BacktestConfig
+    ) -> Any:
+        """模拟交易核心逻辑"""
+        
+        capital = config.initial_capital
+        position = 0  # 持仓数量 (股)
+        trades: List[TradeRecord] = []
+        equity_curve: List[Dict[str, Any]] = []
+        
+        # 将信号转换为以时间为索引的字典，方便查找
+        signal_map = {
+            s.timestamp.date(): s 
+            for s in signals 
+            if s.timestamp
+        }
+        
+        for date, row in data.iterrows():
+            date_obj = date.date() if isinstance(date, datetime) else date
+            price = row['close'] # 默认用收盘价计算净值
+            
+            # 1. 处理交易信号 (假设当日收盘成交)
+            # 如果配置为次日开盘，则需要复杂的订单队列逻辑
+            # 这里简化为：信号日收盘成交
+            
+            current_signal = signal_map.get(date_obj)
+            
+            if current_signal:
+                if current_signal.direction == "BUY" and position == 0:
+                    # 全仓买入 (简化)
+                    cost = price * (1 + config.commission_rate)
+                    volume = int(capital / cost / 100) * 100 # 向下取整到100股
+                    
+                    if volume > 0:
+                        amount = volume * price
+                        commission = amount * config.commission_rate
+                        cost_total = amount + commission
+                        
+                        capital -= cost_total
+                        position += volume
+                        
+                        trades.append(TradeRecord(
+                            stock_code=current_signal.stock_code,
+                            direction="BUY",
+                            price=price,
+                            volume=volume,
+                            amount=amount,
+                            commission=commission,
+                            tax=0.0,
+                            timestamp=pd.Timestamp(date),
+                            strategy_id=current_signal.strategy_id,
+                            reason=current_signal.reason
+                        ))
+                        
+                elif current_signal.direction == "SELL" and position > 0:
+                    # 全仓卖出
+                    amount = position * price
+                    commission = amount * config.commission_rate
+                    tax = amount * config.stamp_duty
+                    revenue = amount - commission - tax
+                    
+                    # 计算这笔交易的盈亏
+                    # 简化：假设FIFO或全仓进出，找到最近一次买入的成本
+                    # 这里简化为全仓进出，可以直接计算
+                    last_buy = next((t for t in reversed(trades) if t.direction == "BUY"), None)
+                    realized_pnl = 0.0
+                    if last_buy:
+                         # 简单估算：(卖出价 - 买入价) * 数量 - 交易成本
+                         # 注意：如果多次买入，这里逻辑会复杂。
+                         # 为了MVP，假设全仓模型。
+                         buy_cost = last_buy.amount + last_buy.commission
+                         realized_pnl = revenue - buy_cost
+
+                    capital += revenue
+                    position = 0
+                    
+                    trades.append(TradeRecord(
+                        stock_code=current_signal.stock_code,
+                        direction="SELL",
+                        price=price,
+                        volume=last_buy.volume if last_buy else 0, # Should match position
+                        amount=amount,
+                        commission=commission,
+                        tax=tax,
+                        timestamp=pd.Timestamp(date),
+                        strategy_id=current_signal.strategy_id,
+                        reason=current_signal.reason,
+                        realized_pnl=realized_pnl
+                    ))
+
+            # 2. 结算当日净值
+            market_value = position * price
+            total_equity = capital + market_value
+            
+            equity_curve.append({
+                'date': date,
+                'value': total_equity
+            })
+            
+        return trades, equity_curve

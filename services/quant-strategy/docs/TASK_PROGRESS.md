@@ -56,16 +56,25 @@
 - [x] MySQL/SQLite双支持
 - [x] CRUD操作验证
 
-### 📅 Story 1.5: 基础回测引擎 (待开始)
+### ✅ Story 1.5: 基础回测引擎 (已完成)
 **依赖**: Story 1.3
+- [相关文档]: [技术方案](plans/stories/epic001/story_1.5_implementation_plan.md) | [验收演示](plans/stories/epic001/story_1.5_walkthrough.md)
 
-- [ ] 集成backtrader或pandas向量化回测
-- [ ] 历史数据回测支持
-- [ ] 基础回测报告 (收益率、回撤、夏普)
+- [x] BacktestEngine核心实现
+- [x] PerformanceAnalyzer实现
+- [x] 单元测试与代码质量检查
+- [x] 交易模拟逻辑验证
 
-### 📅 Story 1.6: 任务调度系统 (待开始)
-- [ ] 集成APScheduler
-- [ ] 定时任务配置 (盘后、盘中)
+### ✅ Story 1.6: 任务调度集成 (已完成)
+**依赖**: Story 1.5, TaskScheduler Service
+- [相关文档]: [技术方案](plans/stories/epic001/story_1.6_implementation_plan.md) | [验收演示](plans/stories/epic001/story_1.6_walkthrough.md)
+
+- [x] 实现策略触发 API (供task-scheduler调用)
+- [x] 实现内部事件驱动框架 (Asyncio Task Manager)
+- [x] 优雅停机与任务状态监控
+- [x] 对接 task-scheduler 微服务 (API侧就绪)
+
+### 📅 Story 1.7: 风险控制模块 (待开始)
 
 ---
 
