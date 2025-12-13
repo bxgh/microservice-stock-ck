@@ -23,6 +23,8 @@ description: Story完整开发流程
 
 **交付物**: `docs/plans/stories/epic00X/story_X.X_implementation_plan.md`
 
+
+
 ### 1.2 人工审核设计方案
 检查点:
 - [ ] 数据模型设计合理
@@ -36,6 +38,11 @@ description: Story完整开发流程
 ---
 
 ## Phase 2: 代码实现
+
+0.  **[PAUSE] 模型切换确认**
+    *   Agent 检查当前任务复杂度。
+    *   Agent 通知用户："即将进入编码阶段，建议切换至 [推荐模型]。请切换后回复 'Go'。"
+    *   **Action**: `notify_user(BlockedOnUser=True)`
 
 ### 2.1 创建文件结构
 ```bash
@@ -149,6 +156,10 @@ docker compose -f docker-compose.dev.yml run --rm quant-strategy pytest tests/ -
 ---
 
 ## Phase 5: 代码审查
+
+0.  **[PAUSE] 模型切换确认**
+    *   Agent 通知用户："即将进入代码审查阶段，建议切换至 [Claude 4.5 Sonnet]。请切换后回复 'Go'。"
+    *   **Action**: `notify_user(BlockedOnUser=True)`
 
 ### 5.1 AI代码审查
 ```bash
