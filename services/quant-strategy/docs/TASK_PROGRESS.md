@@ -41,12 +41,13 @@
 - `src/cache/redis_client.py`
 - `docs/api/data_adapter_api.md`
 
-### 🚧 Story 1.3: 策略基类设计 (进行中 - 最高优先级)
+### ✅ Story 1.3: 策略基类设计 (已完成)
 **为什么优先**: 策略基类是所有策略的基础架构，必须先完成才能开发具体策略
 
-- [ ] BaseStrategy抽象类定义
-- [ ] Signal标准数据结构
-- [ ] 策略注册表 (Registry Pattern)
+- [x] BaseStrategy抽象类定义
+- [x] Signal标准数据结构
+- [x] 策略注册表 (Registry Pattern)
+- [相关文档]: [技术方案](plans/stories/epic001/story_1.3_implementation_plan.md) | [验收演示](plans/stories/epic001/story_1.3_walkthrough.md)
 - [ ] 策略生命周期管理 (initialize, on_bar, generate_signal)
 
 ### ⏳ Story 1.4: 数据持久化 (已提前完成) ✅
@@ -148,9 +149,45 @@
 
 ---
 
+## 📐 开发规范体系 (新增 2025-12-13)
+
+### ✅ 规范文档系统已建立
+**目标**: 基于Antigravity能力，建立标准化开发流程和质量保证体系
+
+**核心文档**:
+- ✅ [`PROJECT_DEVELOPMENT_STANDARD.md`](./standards/PROJECT_DEVELOPMENT_STANDARD.md) - 项目开发总规范
+- ✅ [`AI_MODEL_SELECTION_GUIDE.md`](./standards/AI_MODEL_SELECTION_GUIDE.md) - AI模型选择指南
+- ✅ [`QUALITY_GATE_CHECKLIST.md`](./standards/QUALITY_GATE_CHECKLIST.md) - 质量门控清单
+- ✅ [`README.md (standards)`](./standards/README.md) - 规范体系说明
+
+**文档模板**:
+- ✅ `story_implementation_plan.md` - Story技术方案模板
+- ✅ `story_walkthrough.md` - Story验收演示模板
+- ✅ `quality_report.md` - 质量报告模板
+
+**自动化Workflow**:
+- ✅ `story_development.md` - Story完整开发流程
+- ✅ `code_quality_check.md` - 代码质量检查流程
+
+**应用说明**:
+- **后续所有Story开发** 必须遵循规范体系
+- Story 1.3 将作为首个实践案例
+- 每个Story需要: Implementation Plan → Code → Quality Report → Walkthrough
+
+---
+
 ## 🔗 相关文档
 
+### 开发规范
+- [开发规范体系](./standards/README.md) ⭐ **新增**
+- [项目开发规范](./standards/PROJECT_DEVELOPMENT_STANDARD.md) ⭐ **新增**
+- [AI模型选择指南](./standards/AI_MODEL_SELECTION_GUIDE.md) ⭐ **新增**
+- [质量门控清单](./standards/QUALITY_GATE_CHECKLIST.md) ⭐ **新增**
+
+### EPIC与Story规划
 - [EPIC-001 规划](./plans/epics/epic001_infrastructure.md)
 - [EPIC-002 规划](./plans/epics/epic002_long_term_allocation.md)
 - [Story 1.3 详细设计](./plans/stories/epic001/story_1.3_base_strategy.md)
+
+### API文档
 - [API文档](./api/data_adapter_api.md)
