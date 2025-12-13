@@ -104,23 +104,49 @@ class CandidatePoolService:
         """
         模拟评分逻辑
         
-        在 EPIC-002 完成前，使用市值和换手率生成一个 0-100 的随机分数
+        Long Pool: 基于基本面 (市值, 换手率)
+        Swing Pool: 基于资金流 (Smart Money Mock)
         """
         # 确定性 Mock: 保证同一只股票多次计算结果一致
         seed = int(stock.code)
         import random
         r = random.Random(seed)
         
-        base_score = 60
-        # 大市值加分
-        if stock.market_cap and stock.market_cap > 500:
-            base_score += 10
-        # 活跃度加分
-        if stock.turnover_ratio_20d and stock.turnover_ratio_20d > 1.0:
-            base_score += 5
+        if pool_type == 'long':
+            # Long Pool: 基本面评分
+            base_score = 60
+            # 大市值加分
+            if stock.market_cap and stock.market_cap > 500:
+                base_score += 10
+            # 活跃度加分
+            if stock.turnover_ratio_20d and stock.turnover_ratio_20d > 1.0:
+                base_score += 5
+                
+            noise = r.uniform(0, 25)
+            return min(100.0, base_score + noise)
             
-        noise = r.uniform(0, 25)
-        return min(100.0, base_score + noise)
+        elif pool_type == 'swing':
+            # Swing Pool: Smart Money 资金流评分 (Mock)
+            base_score = 50
+            
+            # 高换手率 -> 资金活跃
+            if stock.turnover_ratio_20d and stock.turnover_ratio_20d > 2.0:
+                base_score += 20
+            elif stock.turnover_ratio_20d and stock.turnover_ratio_20d > 1.0:
+                base_score += 10
+                
+            # 成交额 -> 流动性充足
+            if stock.avg_turnover_20d and stock.avg_turnover_20d > 10000:
+                base_score += 15
+                
+            # 模拟 "主力资金流入" (用随机数模拟，实际应从 Tick 数据计算)
+            money_flow_factor = r.uniform(-10, 30)  # 偏向正值 (流入)
+            
+            total_score = base_score + money_flow_factor
+            return min(100.0, max(0.0, total_score))
+            
+        else:
+            return 50.0  # Default
 
     def _classify_stock(self, stock: UniverseStock, pool_type: str) -> Optional[str]:
         """
