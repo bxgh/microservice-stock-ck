@@ -109,7 +109,7 @@ class UniversePoolService:
         async for session in get_session():
             result = await session.execute(
                 select(UniverseFilterConfig).where(
-                    UniverseFilterConfig.is_active == True
+                    UniverseFilterConfig.is_active.is_(True)
                 ).order_by(UniverseFilterConfig.updated_at.desc())
             )
             config = result.scalar_one_or_none()
@@ -313,7 +313,7 @@ class UniversePoolService:
         Returns:
             None 表示合格，否则返回不合格原因
         """
-        code = stock.get('code', '')
+        stock.get('code', '')  # Used for logging context if needed
         name = stock.get('name', '')
         
         # 规则1: ST/*ST 过滤
@@ -456,7 +456,7 @@ class UniversePoolService:
         async for session in get_session():
             result = await session.execute(
                 select(UniverseStock)
-                .where(UniverseStock.is_qualified == True)
+                .where(UniverseStock.is_qualified.is_(True))
                 .offset(offset)
                 .limit(limit)
             )
@@ -467,13 +467,13 @@ class UniversePoolService:
         async for session in get_session():
             # 合格数量
             qualified_result = await session.execute(
-                select(UniverseStock).where(UniverseStock.is_qualified == True)
+                select(UniverseStock).where(UniverseStock.is_qualified.is_(True))
             )
             qualified_stocks = qualified_result.scalars().all()
             
             # 不合格数量
             disqualified_result = await session.execute(
-                select(UniverseStock).where(UniverseStock.is_qualified == False)
+                select(UniverseStock).where(UniverseStock.is_qualified.is_(False))
             )
             disqualified_stocks = disqualified_result.scalars().all()
             

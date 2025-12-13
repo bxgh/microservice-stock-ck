@@ -30,6 +30,7 @@ from api.health_routes import health_router
 from api.strategy_routes import strategy_router
 from api.stock_pool_routes import router as stock_pool_router
 from api.position_pool_routes import router as position_pool_router
+from api.blacklist_routes import router as blacklist_router
 from api.middleware import add_cors_headers, log_requests
 
 # 导入服务注册发现
@@ -214,6 +215,7 @@ def create_app() -> FastAPI:
     app.include_router(strategy_router)
     app.include_router(stock_pool_router)
     app.include_router(position_pool_router)
+    app.include_router(blacklist_router)
 
     return app
 

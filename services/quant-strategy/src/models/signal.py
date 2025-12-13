@@ -8,6 +8,9 @@ from datetime import datetime
 from typing import Optional, Dict, Any
 from enum import Enum
 import pytz
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class SignalType(str, Enum):

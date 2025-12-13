@@ -16,7 +16,6 @@ sys.path.insert(0, '/app/src')
 # Configure pytest-asyncio
 pytest_plugins = ('pytest_asyncio',)
 
-from database.position_models import PositionStock  # noqa: E402
 from services.stock_pool.position_pool_service import position_pool_service  # noqa: E402
 from adapters.stock_data_provider import data_provider  # noqa: E402
 from database import init_database  # noqa: E402

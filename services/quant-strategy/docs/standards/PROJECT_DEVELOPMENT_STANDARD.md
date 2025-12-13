@@ -203,7 +203,35 @@ docker compose -f docker-compose.dev.yml run --rm quant-strategy pytest
 
 ---
 
-## 🚀 特殊场景处理
+## � 阶段7: Git代码提交
+
+### 提交规范
+- 必须遵循 Conventional Commits
+- 格式: `<type>(<scope>): <subject>`
+  - `feat`: 新功能
+  - `fix`: 修复
+  - `docs`: 文档
+  - `refactor`: 重构
+
+### 流程
+```bash
+# 1. 检查更改
+git status
+git diff
+
+# 2. 添加文件
+git add .
+
+# 3. 提交 (自动或人工)
+git commit -m "feat(module): description (Story X.X)"
+```
+
+### 交付物
+- [ ] Git Commit Hash
+
+---
+
+## �🚀 特殊场景处理
 
 ### 场景1: 算法密集型Story（如策略算法）
 **推荐模型**: o1  

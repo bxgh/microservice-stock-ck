@@ -37,7 +37,7 @@ def get_nacos_url():
             try:
                 nacos_ip = socket.gethostbyname("nacos")
                 return env_url.replace("nacos:", f"{nacos_ip}:")
-            except:
+            except Exception:
                 # 回退到Docker网络默认IP
                 return env_url.replace("nacos:", "172.18.0.1:")
         return env_url
@@ -143,7 +143,7 @@ def get_local_ip() -> str:
         local_ip = socket.gethostbyname(hostname)
         if local_ip.startswith("172.") or local_ip.startswith("192.168.") or local_ip.startswith("10."):
             return local_ip
-    except:
+    except Exception:
         pass
 
     # 回退到原始方法

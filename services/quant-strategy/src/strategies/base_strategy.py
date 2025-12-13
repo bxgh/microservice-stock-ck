@@ -112,7 +112,7 @@ class BaseStrategy(ABC):
         self._initialized = True
         logger.info(f"Strategy {self.name} initialized")
     
-    async def backtest(self, signals: List[Signal]) -> 'BacktestResult':
+    async def backtest(self, signals: List[Signal]) -> "BacktestResult":  # type: ignore # noqa: F821
         """
         回测策略信号
         
