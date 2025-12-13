@@ -1,6 +1,7 @@
 """Database package for quant-strategy"""
 from .models import Base, StrategyConfig, StrategySignal, BacktestRecord
 from .stock_pool_models import UniverseStock, UniverseFilterConfig, PoolTransition
+from .position_models import PositionStock
 from .session import init_database, close_database, get_session, create_session
 
 __all__ = [
@@ -11,6 +12,7 @@ __all__ = [
     'UniverseStock',
     'UniverseFilterConfig',
     'PoolTransition',
+    'PositionStock',
     'init_database',
     'close_database',
     'get_session',

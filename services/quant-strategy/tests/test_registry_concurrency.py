@@ -8,7 +8,6 @@ import asyncio
 
 from strategies.registry import StrategyRegistry
 from strategies.base import BaseStrategy
-from strategies.signal import Signal
 
 
 class SimpleStrategy(BaseStrategy):

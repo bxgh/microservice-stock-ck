@@ -1,4 +1,4 @@
-from typing import List, Dict, Optional, Union, Any
+from typing import List, Dict, Optional, Any
 import aiohttp
 import pandas as pd
 import logging

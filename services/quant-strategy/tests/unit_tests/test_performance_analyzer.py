@@ -1,8 +1,6 @@
 """Performance Analyzer Tests"""
 
-import pytest
-from datetime import datetime, timedelta
-import pandas as pd
+from datetime import datetime
 from backtest.analyzer import PerformanceAnalyzer
 from backtest.models import TradeRecord
 

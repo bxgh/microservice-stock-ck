@@ -4,7 +4,7 @@
 使用Pydantic进行数据验证和序列化。
 """
 
-from typing import Dict, List, Any, Tuple, Optional
+from typing import Dict, List, Any, Optional
 from datetime import datetime
 from pydantic import BaseModel, Field
 

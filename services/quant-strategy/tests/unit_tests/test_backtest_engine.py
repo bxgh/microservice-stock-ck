@@ -2,7 +2,6 @@
 
 import pytest
 import pandas as pd
-import asyncio
 from datetime import datetime
 from unittest.mock import MagicMock, AsyncMock
 
@@ -20,11 +19,14 @@ class MockStrategy(BaseStrategy):
         date = bar_data['datetime']
         # 假设date是index, 可能是timestamp
         if isinstance(date, pd.Timestamp):
-            day = date.day
+            # day = date.day
+            pass
         elif isinstance(date, datetime):
-            day = date.day
+            # day = date.day
+            pass
         else:
-            day = 1 # Mock
+            # day = 1 # Mock
+            pass
             
         self.signal_count += 1
         return None # on_bar不返回信号，而是通过内部状态产生？

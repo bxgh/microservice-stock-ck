@@ -6,8 +6,7 @@
 
 import pandas as pd
 import numpy as np
-from typing import List, Dict, Any, Tuple
-from datetime import datetime
+from typing import List, Dict, Any
 import logging
 
 from .models import PerformanceMetrics, TradeRecord

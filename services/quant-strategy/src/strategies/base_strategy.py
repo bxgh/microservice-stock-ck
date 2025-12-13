@@ -6,7 +6,6 @@ BaseStrategy 抽象基类
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional
 import pandas as pd
-from datetime import datetime
 import logging
 
 from models.signal import Signal
@@ -124,7 +123,6 @@ class BaseStrategy(ABC):
             BacktestResult对象
         """
         from backtest.vectorized_engine import VectorizedBacktester
-        from models.backtest import BacktestResult
         
         backtester = VectorizedBacktester()
         result = await backtester.backtest_signals(signals, self.name)

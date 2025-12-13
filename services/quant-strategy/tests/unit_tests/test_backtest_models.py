@@ -2,7 +2,7 @@
 
 import pytest
 from datetime import datetime
-from backtest.models import BacktestResult, BacktestConfig, PerformanceMetrics, TradeRecord
+from backtest.models import BacktestResult, BacktestConfig, PerformanceMetrics
 
 class TestBacktestConfig:
     def test_default_config(self):

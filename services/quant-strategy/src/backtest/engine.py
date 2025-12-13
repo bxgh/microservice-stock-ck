@@ -7,12 +7,10 @@
 """
 
 import logging
-import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import List, Dict, Any, Optional
 
 import pandas as pd
-import numpy as np
 
 from strategies.base import BaseStrategy
 from strategies.signal import Signal as StrategySignal
@@ -20,8 +18,7 @@ from strategies.signal import Signal as StrategySignal
 # So we define it locally or use strings
 from strategies.registry import StrategyRegistry
 from .models import (
-    BacktestConfig, BacktestResult, TradeRecord, 
-    PerformanceMetrics
+    BacktestConfig, BacktestResult, TradeRecord
 )
 from .analyzer import PerformanceAnalyzer
 

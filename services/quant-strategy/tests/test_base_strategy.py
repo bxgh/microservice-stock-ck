@@ -6,7 +6,7 @@
 import pytest
 import asyncio
 
-from strategies.base import BaseStrategy, StrategyInitializationError
+from strategies.base import BaseStrategy
 from strategies.signal import Signal
 
 

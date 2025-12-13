@@ -41,7 +41,7 @@ class BacktestResult:
         
         # 验证时间顺序
         if self.period_start >= self.period_end:
-            raise ValueError(f"period_start必须早于period_end")
+            raise ValueError("period_start必须早于period_end")
         
         # 验证资金
         if self.initial_capital <= 0:

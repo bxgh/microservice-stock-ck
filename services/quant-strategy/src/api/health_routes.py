@@ -4,10 +4,8 @@
 
 import logging
 from datetime import datetime
-from typing import Dict, Any
 
 from fastapi import APIRouter
-from pydantic import BaseModel
 
 from models.base_models import ApiResponse
 

@@ -3,7 +3,7 @@
 """
 
 import logging
-from typing import Dict, Any, List, Set
+from typing import Dict, Any, List
 from datetime import datetime, time
 
 from core.risk import RiskRule

@@ -4,8 +4,7 @@ Redis Client for Quant Strategy Service
 Provides connection pooling and helper methods for caching.
 """
 import logging
-from typing import Optional, Any
-import json
+from typing import Optional
 import redis.asyncio as redis
 from config.settings import settings
 

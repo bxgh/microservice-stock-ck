@@ -10,7 +10,7 @@ from datetime import datetime
 import logging
 import pytz
 
-from models.signal import Signal, SignalType
+from models.signal import Signal
 from models.backtest import BacktestResult
 
 logger = logging.getLogger(__name__)

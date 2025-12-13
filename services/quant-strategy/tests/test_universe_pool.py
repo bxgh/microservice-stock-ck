@@ -11,16 +11,14 @@ Universe Pool Integration Tests
 """
 import pytest
 import asyncio
-from datetime import datetime, date
-from typing import List
+from datetime import date
 
 import sys
 sys.path.insert(0, '/app/src')
 
-from database.stock_pool_models import UniverseStock, UniverseFilterConfig, PoolTransition
-from services.stock_pool.universe_pool_service import UniversePoolService, universe_pool_service
+from services.stock_pool.universe_pool_service import universe_pool_service
 from adapters.stock_data_provider import data_provider
-from database import init_database, close_database
+from database import init_database
 
 
 # Module-level setup

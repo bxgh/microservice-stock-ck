@@ -4,7 +4,6 @@ Database models for Quant Strategy Service
 SQLAlchemy async models for persisting strategy configurations and signals.
 """
 from datetime import datetime
-from typing import Optional
 from sqlalchemy import Column, Integer, String, Float, DateTime, JSON, Text, Boolean
 from sqlalchemy.ext.declarative import declarative_base
 

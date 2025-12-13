@@ -4,7 +4,7 @@
 
 import logging
 from datetime import datetime
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, Optional
 import asyncio
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks
@@ -15,9 +15,6 @@ from models.strategy_models import (
     Strategy, 
     StrategyCreate, 
     StrategyType,
-    BacktestRequest,
-    BacktestResult,
-    Signal,
 )
 from core.manager import BackgroundTaskManager
 

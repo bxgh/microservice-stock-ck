@@ -1,8 +1,6 @@
 """Unit tests for StockDataProvider"""
 import pytest
-import asyncio
 from unittest.mock import AsyncMock, patch
-import pandas as pd
 import sys
 sys.path.insert(0, '/app/src')
 

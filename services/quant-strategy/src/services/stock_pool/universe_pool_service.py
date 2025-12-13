@@ -14,8 +14,7 @@ from dateutil.relativedelta import relativedelta
 from typing import List, Dict, Optional, Any
 from dataclasses import dataclass
 
-from sqlalchemy import select, update, delete
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from database.session import get_session
 from database.stock_pool_models import UniverseStock, UniverseFilterConfig, PoolTransition

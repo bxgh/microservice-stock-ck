@@ -2,7 +2,6 @@
 应用配置设置 - 量化策略服务
 """
 
-import os
 from typing import Optional
 from pydantic import BaseModel as BaseSettings
 

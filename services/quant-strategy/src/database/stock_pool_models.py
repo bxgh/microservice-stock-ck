@@ -4,8 +4,7 @@ Stock Pool Database Models
 SQLAlchemy async models for stock pool management.
 Includes Universe Pool, Filter Config, and Pool Transition tracking.
 """
-from datetime import datetime, date
-from typing import Optional
+from datetime import datetime
 from sqlalchemy import Column, Integer, String, Float, DateTime, Date, Boolean, Text
 
 # Import Base from models to share metadata

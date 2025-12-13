@@ -1,13 +1,11 @@
 """Risk Control Tests"""
 
 import pytest
-import asyncio
-from datetime import datetime, time
-from unittest.mock import MagicMock
+from datetime import datetime
 
 # Create a mock Signal class for testing if needed, or import the real one
 try:
-    from strategies.signal import Signal, SignalDirection, SignalStrength
+    from strategies.signal import Signal
 except ImportError:
     # Minimal mock if import fails (should not happen in proper env)
     class Signal:
