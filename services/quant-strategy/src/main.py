@@ -33,8 +33,8 @@ from api.middleware import add_cors_headers, log_requests
 
 # 导入服务注册发现
 from registry.nacos_registry_simple import initialize_nacos, register_to_nacos, cleanup_nacos
-
 from core.looper import InternalLooper
+from core.manager import BackgroundTaskManager
 from adapters.stock_data_provider import data_provider
 from database import init_database, close_database
 
@@ -51,7 +51,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # 全局变量
+# 全局变量
 internal_looper = InternalLooper()
+manager = BackgroundTaskManager()
 
 
 @asynccontextmanager
@@ -89,14 +91,17 @@ async def startup():
     """
     """启动任务"""
     logger.info(f"Starting {settings.name} v{settings.version}")
-    logger.info(f"Configuration: debug={settings.debug}, log_level={settings.log_level}")
-
-    # 验证必要的环境变量
-    validate_environment()
+    # global manager # Removed local global declaration as it is defined module-level
 
     try:
-        logger.info("Starting Quant Strategy microservice...")
+        logger.info(f"Starting {settings.name} v{settings.version}")
+        logger.info(f"Configuration: debug={settings.debug}, log_level={settings.log_level}")
 
+        # 验证必要的环境变量
+        validate_environment()
+
+        logger.info("Starting up Quant Strategy Service...")
+        
         # 1. Initialize database
         logger.info("Initializing database...")
         await init_database()
@@ -152,8 +157,13 @@ async def shutdown():
         logger.info("Stopping internal looper...")
         if internal_looper:
             await internal_looper.stop()
+
+        # 2. Shutdown background manager
+        logger.info("Shutting down background tasks...")
+        if manager:
+            await manager.shutdown()
         
-        # 2. Cleanup Nacos registration
+        # 3. Cleanup Nacos registration
         logger.info("Deregistering from Nacos...")
         await cleanup_nacos()
         
