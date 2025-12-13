@@ -90,9 +90,8 @@ MANIFEST
 .bmad-core/
 openspec/
 
-# 文档和测试目录 - 本地使用，不需要跟踪
-/docs/
-tests/
+# 文档目录 - 根据需要可选择性跟踪
+# /docs/
 
 # VSCode工作区配置 - 分支特定配置
 .vscode/workspaces/feature-*.code-workspace
