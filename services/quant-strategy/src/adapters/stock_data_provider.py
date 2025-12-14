@@ -1,12 +1,15 @@
-from typing import List, Dict, Optional, Any
+import json
+import logging
+from datetime import datetime
+from typing import Any, Optional
+
 import aiohttp
 import pandas as pd
-import logging
-import json
-from datetime import datetime
 from tenacity import retry, stop_after_attempt, wait_exponential
+
+from cache.redis_client import CacheKeys, CacheTTL, redis_client
 from config.settings import settings
-from cache.redis_client import redis_client, CacheKeys, CacheTTL
+from domain.models.financial_models import FinancialIndicators
 
 logger = logging.getLogger(__name__)
 
@@ -17,11 +20,11 @@ class StockDataProvider:
     负责与 get-stockdata 服务通信，获取行情和历史数据。
     实现自动重试、错误处理和数据验证。
     """
-    
+
     def __init__(self):
         self.base_url = settings.stockdata_service_url.rstrip('/')
         self.timeout = aiohttp.ClientTimeout(total=30)
-        self._session: Optional[aiohttp.ClientSession] = None
+        self._session: aiohttp.ClientSession | None = None
         logger.info(f"StockDataProvider initialized with base URL: {self.base_url}")
 
     async def initialize(self) -> None:
@@ -29,7 +32,7 @@ class StockDataProvider:
         if not self._session:
             self._session = aiohttp.ClientSession(timeout=self.timeout)
             logger.info("HTTP session created")
-        
+
         # Initialize Redis cache
         try:
             await redis_client.initialize()
@@ -43,7 +46,7 @@ class StockDataProvider:
             await self._session.close()
             self._session = None
             logger.info("HTTP session closed")
-        
+
         try:
             await redis_client.close()
             logger.info("Redis cache closed")
@@ -56,12 +59,12 @@ class StockDataProvider:
         reraise=True
     )
     async def _make_request(
-        self, 
-        method: str, 
-        endpoint: str, 
-        params: Optional[Dict] = None,
-        json_data: Optional[Dict] = None
-    ) -> Dict[str, Any]:
+        self,
+        method: str,
+        endpoint: str,
+        params: dict | None = None,
+        json_data: dict | None = None
+    ) -> dict[str, Any]:
         """
         统一的HTTP请求方法，带重试逻辑
         
@@ -79,19 +82,19 @@ class StockDataProvider:
         """
         if not self._session:
             await self.initialize()
-            
+
         url = f"{self.base_url}{endpoint}"
-        
+
         try:
             async with self._session.request(
-                method, 
-                url, 
+                method,
+                url,
                 params=params,
                 json=json_data
             ) as resp:
                 resp.raise_for_status()
                 data = await resp.json()
-                
+
                 # 检查get-stockdata的标准响应格式
                 if isinstance(data, dict) and 'success' in data:
                     if not data.get('success'):
@@ -99,14 +102,14 @@ class StockDataProvider:
                         logger.error(f"API error: {error_msg}")
                         raise Exception(f"API returned error: {error_msg}")
                     return data.get('data', {})
-                
+
                 return data
-                
+
         except aiohttp.ClientError as e:
             logger.error(f"HTTP request failed for {url}: {e}")
             raise Exception(f"Failed to fetch data from {endpoint}: {e}")
 
-    async def get_realtime_quotes(self, codes: List[str]) -> pd.DataFrame:
+    async def get_realtime_quotes(self, codes: list[str]) -> pd.DataFrame:
         """
         获取实时行情快照
         
@@ -121,20 +124,20 @@ class StockDataProvider:
         if not codes:
             logger.warning("Empty codes list provided")
             return pd.DataFrame()
-        
+
         logger.info(f"Fetching real-time quotes for {len(codes)} stocks")
-        
+
         try:
             # 使用 /api/v1/datasources/test/{symbol} 端点
             # 这个端点测试数据源并返回实时数据
             results = []
-            
+
             for code in codes:
                 try:
                     # 1. Check cache first (cache-aside pattern)
                     cache_key = CacheKeys.quote(code)
                     cached_data = await redis_client.get(cache_key)
-                    
+
                     if cached_data:
                         # Cache hit - parse JSON and use cached data
                         try:
@@ -143,10 +146,10 @@ class StockDataProvider:
                             continue
                         except json.JSONDecodeError:
                             logger.warning(f"Invalid cached data for {code}, fetching fresh")
-                    
+
                     # 2. Cache miss - fetch from API
                     data = await self._make_request('GET', f'/api/v1/datasources/test/{code}')
-                    
+
                     # 3. Build result and cache it
                     if data and isinstance(data, dict):
                         quote_data = {
@@ -158,32 +161,32 @@ class StockDataProvider:
                             'timestamp': datetime.now().isoformat()
                         }
                         results.append(quote_data)
-                        
+
                         # Cache the result with TTL
                         try:
                             await redis_client.set(
-                                cache_key, 
-                                json.dumps(quote_data), 
+                                cache_key,
+                                json.dumps(quote_data),
                                 ttl=CacheTTL.QUOTE
                             )
                         except Exception as cache_err:
                             logger.warning(f"Failed to cache quote for {code}: {cache_err}")
-                    
+
                 except Exception as e:
                     logger.warning(f"Failed to fetch quote for {code}: {e}")
                     continue
-            
+
             df = pd.DataFrame(results)
             logger.info(f"Successfully fetched {len(df)} quotes")
             return df
-            
+
         except Exception as e:
             logger.error(f"Failed to fetch real-time quotes: {e}")
             return pd.DataFrame()
 
     async def get_history_bar(
-        self, 
-        code: str, 
+        self,
+        code: str,
         period: str = "1mo",
         interval: str = "1d"
     ) -> pd.DataFrame:
@@ -204,15 +207,15 @@ class StockDataProvider:
         if not code:
             logger.warning("Empty stock code provided")
             return pd.DataFrame()
-        
+
         logger.warning(f"Historical K-line API not yet implemented in get-stockdata for {code}")
-        
+
         # TODO: 当 get-stockdata 实现 K线 API 后，更新此方法
         # 可能的端点: /api/v1/kline/{code} 或使用 fenbi 分笔数据聚合
-        
+
         return pd.DataFrame()
 
-    async def get_stock_info(self, code: str) -> Optional[Dict[str, Any]]:
+    async def get_stock_info(self, code: str) -> dict[str, Any] | None:
         """
         获取股票基本信息（带缓存）
         
@@ -227,17 +230,17 @@ class StockDataProvider:
         # 1. Check cache
         cache_key = CacheKeys.stock_info(code)
         cached_data = await redis_client.get(cache_key)
-        
+
         if cached_data:
             try:
                 return json.loads(cached_data)
             except json.JSONDecodeError:
                 logger.warning(f"Invalid cached stock info for {code}")
-        
+
         # 2. Fetch from API
         try:
             data = await self._make_request('GET', f'/api/v1/stocks/{code}/detail')
-            
+
             # 3. Cache the result
             if data:
                 try:
@@ -248,13 +251,13 @@ class StockDataProvider:
                     )
                 except Exception as cache_err:
                     logger.warning(f"Failed to cache stock info for {code}: {cache_err}")
-            
+
             return data
         except Exception as e:
             logger.error(f"Failed to fetch stock info for {code}: {e}")
             return None
 
-    async def search_stocks(self, query: str) -> List[Dict[str, Any]]:
+    async def search_stocks(self, query: str) -> list[dict[str, Any]]:
         """
         搜索股票
         
@@ -271,7 +274,7 @@ class StockDataProvider:
             logger.error(f"Failed to search stocks for '{query}': {e}")
             return []
 
-    async def get_all_stocks(self, limit: int = 5000) -> List[Dict[str, Any]]:
+    async def get_all_stocks(self, limit: int = 5000) -> list[dict[str, Any]]:
         """
         获取全市场股票列表
         
@@ -285,7 +288,7 @@ class StockDataProvider:
             股票信息列表，每个元素包含 code, name, exchange 等字段
         """
         cache_key = f"stock_list:all:{limit}"
-        
+
         # 1. 尝试从缓存获取
         try:
             cached_data = await redis_client.get(cache_key)
@@ -294,18 +297,18 @@ class StockDataProvider:
                 return json.loads(cached_data)
         except Exception as e:
             logger.warning(f"Cache read failed: {e}")
-        
+
         # 2. 从 API 获取
         logger.info(f"Fetching all stocks from API (limit={limit})")
-        
+
         try:
             # 使用 get-stockdata 的 /api/v1/stocks/list 端点
             data = await self._make_request(
-                'GET', 
+                'GET',
                 '/api/v1/stocks/list',
                 params={'limit': limit}
             )
-            
+
             # 处理响应格式
             if isinstance(data, list):
                 stocks = data
@@ -316,9 +319,9 @@ class StockDataProvider:
                     stocks = []
             else:
                 stocks = []
-            
+
             logger.info(f"Fetched {len(stocks)} stocks from API")
-            
+
             # 3. 缓存结果 (1小时)
             if stocks:
                 try:
@@ -329,9 +332,9 @@ class StockDataProvider:
                     )
                 except Exception as cache_err:
                     logger.warning(f"Failed to cache stock list: {cache_err}")
-            
+
             return stocks
-            
+
         except Exception as e:
             logger.error(f"Failed to fetch stock list: {e}")
             return []
@@ -347,20 +350,20 @@ class StockDataProvider:
             财务指标对象，如果获取失败返回None
         """
         from domain.models.financial_models import FinancialIndicators
-        
+
         try:
             # Call the Verified Real API
             data = await self._make_request("GET", f"/api/v1/finance/indicators/{code}")
-            
+
             if data:
                 return FinancialIndicators(**data)
             return None
-            
+
         except Exception as e:
             logger.error(f"Failed to fetch real financial indicators for {code}: {e}")
             return None
 
-    async def get_valuation(self, code: str) -> Optional[Dict[str, Any]]:
+    async def get_valuation(self, code: str) -> dict[str, Any] | None:
         """
         获取股票估值数据
         
@@ -376,6 +379,24 @@ class StockDataProvider:
             return data
         except Exception as e:
             logger.error(f"Failed to fetch valuation for {code}: {e}")
+            return None
+
+    async def get_industry_stats(self, industry_code: str) -> dict[str, Any] | None:
+        """
+        获取行业统计数据 (For Relative Scoring)
+        
+        Args:
+            industry_code: 行业代码/名称 (如 "酿酒行业")
+            
+        Returns:
+            行业统计数据字典 (包含 PE/PB/ROE/Growth 分布)
+        """
+        try:
+            # Call Industry Stats API
+            data = await self._make_request("GET", f"/api/v1/finance/industry/{industry_code}/stats")
+            return data
+        except Exception as e:
+            logger.warning(f"Failed to fetch industry stats for {industry_code}: {e}. Falling back to absolute scoring.")
             return None
 
 # 全局单例

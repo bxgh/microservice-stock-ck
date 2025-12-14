@@ -2,7 +2,7 @@
 应用配置设置 - 量化策略服务
 """
 
-from typing import Optional
+
 from pydantic import BaseModel as BaseSettings
 
 
@@ -21,24 +21,24 @@ class Settings(BaseSettings):
     access_log: bool = True
 
     # 安全配置
-    api_key: Optional[str] = None
-    jwt_secret: Optional[str] = None
+    api_key: str | None = None
+    jwt_secret: str | None = None
     token_expire_hours: int = 24
 
     # 数据库配置
     database_type: str = "sqlite"  # sqlite or mysql
     database_path: str = "data/quant-strategy.db"
-    
+
     # MySQL配置 (when database_type="mysql")
     db_host: str = "sh-cdb-h7flpxu4.sql.tencentcdb.com"
     db_port: int = 26300
     db_user: str = "root"
     db_password: str = "alwaysup@888"
     db_name: str = "alwaysup"
-    
+
     connection_pool_size: int = 10
 
-    # Redis配置  
+    # Redis配置
     redis_url: str = "redis://:redis123@localhost:6379"
     redis_max_connections: int = 20
     redis_retry_on_timeout: bool = True
@@ -76,15 +76,35 @@ class Settings(BaseSettings):
     filter_st_stocks: bool = True
     filter_suspended_stocks: bool = True
     filter_delisted_stocks: bool = True
-    
+
     # 流动性风控
     min_market_cap_billion: float = 30.0  # 最小市值 30亿
     min_avg_daily_volume_million: float = 20.0 # 最小日均成交额 2000万
-    
+
     # 财务风控 (硬伤)
     max_goodwill_ratio: float = 0.30     # 商誉/净资产 > 30%
     max_pledge_ratio: float = 0.50       # 质押率 > 50%
     min_cashflow_quality: float = 0.50   # 经营现金流/净利润 < 0.5
+
+    # Fundamental Scoring Weights (EPIC-002 Story 2.2)
+    weight_profitability: float = 0.4
+    weight_growth: float = 0.3
+    weight_quality: float = 0.3
+
+    # Absolute Scoring Thresholds (Fallback Mode)
+    # Profitability
+    roe_excellent: float = 0.15  # > 15%
+    roe_good: float = 0.10
+    roe_acceptable: float = 0.05
+
+    # Growth
+    growth_excellent: float = 0.20  # > 20% YoY
+    growth_good: float = 0.10
+    growth_acceptable: float = 0.05
+
+    # Quality
+    ocf_quality_excellent: float = 1.0  # OCF/NetProfit > 1.0
+    ocf_quality_good: float = 0.8
 
     class Config:
         env_file = ".env"
