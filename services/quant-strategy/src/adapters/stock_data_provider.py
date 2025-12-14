@@ -346,69 +346,37 @@ class StockDataProvider:
         Returns:
             财务指标对象，如果获取失败返回None
         """
-        # TODO: Replace with real API call when available
-        # Real implementation would be:
-        # response = await self._make_request("GET", f"/api/v1/finance/indicators/{code}")
+        from domain.models.financial_models import FinancialIndicators
         
-        # Mock implementation for development
-        from models.financial_models import FinancialIndicators
-        return self._generate_mock_financial_indicators(code)
+        try:
+            # Call the Verified Real API
+            data = await self._make_request("GET", f"/api/v1/finance/indicators/{code}")
+            
+            if data:
+                return FinancialIndicators(**data)
+            return None
+            
+        except Exception as e:
+            logger.error(f"Failed to fetch real financial indicators for {code}: {e}")
+            return None
 
-    def _generate_mock_financial_indicators(self, code: str) -> 'FinancialIndicators':
-        """生成Mock财务数据用于开发测试"""
-        import random
-        from datetime import timedelta
-        from models.financial_models import FinancialIndicators
+    async def get_valuation(self, code: str) -> Optional[Dict[str, Any]]:
+        """
+        获取股票估值数据
         
-        # 使用股票代码作为随机种子，保证同一股票数据一致
-        random.seed(int(code) if code.isdigit() else hash(code))
-        
-        # 生成不同风险等级的数据
-        risk_level = random.choice(['healthy', 'healthy', 'warning', 'danger'])  # 偏向健康公司
-        
-        if risk_level == 'healthy':
-            # 健康公司
-            return FinancialIndicators(
-                stock_code=code,
-                report_date=(datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d"),
-                goodwill=random.uniform(0.5, 5.0),
-                net_assets=random.uniform(50, 200),
-                monetary_funds=random.uniform(10, 50),
-                total_assets=random.uniform(100, 500),
-                interest_bearing_debt=random.uniform(5, 30),
-                operating_cash_flow=random.uniform(5, 20),
-                net_profit=random.uniform(5, 15),
-                major_shareholder_pledge_ratio=random.uniform(0, 0.3)
-            )
-        elif risk_level == 'warning':
-            # 预警公司
-            return FinancialIndicators(
-                stock_code=code,
-                report_date=(datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d"),
-                goodwill=random.uniform(20, 40),
-                net_assets=random.uniform(50, 100),
-                monetary_funds=random.uniform(15, 30),
-                total_assets=random.uniform(100, 200),
-                interest_bearing_debt=random.uniform(25, 50),
-                operating_cash_flow=random.uniform(1, 5),
-                net_profit=random.uniform(3, 8),
-                major_shareholder_pledge_ratio=random.uniform(0.4, 0.6)
-            )
-        else:
-            # 高风险公司
-            return FinancialIndicators(
-                stock_code=code,
-                report_date=(datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d"),
-                goodwill=random.uniform(50, 100),
-                net_assets=random.uniform(50, 80),
-                monetary_funds=random.uniform(30, 60),
-                total_assets=random.uniform(100, 200),
-                interest_bearing_debt=random.uniform(50, 100),
-                operating_cash_flow=random.uniform(-5, 2),
-                net_profit=random.uniform(1, 5),
-                major_shareholder_pledge_ratio=random.uniform(0.6, 0.9)
-            )
-
+        Args:
+            code: 股票代码
+            
+        Returns:
+            估值数据字典
+        """
+        try:
+            # Call the Verified Real API
+            data = await self._make_request("GET", f"/api/v1/market/valuation/{code}")
+            return data
+        except Exception as e:
+            logger.error(f"Failed to fetch valuation for {code}: {e}")
+            return None
 
 # 全局单例
 data_provider = StockDataProvider()
