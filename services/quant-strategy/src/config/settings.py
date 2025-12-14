@@ -71,6 +71,21 @@ class Settings(BaseSettings):
     # 数据源配置 (host network mode, service on port 8083)
     stockdata_service_url: str = "http://127.0.0.1:8083"
 
+    # Risk Filter Thresholds (EPIC-002)
+    # 状态过滤
+    filter_st_stocks: bool = True
+    filter_suspended_stocks: bool = True
+    filter_delisted_stocks: bool = True
+    
+    # 流动性风控
+    min_market_cap_billion: float = 30.0  # 最小市值 30亿
+    min_avg_daily_volume_million: float = 20.0 # 最小日均成交额 2000万
+    
+    # 财务风控 (硬伤)
+    max_goodwill_ratio: float = 0.30     # 商誉/净资产 > 30%
+    max_pledge_ratio: float = 0.50       # 质押率 > 50%
+    min_cashflow_quality: float = 0.50   # 经营现金流/净利润 < 0.5
+
     class Config:
         env_file = ".env"
         env_prefix = "QS_"
