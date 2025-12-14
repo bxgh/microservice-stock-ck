@@ -1,6 +1,6 @@
 from typing import Any, Dict, Optional
-from ...core.interfaces import ConnectionManagerInterface
-from ...services.tongdaxin_client import TongDaXinClient
+from core.interfaces import ConnectionManagerInterface
+from services.tongdaxin_client import TongDaXinClient
 
 class TongDaXinConnectionAdapter(ConnectionManagerInterface):
     """

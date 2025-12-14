@@ -26,7 +26,7 @@ except ImportError:
     Quotes = None
 
 try:
-    from ...core.interfaces import ConnectionManagerInterface
+    from core.interfaces import ConnectionManagerInterface
 except ImportError:
     # 临时兼容，如果接口文件尚未部署
     from abc import ABC, abstractmethod

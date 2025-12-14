@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 from enum import Enum
+from pydantic import BaseModel, Field
 import pandas as pd
 
 
@@ -574,3 +575,94 @@ class FieldMapper:
             df['close'] = df['price']
         
         return df
+    
+    
+# ========== EPIC-002: Financial Data API Schemas ==========
+
+class FinancialIndicatorsResponse(BaseModel):
+    """Enhanced Financial Indicators Response Schema"""
+    stock_code: str
+    report_date: str
+    report_type: str = Field(..., description="Q1, Q2, Q3, Annual")
+    
+    # Income Statement
+    revenue: Optional[float] = Field(None, description="营业收入 (亿元)")
+    operating_cost: Optional[float] = Field(None, description="营业成本 (亿元)")
+    operating_profit: Optional[float] = Field(None, description="营业利润 (亿元)")
+    net_profit: Optional[float] = Field(None, description="净利润 (亿元)")
+    
+    # Balance Sheet
+    total_assets: Optional[float] = Field(None, description="总资产 (亿元)")
+    net_assets: Optional[float] = Field(None, description="净资产 (亿元)")
+    goodwill: Optional[float] = Field(None, description="商誉 (亿元)")
+    monetary_funds: Optional[float] = Field(None, description="货币资金 (亿元)")
+    interest_bearing_debt: Optional[float] = Field(None, description="有息负债 (亿元)")
+    accounts_receivable: Optional[float] = Field(None, description="应收账款 (亿元)")
+    inventory: Optional[float] = Field(None, description="存货 (亿元)")
+    accounts_payable: Optional[float] = Field(None, description="应付账款 (亿元)")
+    
+    # Cash Flow
+    operating_cash_flow: Optional[float] = Field(None, description="经营性现金流净额 (亿元)")
+    
+    # Equity
+    major_shareholder_pledge_ratio: Optional[float] = Field(None, description="大股东质押率")
+
+
+
+class FinancialHistoryResponse(BaseModel):
+    """Visual History Response Schema"""
+    stock_code: str
+    periods: int
+    report_type: str
+    data: List[FinancialIndicatorsResponse]
+
+
+# ========== EPIC-002: Market Valuation API Schemas ==========
+
+class ValuationResponse(BaseModel):
+    """Real-time Valuation Response Schema"""
+    stock_code: str
+    report_date: str
+    
+    # Market Cap Data
+    total_market_cap: Optional[float] = Field(None, description="总市值 (亿元)")
+    circulating_market_cap: Optional[float] = Field(None, description="流通市值 (亿元)")
+    
+    # Valuation Ratios
+    pe_ttm: Optional[float] = Field(None, description="市盈率 (TTM)")
+    pe_static: Optional[float] = Field(None, description="市盈率 (静态)")
+    pb_ratio: Optional[float] = Field(None, description="市净率 (PB)")
+    ps_ratio: Optional[float] = Field(None, description="市销率 (PS)")
+    pcf_ratio: Optional[float] = Field(None, description="市现率 (PCF)")
+    dividend_yield_ttm: Optional[float] = Field(None, description="股息率 (TTM)")
+
+
+class ValuationHistoryResponse(BaseModel):
+    """Historical Valuation Response Schema"""
+    stock_code: str
+    years: int
+    frequency: str
+    
+    # Statistics
+    stats: Dict[str, Any] = Field(..., description="统计数据 (mean, median, p25, p50, p75, p90)")
+    
+    # Time Series Data (Optional for chart)
+    dates: List[str]
+    pe_ttm_list: List[Optional[float]]
+    pb_ratio_list: List[Optional[float]]
+
+
+class IndustryStatsResponse(BaseModel):
+    """Industry Statistics Response"""
+    industry_code: str
+    industry_name: str
+    stock_count: int
+    report_date: str
+    
+    # Valuation Distribution
+    pe_ttm_stats: Dict[str, float] = Field(..., description="PE TTM 统计 (mean, median, p25/50/75)")
+    pb_ratio_stats: Dict[str, float] = Field(..., description="PB 统计")
+    
+    # Performance Distribution
+    roe_stats: Optional[Dict[str, float]] = Field(None, description="ROE 统计")
+    revenue_growth_stats: Optional[Dict[str, float]] = Field(None, description="营收增长率统计")

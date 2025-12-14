@@ -22,7 +22,7 @@ from typing import List, Dict, Any, Optional
 
 import pandas as pd
 
-from ..data_sources.providers import (
+from data_sources.providers import (
     DataServiceManager,
     DataResult,
     DataType,
@@ -99,7 +99,7 @@ class RankingService:
         try:
             # 获取全局数据服务管理器 (需要await)
             if self._data_service is None:
-                from ..data_sources.providers import get_data_service
+                from data_sources.providers import get_data_service
                 self._data_service = await get_data_service()
             
             # 初始化缓存

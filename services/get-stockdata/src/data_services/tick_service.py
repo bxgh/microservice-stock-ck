@@ -22,7 +22,7 @@ import pandas as pd
 from .cache_manager import CacheManager
 from .schemas import TickSchema, CapitalFlowResult, FieldMapper
 from .tick_analyzer import TickAnalyzer
-from ..data_sources.providers import DataServiceManager, DataResult, DataType
+from data_sources.providers import DataServiceManager, DataResult, DataType
 
 logger = logging.getLogger(__name__)
 

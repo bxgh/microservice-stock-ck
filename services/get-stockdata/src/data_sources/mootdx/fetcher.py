@@ -14,8 +14,8 @@ from datetime import datetime, time as dt_time
 from concurrent.futures import ThreadPoolExecutor
 
 try:
-    from ..base import DataSourceBase
-    from ....models.tick_models import TickData, TickDataRequest
+    from data_sources.base import DataSourceBase
+    from models.tick_models import TickData, TickDataRequest
 except ImportError:
     from data_sources.base import DataSourceBase
     from models.tick_models import TickData, TickDataRequest

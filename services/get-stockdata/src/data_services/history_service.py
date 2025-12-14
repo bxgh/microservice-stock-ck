@@ -25,7 +25,7 @@ from enum import Enum
 import pandas as pd
 
 from .cache_manager import CacheManager
-from ..data_sources.providers import DataServiceManager, DataResult, DataType
+from data_sources.providers import DataServiceManager, DataResult, DataType
 
 logger = logging.getLogger(__name__)
 
@@ -419,7 +419,7 @@ class HistoryService:
         try:
             # 复用 Provider 实例
             if self._baostock_provider is None:
-                from ..data_sources.providers.baostock_provider import BaostockProvider
+                from data_sources.providers.baostock_provider import BaostockProvider
                 self._baostock_provider = BaostockProvider(priority={DataType.HISTORY: 1})
             
             if not await self._baostock_provider.initialize():
@@ -475,7 +475,7 @@ class HistoryService:
                 return None
             
             # 获取 mootdx provider
-            from ..data_sources.providers.mootdx_provider import MootdxProvider
+            from data_sources.providers.mootdx_provider import MootdxProvider
             
             provider = MootdxProvider()
             

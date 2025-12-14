@@ -16,12 +16,12 @@ import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
-from ..providers import (
+from data_sources.providers import (
     DataProvider, DataResult, DataType, ProviderChain,
     MootdxProvider, EasyquotationProvider, AkshareProvider,
     PywencaiProvider, BaostockProvider,
 )
-from ..strategy import TimeAwareStrategy, get_time_strategy
+from data_sources.strategy import TimeAwareStrategy, get_time_strategy
 
 logger = logging.getLogger(__name__)
 

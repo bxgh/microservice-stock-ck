@@ -34,6 +34,15 @@ class StockInfo(BaseModel):
     delist_date: Optional[datetime] = Field(None, description="退市日期")
     data_source: Optional[str] = Field(None, description="数据来源")
     last_updated: Optional[datetime] = Field(None, description="最后更新时间")
+    # Enhanced Info (EPIC-002)
+    industry: Optional[str] = Field(None, description="所属行业")
+    industry_code: Optional[str] = Field(None, description="行业代码") # New field
+    sector: Optional[str] = Field(None, description="所属板块")
+    
+    # Enhanced Info (EPIC-005)
+    market_cap: Optional[float] = Field(None, description="总市值(亿元)")
+    turnover_ratio: Optional[float] = Field(None, description="换手率(%)")
+    avg_turnover_20d: Optional[float] = Field(None, description="20日平均成交额(万元)")
 
     class Config:
         json_encoders = {

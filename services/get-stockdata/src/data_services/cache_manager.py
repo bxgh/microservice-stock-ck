@@ -16,6 +16,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 from abc import ABC, abstractmethod
 from datetime import datetime, time as dt_time
 from typing import Any, Dict, List, Optional
@@ -23,7 +24,7 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 import redis.asyncio as aioredis
 
-from ..core.scheduling.calendar_service import CalendarService
+from core.scheduling.calendar_service import CalendarService
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +152,18 @@ class CacheManager:
             ttl_strategy: TTL 策略，默认使用 TradingAwareTTL
             key_prefix: 缓存键前缀，避免键冲突
         """
+        # Auto-configure from env if default URL is used or none provided
+        if redis_url == "redis://localhost:6379/0":
+            host = os.getenv("REDIS_HOST", "localhost")
+            port = os.getenv("REDIS_PORT", "6379")
+            password = os.getenv("REDIS_PASSWORD", "")
+            db = os.getenv("REDIS_DB", "0")
+            
+            if password:
+                redis_url = f"redis://:{password}@{host}:{port}/{db}"
+            else:
+                redis_url = f"redis://{host}:{port}/{db}"
+                
         self.redis_url = redis_url
         self.ttl_strategy = ttl_strategy or TradingAwareTTL()
         self.key_prefix = key_prefix

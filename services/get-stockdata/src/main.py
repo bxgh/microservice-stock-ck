@@ -94,9 +94,19 @@ except ImportError as e:
         return {"message": "Fenbi分笔数据测试接口", "status": "placeholder"}
 
 # 导入配置管理路由
+# 1. 配置管理路由
 try:
     from api.routers.config import router as config_router, internal_router as config_internal_router
     from services.stock_pool.config_manager import StockPoolConfigManager
+except ImportError as e:
+    print(f"Warning: Config routes/manager import failed: {e}")
+    from fastapi import APIRouter
+    config_router = APIRouter(prefix="/api/v1/config", tags=["Configuration"])
+    config_internal_router = APIRouter(prefix="/internal/config", tags=["Config Internal"])
+    StockPoolConfigManager = None
+
+# 2. 股票池与动态推广 (Story 004)
+try:
     # Story 004.03: Dynamic Promotion
     from services.stock_pool.anomaly_detector import AnomalyDetector
     from services.stock_pool.dynamic_pool_manager import DynamicPoolManager
@@ -104,20 +114,62 @@ try:
     # US-004.04: Auto-Scaler
     from services.stock_pool.auto_scaler import AutoScaler
     from api.routers.stock_pool import router as stock_pool_router
-    # EPIC-005: Metrics and Monitoring
+except ImportError as e:
+    print(f"Warning: Stock Pool/Promotion services import failed: {e}")
+    from fastapi import APIRouter
+    stock_pool_router = APIRouter(prefix="/api/v1/stock_pool", tags=["Stock Pool"])
+    AnomalyDetector = None
+    DynamicPoolManager = None
+    PromotionMonitor = None
+    AutoScaler = None
+
+# 3. 监控与度量 (EPIC-005)
+try:
     from api.routers.metrics import router as metrics_router
     from api.middleware.metrics_middleware import PrometheusMiddleware
 except ImportError as e:
-    print(f"Warning: config routes not found: {e}")
+    print(f"Warning: Metrics routes/middleware import failed: {e}")
     from fastapi import APIRouter
-    config_router = APIRouter(prefix="/api/v1/config", tags=["Configuration"])
-    config_internal_router = APIRouter(prefix="/internal/config", tags=["Config Internal"])
-    stock_pool_router = APIRouter(prefix="/api/v1/stock_pool", tags=["Stock Pool"])
     metrics_router = APIRouter(tags=["Monitoring"])
-    PromotionMonitor = None
     PrometheusMiddleware = None
-    DynamicPoolManager = None
-    AutoScaler = None
+
+# 4. 财务与估值数据 (EPIC-002)
+try:
+    from api.finance_routes import router as finance_router
+    from data_services.financial_service import FinancialService
+    
+    from api.valuation_routes import router as valuation_router
+    from data_services.valuation_service import ValuationService
+    
+    from api.industry_routes import router as industry_router
+    from data_services.industry_service import IndustryService
+except ImportError as e:
+    print(f"Warning: Financial/Valuation/Industry routes import failed: {e}")
+    from fastapi import APIRouter
+    finance_router = APIRouter(prefix="/api/v1/finance", tags=["财务数据"])
+    valuation_router = APIRouter(prefix="/api/v1/market/valuation", tags=["市场估值"])
+    industry_router = APIRouter(prefix="/api/v1/finance/industry", tags=["行业数据"])
+    FinancialService = None
+    ValuationService = None
+    IndustryService = None
+
+# 5. 实时行情与流动性 (EPIC-005)
+try:
+    from api.quotes_routes import router as quotes_router
+    from data_services.quotes_service import QuotesService
+    
+    from api.liquidity_routes import router as liquidity_router
+    from data_services.liquidity_service import LiquidityService
+    
+    from api.stock_status_routes import router as status_router
+except ImportError as e:
+    print(f"Warning: Quotes/Liquidity/Status routes import failed: {e}")
+    from fastapi import APIRouter
+    quotes_router = APIRouter(prefix="/api/v1/quotes", tags=["实时行情"])
+    liquidity_router = APIRouter(prefix="/api/v1/stocks", tags=["流动性数据"])
+    status_router = APIRouter(prefix="/api/v1/stocks", tags=["股票状态与基本面"])
+    QuotesService = None
+    LiquidityService = None
 
     @config_router.get("/test")
     async def test_config():
@@ -575,7 +627,63 @@ async def lifespan(app: FastAPI):
         logger.info("✅ Config manager initialized and watching")
     except Exception as e:
         logger.warning(f"⚠️ Config manager not available: {e}")
-    
+
+
+    # EPIC-002: Initialize Financial Service
+    financial_service = None
+    try:
+        if FinancialService:
+            financial_service = FinancialService()
+            # Initialize (load cache etc)
+            await financial_service.initialize()
+            app.state.financial_service = financial_service
+            logger.info("✅ FinancialService initialized")
+    except Exception as e:
+        logger.warning(f"⚠️ FinancialService initialization failed: {e}")
+
+    # EPIC-002: Initialize Valuation Service
+    valuation_service = None
+    try:
+        if ValuationService:
+            valuation_service = ValuationService()
+            await valuation_service.initialize()
+            app.state.valuation_service = valuation_service
+            logger.info("✅ ValuationService initialized")
+    except Exception as e:
+        logger.warning(f"⚠️ ValuationService initialization failed: {e}")
+
+    # EPIC-002: Initialize Industry Service
+    industry_service = None
+    try:
+        if IndustryService:
+            industry_service = IndustryService()
+            await industry_service.initialize()
+            app.state.industry_service = industry_service
+            logger.info("✅ IndustryService initialized")
+    except Exception as e:
+        logger.warning(f"⚠️ IndustryService initialization failed: {e}")
+
+    # EPIC-005: Initialize Quotes Service
+    quotes_service = None
+    try:
+        if QuotesService:
+            quotes_service = QuotesService()
+            await quotes_service.initialize()
+            app.state.quotes_service = quotes_service
+            logger.info("✅ QuotesService initialized")
+    except Exception as e:
+        logger.warning(f"⚠️ QuotesService initialization failed: {e}")
+
+    # EPIC-005: Initialize Liquidity Service (Depends on QuotesService)
+    liquidity_service = None
+    try:
+        if LiquidityService:
+            liquidity_service = LiquidityService(quotes_service=quotes_service)
+            await liquidity_service.initialize()
+            app.state.liquidity_service = liquidity_service
+    except Exception as e:
+        logger.warning(f"⚠️ LiquidityService initialization failed: {e}")
+
     # 尝试初始化调度器
     # DISABLED: Stock pool management moved to dedicated microservice
     # This prevents blocking startup with HS300 data fetching
@@ -784,6 +892,38 @@ async def shutdown():
         except Exception as e:
             logger.warning(f"100%成功策略引擎关闭失败: {e}")
 
+        # EPIC-005: Close QuotesService
+        try:
+            if hasattr(app, 'state') and hasattr(app.state, 'quotes_service'):
+                await app.state.quotes_service.close()
+                logger.info("✅ QuotesService closed")
+        except Exception as e:
+            logger.warning(f"QuotesService关闭失败: {e}")
+
+        # EPIC-002: Close FinancialService
+        try:
+            if hasattr(app, 'state') and hasattr(app.state, 'financial_service'):
+                await app.state.financial_service.close()
+                logger.info("✅ FinancialService closed")
+        except Exception as e:
+            logger.warning(f"FinancialService关闭失败: {e}")
+
+        # EPIC-002: Close ValuationService
+        try:
+            if hasattr(app, 'state') and hasattr(app.state, 'valuation_service'):
+                await app.state.valuation_service.close()
+                logger.info("✅ ValuationService closed")
+        except Exception as e:
+            logger.warning(f"ValuationService关闭失败: {e}")
+
+        # EPIC-002: Close IndustryService
+        try:
+            if hasattr(app, 'state') and hasattr(app.state, 'industry_service'):
+                await app.state.industry_service.close()
+                logger.info("✅ IndustryService closed")
+        except Exception as e:
+            logger.warning(f"IndustryService关闭失败: {e}")
+
         # Story 004.03: 清理动态推广组件
         try:
             if hasattr(app, 'state') and hasattr(app.state, 'dynamic_manager'):
@@ -836,6 +976,16 @@ def create_app() -> FastAPI:
     app.include_router(config_router)  # 配置管理路由
     app.include_router(config_internal_router)  # 配置管理内部路由
     app.include_router(stock_pool_router)  # 股票池管理路由
+    logger.debug(f"Finance router routes count: {len(finance_router.routes)}")
+    if hasattr(finance_router, 'routes'):
+        for r in finance_router.routes:
+            logger.debug(f"Finance route: {r.path} {r.methods}")
+    app.include_router(finance_router)  # EPIC-002: 财务数据路由
+    app.include_router(valuation_router)  # EPIC-002: 市场估值路由
+    app.include_router(industry_router)  # EPIC-002: 行业数据路由
+    app.include_router(quotes_router)     # EPIC-005: 实时行情路由
+    app.include_router(liquidity_router)  # EPIC-005: 流动性数据路由
+    app.include_router(status_router)     # EPIC-005: 股票状态路由
     
     # 动态导入为了避免循环依赖
     try:

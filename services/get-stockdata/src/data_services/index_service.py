@@ -24,7 +24,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 
 from .cache_manager import CacheManager
-from ..data_sources.providers import DataServiceManager, DataType
+from data_sources.providers import DataServiceManager, DataType
 
 logger = logging.getLogger(__name__)
 
@@ -268,7 +268,7 @@ class IndexService:
             # 使用锁保护 Provider 初始化
             async with self._provider_lock:
                 if self._mootdx_provider is None:
-                    from ..data_sources.providers.mootdx_provider import MootdxProvider
+                    from data_sources.providers.mootdx_provider import MootdxProvider
                     self._mootdx_provider = MootdxProvider()
                     await self._mootdx_provider.initialize()
             

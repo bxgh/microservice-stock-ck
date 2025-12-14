@@ -12,8 +12,8 @@ from datetime import datetime
 import pandas as pd
 
 try:
-    from ..models.tick_models import TickData, TickDataRequest
-    from ..core.interfaces import ConnectionManagerInterface
+    from models.tick_models import TickData, TickDataRequest
+    from core.interfaces import ConnectionManagerInterface
 except ImportError:
     from models.tick_models import TickData, TickDataRequest
     # 临时兼容

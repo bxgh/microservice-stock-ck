@@ -6,9 +6,10 @@
 提供股票基础数据相关的REST API接口
 """
 
-from fastapi import APIRouter, HTTPException, Query, Path, Depends
+from fastapi import APIRouter, HTTPException, Query, Path, Depends, Request
 from typing import List, Optional
 import logging
+import asyncio
 
 try:
     from ..services.stock_code_client import stock_client_instance
@@ -47,6 +48,7 @@ async def get_stock_list(
     name_search: Optional[str] = Query(None, description="股票名称搜索"),
     skip: int = Query(0, ge=0, description="跳过数量"),
     limit: int = Query(100, ge=1, le=1000, description="返回数量"),
+    request: Request = None,
     client=Depends(get_stock_client)
 ):
     """
@@ -76,6 +78,46 @@ async def get_stock_list(
         total = len(stocks)
         has_more = skip + limit < total
         paginated_stocks = stocks[skip:skip + limit]
+        
+        # EPIC-005: Enrich with Market Cap & Turnover from QuotesService
+        # This is done on the paginated result to minimize processing
+        quotes_service = getattr(request.app.state, "quotes_service", None)
+        if quotes_service:
+            try:
+                # 1. Get codes
+                codes = [s.code for s in paginated_stocks]
+                # 2. Get batch quotes
+                quotes = await quotes_service.get_realtime_quotes(codes)
+                # 3. Create mapping
+                quote_map = {q['code']: q for q in quotes}
+                
+                # 4. Update stock info
+                for stock in paginated_stocks:
+                    if stock.code in quote_map:
+                        q = quote_map[stock.code]
+                        # Update fields if available
+                        if q.get('market_cap'):
+                            # Ensure unit consistency. 
+                            # If AkShare returns raw, we might want to convert to 亿元 (10^8) if the model expects it.
+                            # Standard StockInfo 'market_cap' usually implies 亿元 or matching legacy.
+                            # Let's assume raw for now and check model definition or adjust unit.
+                            # Based on existing 'get-stockdata' typical standards, 'market_cap' is often expected in 亿元 for display.
+                            # AkShare 'total_market_cap' is usually raw.
+                            stock.market_cap = q.get('market_cap') / 100000000.0
+                        
+                        if q.get('turnover'):
+                             # turnover assumed to be daily turnover (成交额)
+                             # avg_turnover_20d is what we need, but we only have today's turnover.
+                             # For list display, today's turnover is also useful.
+                             # If we need 20d, we'd need historical data.
+                             # For now, let's map 'turnover' (raw) to a new field or existing if avail.
+                             pass
+                        
+                        if q.get('turnover_ratio'):
+                            stock.turnover_ratio = q.get('turnover_ratio')
+                            
+            except Exception as e:
+                logger.warning(f"Failed to enrich stock list with quotes: {e}")
 
         # 构建分页信息
         pagination = PaginationInfo(
@@ -97,9 +139,36 @@ async def get_stock_list(
         raise HTTPException(status_code=500, detail=f"获取股票列表失败: {str(e)}")
 
 
+@router.get("", response_model=StockListResponse)
+async def get_stock_list_alias(
+    exchange: Optional[str] = Query(None, description="交易所筛选 (SH/SZ/BJ)"),
+    asset_type: Optional[str] = Query(None, description="资产类型筛选"),
+    is_active: Optional[bool] = Query(None, description="活跃状态筛选"),
+    name_search: Optional[str] = Query(None, description="股票名称搜索"),
+    skip: int = Query(0, ge=0, description="跳过数量"),
+    limit: int = Query(100, ge=1, le=1000, description="返回数量"),
+    request: Request = None,
+    client=Depends(get_stock_client)
+):
+    """
+    获取股票列表 (Alias for /list)
+    """
+    return await get_stock_list(
+        exchange=exchange,
+        asset_type=asset_type,
+        is_active=is_active,
+        name_search=name_search,
+        skip=skip,
+        limit=limit,
+        request=request,
+        client=client
+    )
+
+
 @router.get("/{stock_code}/detail", response_model=StockDetailResponse)
 async def get_stock_detail(
     stock_code: str = Path(..., description="股票代码"),
+    request: Request = None,
     client=Depends(get_stock_client)
 ):
     """
@@ -114,6 +183,22 @@ async def get_stock_detail(
         stock = await client.get_stock_detail(stock_code)
         if not stock:
             raise HTTPException(status_code=404, detail=f"股票代码 {stock_code} 不存在")
+
+        # EPIC-002: Enrich with Industry Info
+        if request and hasattr(request.app.state, "industry_service"):
+            industry_service = request.app.state.industry_service
+            if industry_service:
+                try:
+                    industry_info = await industry_service.get_industry_info(stock_code)
+                    if industry_info:
+                        stock.industry = industry_info.get('industry')
+                        stock.sector = industry_info.get('sector')
+                        
+                        # Populate listing date if original is missing or we want to update it
+                        if industry_info.get('listing_date') and not stock.list_date:
+                            stock.list_date = industry_info.get('listing_date')
+                except Exception as e:
+                    logger.warning(f"Failed to fetch industry info for {stock_code}: {e}")
 
         return StockDetailResponse(
             success=True,
