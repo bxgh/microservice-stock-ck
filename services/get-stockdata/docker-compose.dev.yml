@@ -10,7 +10,7 @@ services:
     container_name: get-stockdata-api-dev
     restart: unless-stopped
     ports:
-      - "${SERVICE_PORT:-8086}:8083"
+      - "${SERVICE_PORT:-8003}:8083"
     environment:
       - NACOS_SERVER_URL=${NACOS_SERVER_URL:-http://127.0.0.1:8848}
       - SERVICE_NAME=get-stockdata
@@ -22,6 +22,7 @@ services:
       - PYTHONUNBUFFERED=1
       - TZ=Asia/Shanghai
       - PROXY_URL=http://127.0.0.1:8118  # SSH隧道代理 (更广的接口范围)
+      - ENABLE_PROXY_CHAINS=true # 启用 proxychains4
       # 代理由 entrypoint.sh 配置
       - CLICKHOUSE_HOST=${CLICKHOUSE_HOST:-microservice-stock-clickhouse}
       - CLICKHOUSE_PORT=${CLICKHOUSE_PORT:-9000}
@@ -50,6 +51,7 @@ services:
       - ./config:/app/config
       - ./tests:/app/tests  # ✅ 挂载测试代码（方便容器内测试）
       - ./scripts:/app/scripts # ✅ 挂载脚本目录
+      - ./entrypoint.sh:/app/entrypoint.sh # ✅ 挂载启动脚本(Force update)
       - get-stockdata-logs:/app/logs
     healthcheck:
       test: ["CMD", "curl", "--noproxy", "*", "-f", "http://localhost:8083/api/v1/health"]

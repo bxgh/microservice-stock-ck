@@ -35,6 +35,10 @@ echo "=========================================="
 echo "Starting FastAPI application..."
 echo "=========================================="
 # 2.5 Configure Proxychains (if enabled)
+# 2.5 Configure Proxychains (if enabled)
+echo "Debug: ENABLE_PROXY_CHAINS='$ENABLE_PROXY_CHAINS'"
+echo "Debug: PROXY_URL='$PROXY_URL'"
+
 if [ "$ENABLE_PROXY_CHAINS" = "true" ] && [ -n "$PROXY_URL" ]; then
     echo "Configuring Proxychains..."
     

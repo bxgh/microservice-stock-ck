@@ -133,14 +133,30 @@ Returns aggregated valuation and performance statistics for an industry.
     "mean": 28.5,
     "median": 24.1,
     "p25": 18.2,
-    "p75": 35.6
+    "p75": 35.6,
+    "min": 15.2,
+    "max": 60.5,
+    "count": 38
   },
   "pb_ratio_stats": {
     "mean": 4.2,
-    "median": 3.5
+    "median": 3.5,
+    # ... other stats
+  },
+  "roe_stats": {
+    "mean": 18.5,
+    "median": 16.2
+  },
+  "revenue_growth_stats": {
+    "mean": 12.5,
+    "median": 10.1
   }
 }
 ```
+
+> [!TIP]
+> **Performance**: This endpoint uses parallel data fetching to retrieve market valuation and financial performance data concurrently, significantly reducing response latency.
+
 
 ### 3.2 Enhanced Stock Info (Updated)
 `GET /stocks/{stock_code}/detail`

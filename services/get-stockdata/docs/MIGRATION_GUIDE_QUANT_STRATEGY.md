@@ -10,7 +10,7 @@ Update your `.env` or configuration file to enable real data sources.
 # Enable real data source
 DATA_SOURCE_TYPE=api
 # Point to get-stockdata service
-STOCK_DATA_SERVICE_URL=http://get-stockdata:8001/api/v1
+STOCK_DATA_SERVICE_URL=http://get-stockdata:8003/api/v1
 ```
 
 ## 2. API Mappings
