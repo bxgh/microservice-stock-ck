@@ -33,6 +33,9 @@ class DataType(Enum):
     META = "meta"             # 股票元信息 (名称、市值等)
     FINANCIAL = "financial"   # 财务报表
     FUND_FLOW = "fund_flow"   # 资金流向
+    FINANCE = "finance"       # 财务报表 (EPIC-002)
+    VALUATION = "valuation"   # 估值数据 (EPIC-002)
+    INDUSTRY = "industry"     # 行业数据 (EPIC-002)
 
 
 @dataclass

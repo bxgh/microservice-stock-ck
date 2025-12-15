@@ -1,73 +1,63 @@
-# Antigravity 最终配置方案概览
+# 代理架构概览 (Remote API Version)
 
-本文档详细记录了 Antigravity 代理架构的最终配置方案。该方案实现了国内外流量智能分流、akshare 数据源的稳定访问，以及 VS Code 关闭后的自动故障转移。
+## 1. 核心设计
 
----
+为了解决本地开发环境 (内网) 访问 Akshare 数据源 (如新浪、东方财富) 不稳定及被反爬虫拦截的问题，我们采用 **远程 API 服务 + HTTP 代理** 的混合架构。
 
-## 1. 架构图
+### 架构图
 
 ```mermaid
 graph TD
-    subgraph "远程服务器 (192.168.151.41)"
-        A[应用流量 :443] -->|iptables| B{分流逻辑}
-        B -->|国内IP段| C[gost-domestic :12346]
-        B -->|国外IP段| D[gost-foreign :12345]
-        B -->|akshare例外| D
-        C --> E[Squid :3128]
-        D --> F{故障转移}
-        F -->|优先| G[SSH隧道 :8118 (VSCode)]
-        F -->|备用| H[SSH隧道 :8119 (手动)]
+    subgraph Local [本地开发环境 192.168.151.0/24]
+        A[App: get-stockdata] -->|HTTP Request| B(Internal Proxy :3128)
     end
 
-    subgraph "本地 Windows"
-        G --> I[Privoxy :8118]
-        H --> I
-        I --> J[Cloudflare WARP]
-        J --> K[互联网]
+    subgraph TencentCloud [腾讯云服务器 124.221.80.250]
+        B -->|Forward| C[Nginx/Squid]
+        C -->|Localhost| D[Akshare API Service :8111]
+        D -->|Direct| E[Public Data Sources]
+        E[Sina/EastMoney/...] -.->|Data| D
     end
 
-    E --> K
+    classDef service fill:#f9f,stroke:#333;
+    class D service;
 ```
 
----
+### 关键组件
 
-## 2. 核心功能
+1.  **Local App (`get-stockdata`)**:
+    *   通过 `AkshareProvider` (Remote Version) 发起标准 HTTP 请求。
+    *   配置 `HTTP_PROXY=http://192.168.151.18:3128` 以穿透内网。
 
-1.  **智能分流**：
-    *   **国内流量**：通过 `gost-domestic` 转发给内网 Squid 代理，直连国内网络，速度快。
-    *   **国外流量**：通过 `gost-foreign` 转发给 SSH 隧道，走本地 WARP VPN，突破网络限制。
-2.  **akshare 专用通道**：
-    *   针对东方财富等敏感数据源，配置了 iptables 例外规则（强制走国外通道）。
-    *   提供了 Docker 和 Python 的显式代理方案，确保 100% 连通性。
-3.  **高可用性**：
-    *   配置了双端口 (`8118`/`8119`) 故障转移。
-    *   即使关闭 VS Code，只需运行本地脚本即可保持服务器代理可用。
+2.  **Internal Proxy (`192.168.151.18`)**:
+    *   标准 Squid 代理，负责将请求转发到公网。
 
----
+3.  **Remote Akshare API (`124.221.80.250:8111`)**:
+    *   **核心组件**: 基于 FastAPI 开发的 Python 微服务。
+    *   **职责**:
+        *   接收来自内网的标准化 API 请求 (如 `/api/v1/rank/hot`)。
+        *   在云端执行 `akshare` 库函数获取数据 (云端 IP 质量高，不易被封)。
+        *   处理数据清洗 (如 NaN 值处理/日期序列化)。
+        *   返回标准 JSON 响应。
 
-## 3. 快速开始
+## 2. 优势
 
-### 3.1 日常开发 (VS Code)
-直接连接 VS Code Remote-SSH，无需额外操作。流量自动分流。
+*   **高可用性**: 云端服务器网络稳定，比本地 SSH 隧道更可靠。
+*   **抗反爬虫**: 利用云服务器 IP 访问数据源，且服务可随时更换 IP 或增加代理池。
+*   **解耦**: 本地服务只需关注标准 REST API，无需维护复杂的 `akshare` 依赖和反爬策略。
+*   **数据清洗**: 服务端统一处理了 `NaN`、日期格式等脏数据问题，减轻了客户端负担。
 
-### 3.2 离线任务 (VS Code 关闭)
-运行本地脚本 `e:\setup\antigravity\keep_ssh_tunnel.ps1`，保持代理在线。
+## 3. 配置说明
 
-### 3.3 运行 akshare
-**Python**:
-```bash
-~/run_akshare.sh python your_script.py
+在 `docker-compose.yml` 中配置：
+
+```yaml
+services:
+  get-stockdata:
+    environment:
+      - HTTP_PROXY=http://192.168.151.18:3128
+      - HTTPS_PROXY=http://192.168.151.18:3128
+      - AKSHARE_API_URL=http://124.221.80.250:8111
 ```
-**Docker**:
-```bash
-docker run --network host -e http_proxy="http://127.0.0.1:8118" ...
-```
 
----
-
-## 4. 文档索引
-
-*   [01_Server_Configuration.md](./01_Server_Configuration.md) - 服务器端配置细节 (GOST, iptables)
-*   [02_Local_Configuration.md](./02_Local_Configuration.md) - 本地 Windows 配置 (Privoxy, SSH脚本)
-*   [03_Akshare_Docker_Guide.md](./03_Akshare_Docker_Guide.md) - akshare 与 Docker 使用指南
-*   [04_Troubleshooting.md](./04_Troubleshooting.md) - 故障排查与维护
+相关代码位于 `src/data_sources/providers/akshare_provider.py`。

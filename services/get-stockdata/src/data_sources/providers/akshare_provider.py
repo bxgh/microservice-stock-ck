@@ -1,288 +1,278 @@
 # -*- coding: utf-8 -*-
 """
-EPIC-007 Akshare 数据提供者
+EPIC-007 Remote Akshare 数据提供者
 
-基于 akshare 库实现的数据提供者,支持:
-- 榜单数据 (RANKING) - 涨停池、龙虎榜、人气榜
-- 指数成分 (INDEX) - 沪深300、中证500等
+通过 HTTP 代理调用部署在腾讯云的 Akshare API 服务
+支持:
+- 榜单数据 (RANKING)
+- 指数成分 (INDEX)
+- 财务数据 (FINANCE) - EPIC-002
+- 估值数据 (VALUATION) - EPIC-002
+- 行业数据 (INDUSTRY) - EPIC-002
 
 @author: EPIC-007
-@date: 2025-12-06
+@date: 2025-12-15
 """
 
 import asyncio
 import logging
+import os
 import time
-from datetime import datetime, date
+from datetime import datetime
 from typing import Any, Dict, List, Optional
-
+import aiohttp
 import pandas as pd
 
 from .base import DataProvider, DataResult, DataType
 
 logger = logging.getLogger(__name__)
 
-
 class AkshareProvider(DataProvider):
-    """Akshare 数据提供者
+    """远程 Akshare 数据提供者
     
-    使用 akshare 获取榜单数据和指数成分。
-    
-    优势:
-    - 数据丰富,覆盖面广
-    - 东方财富数据源,权威可靠
-    - 免费无限制
-    
-    注意:
-    - 部分 API 可能被反爬虫拦截
-    - 榜单数据非交易日可能为空
+    通过 HTTP API 获取数据，解决本地网络受限问题。
     """
     
     def __init__(
         self,
         priority: Optional[Dict[DataType, int]] = None,
+        api_url: Optional[str] = None,
+        proxy_url: Optional[str] = None
     ):
         """初始化
         
         Args:
             priority: 自定义优先级
+            api_url: API 服务地址 (默认从环境变量获取)
+            proxy_url: 代理地址 (默认从环境变量获取)
         """
-        self._ak = None
+        # 从环境变量获取配置
+        self._api_url = api_url or os.getenv("AKSHARE_API_URL", "http://124.221.80.250:8111")
+        self._proxy = proxy_url or os.getenv("HTTP_PROXY", "http://192.168.151.18:3128")
+        
+        self._session: Optional[aiohttp.ClientSession] = None
         
         # 默认优先级
         self._priority = priority or {
-            DataType.RANKING: 1,  # 榜单首选
-            DataType.INDEX: 1,    # 指数首选
+            DataType.RANKING: 1,
+            DataType.INDEX: 1,
+            DataType.FINANCE: 1,   # EPIC-002 核心
+            DataType.VALUATION: 1, # EPIC-002 核心
+            DataType.INDUSTRY: 1   # EPIC-002 核心
         }
-    
+        
     @property
     def name(self) -> str:
-        return "akshare"
+        return "akshare_remote"
     
     @property
     def capabilities(self) -> List[DataType]:
-        return [DataType.RANKING, DataType.INDEX]
+        return [
+            DataType.RANKING, 
+            DataType.INDEX, 
+            DataType.FINANCE, 
+            DataType.VALUATION,
+            DataType.INDUSTRY
+        ]
     
     @property
     def priority_map(self) -> Dict[DataType, int]:
         return self._priority
     
     async def initialize(self) -> bool:
-        """初始化"""
-        try:
-            import akshare as ak
-            self._ak = ak
-            logger.info("AkshareProvider initialized")
-            return True
-        except ImportError as e:
-            logger.error(f"AkshareProvider initialization error: {e}")
-            return False
-    
-    async def close(self) -> None:
-        """关闭"""
-        self._ak = None
-        logger.info("AkshareProvider closed")
-    
-    async def health_check(self) -> bool:
-        """健康检查"""
-        if self._ak is None:
-            return False
-        
-        try:
-            loop = asyncio.get_event_loop()
-            # 用人气榜测试,基本不会被拦截
-            result = await loop.run_in_executor(
-                None,
-                self._ak.stock_hot_rank_em
-            )
-            return result is not None and len(result) > 0
-        except Exception as e:
-            logger.warning(f"AkshareProvider health check failed: {e}")
-            return False
-    
-    async def fetch(self, data_type: DataType, **kwargs) -> DataResult:
-        """获取数据"""
-        if data_type == DataType.RANKING:
-            return await self._fetch_ranking(**kwargs)
-        elif data_type == DataType.INDEX:
-            return await self._fetch_index(**kwargs)
-        else:
-            return DataResult(
-                success=False,
-                error=f"Unsupported data type: {data_type.value}"
-            )
-    
-    async def _ensure_ak(self) -> bool:
-        """确保 akshare 可用"""
-        if self._ak is None:
-            return await self.initialize()
+        """初始化 HTTP 会话"""
+        if not self._session:
+            # 增加超时时间以适应较慢的远程响应
+            timeout = aiohttp.ClientTimeout(total=60, connect=10)
+            self._session = aiohttp.ClientSession(timeout=timeout)
+            logger.info(f"AkshareRemote initialized: URL={self._api_url}, Proxy={self._proxy}")
         return True
     
-    async def _fetch_ranking(
-        self,
-        ranking_type: str = "hot",
-        date_str: Optional[str] = None,
-        **kwargs
-    ) -> DataResult:
-        """获取榜单数据
-        
-        Args:
-            ranking_type: 榜单类型
-                - "hot": 人气榜
-                - "surge": 飙升榜
-                - "limit_up": 涨停池
-                - "continuous_limit_up": 连板统计
-                - "dragon_tiger": 龙虎榜
-                - "anomaly": 盘口异动
-            date_str: 日期 (YYYYMMDD), 默认今天
-        
-        Returns:
-            DataFrame
-        """
-        start_time = time.time()
-        
+    async def close(self) -> None:
+        """关闭会话"""
+        if self._session:
+            await self._session.close()
+            self._session = None
+            logger.info("AkshareRemote closed")
+            
+    async def health_check(self) -> bool:
+        """健康检查"""
         try:
-            if not await self._ensure_ak():
-                return DataResult(success=False, error="Akshare not available")
-            
-            today = date_str or datetime.now().strftime("%Y%m%d")
-            loop = asyncio.get_event_loop()
-            
-            # DEBUG
-
-
-            # 根据类型选择 API
-            symbol = kwargs.get('symbol', '火箭发射')  # 异动类型参数
-            
-            api_map = {
-                "hot": lambda: self._ak.stock_hot_rank_em(),
-                "surge": lambda: self._ak.stock_hot_up_em(),
-                "anomaly": lambda: self._ak.stock_changes_em(symbol=symbol),  # 传递异动类型
-                "limit_up": lambda: self._ak.stock_zt_pool_em(date=today),
-                # Note: stock_dt_pool_em doesn't exist in akshare, removed limit_down
-                "continuous_limit_up": lambda: self._ak.stock_zt_pool_strong_em(date=today),
-                "amount": lambda: self._ak.stock_zh_a_spot_em(),  # 全市场，后续按成交额排序
-                "turnover": lambda: self._ak.stock_zh_a_spot_em(),  # 全市场，后续按换手率排序
-                "dragon_tiger": lambda: self._ak.stock_lhb_detail_em(
-                    start_date=today, end_date=today
-                ),
-            }
-            
-            api_func = api_map.get(ranking_type)
-            if not api_func:
-                return DataResult(
-                    success=False,
-                    error=f"Unknown ranking type: {ranking_type}"
-                )
-            
-            # 添加重试逻辑处理代理错误（SSH隧道偶尔不稳定）
-            max_retries = 5  # 增加到5次重试
-            retry_delay = 2.0  # 初始延迟2秒
-            
-            for attempt in range(max_retries):
-                try:
-                    df = await loop.run_in_executor(None, api_func)
-                    latency_ms = (time.time() - start_time) * 1000
-                    
-                    if df is not None and len(df) > 0:
-                        # 后处理：按指定字段排序
-                        if ranking_type == "amount":
-                            # 按成交额降序排序，取前100
-                            df = df.sort_values(by='成交额', ascending=False).head(100)
-                        elif ranking_type == "turnover":
-                            # 按换手率降序排序，取前100
-                            df = df.sort_values(by='换手率', ascending=False).head(100)
-                        
-                        if attempt > 0:
-                            logger.info(f"✅ Retry {attempt} succeeded for {ranking_type}")
-                        return DataResult(
-                            success=True,
-                            data=df,
-                            latency_ms=latency_ms,
-                            extra={"ranking_type": ranking_type, "date": today},
-                        )
-                    else:
-                        return DataResult(
-                            success=False,
-                            error=f"No {ranking_type} data (possibly non-trading day)",
-                            latency_ms=latency_ms,
-                        )
-                        
-                except Exception as retry_error:
-                    error_str = str(retry_error)
-                    
-                    # 检查是否为代理错误
-                    is_proxy_error = 'ProxyError' in error_str or 'RemoteDisconnected' in error_str
-                    
-                    if is_proxy_error and attempt < max_retries - 1:
-                        # 代理错误且还有重试机会
-                        logger.warning(
-                            f"⚠️ Proxy error on attempt {attempt + 1}/{max_retries} "
-                            f"for {ranking_type}, retrying in {retry_delay}s..."
-                        )
-                        await asyncio.sleep(retry_delay)
-                        retry_delay *= 2  # 指数退避
-                        continue
-                    else:
-                        # 非代理错误或重试次数用尽
-                        raise retry_error
+            if not self._session:
+                await self.initialize()
                 
+            async with self._session.get(
+                f"{self._api_url}/health",
+                proxy=self._proxy
+            ) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    status = data.get("status") == "healthy"
+                    if status:
+                        logger.info("AkshareRemote health check: OK")
+                    else:
+                        logger.warning(f"AkshareRemote health check returned status: {data.get('status')}")
+                    return status
+                logger.warning(f"AkshareRemote health check HTTP {response.status}")
+                return False
         except Exception as e:
-            logger.error(f"AkshareProvider fetch ranking error: {e}")
-            return DataResult(
-                success=False,
-                error=str(e),
-                latency_ms=(time.time() - start_time) * 1000,
-            )
-    
-    async def _fetch_index(
-        self,
-        index_code: str = "000300",
-        **kwargs
-    ) -> DataResult:
-        """获取指数成分股
-        
-        Args:
-            index_code: 指数代码
-                - "000300": 沪深300
-                - "000905": 中证500
-                - "000016": 上证50
-        
-        Returns:
-            DataFrame 包含成分股列表
-        """
+            logger.warning(f"AkshareRemote health check failed: {e}")
+            return False
+
+    async def fetch(self, data_type: DataType, **kwargs) -> DataResult:
+        """通用获取方法"""
+        if not self._session:
+            await self.initialize()
+            
         start_time = time.time()
         
         try:
-            if not await self._ensure_ak():
-                return DataResult(success=False, error="Akshare not available")
-            
-            loop = asyncio.get_event_loop()
-            df = await loop.run_in_executor(
-                None,
-                lambda: self._ak.index_stock_cons(symbol=index_code)
-            )
-            
-            latency_ms = (time.time() - start_time) * 1000
-            
-            if df is not None and len(df) > 0:
-                return DataResult(
-                    success=True,
-                    data=df,
-                    latency_ms=latency_ms,
-                    extra={"index_code": index_code},
-                )
+            # 1. 路由分发
+            if data_type == DataType.RANKING:
+                return await self._fetch_ranking(**kwargs)
+            elif data_type == DataType.INDEX:
+                return await self._fetch_index(**kwargs)
+            elif data_type == DataType.FINANCE:
+                return await self._fetch_finance(**kwargs)
+            elif data_type == DataType.VALUATION:
+                return await self._fetch_valuation(**kwargs)
+            elif data_type == DataType.INDUSTRY:
+                return await self._fetch_industry(**kwargs)
             else:
-                return DataResult(
-                    success=False,
-                    error=f"No index data for {index_code}",
-                    latency_ms=latency_ms,
-                )
+                return DataResult(False, error=f"Unsupported type: {data_type}")
                 
         except Exception as e:
-            logger.error(f"AkshareProvider fetch index error: {e}")
+            logger.error(f"Fetch error for {data_type}: {e}")
             return DataResult(
-                success=False,
+                success=False, 
                 error=str(e),
-                latency_ms=(time.time() - start_time) * 1000,
+                latency_ms=(time.time() - start_time) * 1000
             )
+
+    async def _request_api(self, endpoint: str, params: dict = None) -> Any:
+        """执行 API 请求 (含重试)"""
+        url = f"{self._api_url}{endpoint}"
+        max_retries = 3
+        last_error = None
+        
+        for attempt in range(max_retries):
+            try:
+                # 显式使用代理进行请求
+                start = time.time()
+                async with self._session.get(
+                    url, 
+                    params=params, 
+                    proxy=self._proxy
+                ) as response:
+                    latency = (time.time() - start) * 1000
+                    
+                    if response.status == 200:
+                        data = await response.json()
+                        return data
+                    elif response.status == 404:
+                         # 某些数据找不到是正常的（如非交易日）
+                        logger.warning(f"API 404: {url}")
+                        return []
+                    else:
+                        text = await response.text()
+                        logger.error(f"API Error {response.status}: {text[:200]}")
+                        # 5xx 错误才重试
+                        if response.status < 500:
+                            raise Exception(f"API Error {response.status}: {text[:200]}")
+                            
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                last_error = e
+                logger.warning(f"AkshareRemote attempt {attempt+1}/{max_retries} failed for {url}: {e}")
+                if attempt == max_retries - 1:
+                    break
+                await asyncio.sleep(1 * (attempt + 1))
+                
+        raise Exception(f"Max retries reached for {url}: {last_error}")
+
+    async def _fetch_ranking(self, ranking_type: str = "hot", **kwargs) -> DataResult:
+        """获取榜单"""
+        start_time = time.time()
+        today = datetime.now().strftime("%Y%m%d")
+        
+        api_map = {
+            "hot": "/api/v1/rank/hot",
+            "surge": "/api/v1/rank/surge",
+            "limit_up": f"/api/v1/rank/limit_up?date={today}",
+            "dragon_tiger": f"/api/v1/rank/dragon_tiger?date={today}"
+        }
+        
+        endpoint = api_map.get(ranking_type)
+        if not endpoint:
+            # 兼容处理：对于不支持的类型，返回空或错误
+            return DataResult(False, error=f"Unsupported ranking: {ranking_type}")
+            
+        data = await self._request_api(endpoint)
+        df = pd.DataFrame(data)
+        
+        return DataResult(
+            success=True,
+            data=df,
+            latency_ms=(time.time() - start_time) * 1000,
+            extra={"source": "remote_api"}
+        )
+
+    async def _fetch_index(self, index_code: str = "000300", **kwargs) -> DataResult:
+        """获取指数成分"""
+        start_time = time.time()
+        # 兼容处理：远程 API 使用 symbol 参数
+        endpoint = f"/api/v1/index/cons?symbol={index_code}"
+        
+        data = await self._request_api(endpoint)
+        df = pd.DataFrame(data)
+        
+        return DataResult(
+            success=True,
+            data=df,
+            latency_ms=(time.time() - start_time) * 1000
+        )
+        
+    async def _fetch_finance(self, symbol: str = "", report_type: str = "main", **kwargs) -> DataResult:
+        """获取财务数据 (EPIC-002)"""
+        start_time = time.time()
+        endpoint = f"/api/v1/finance/sheet/{symbol}?type={report_type}"
+        
+        data = await self._request_api(endpoint)
+        df = pd.DataFrame(data)
+        
+        return DataResult(
+            success=True,
+            data=df,
+            latency_ms=(time.time() - start_time) * 1000
+        )
+
+    async def _fetch_valuation(self, symbol: str = "", **kwargs) -> DataResult:
+        """获取估值历史 (EPIC-002) - 实际上是财务指标"""
+        start_time = time.time()
+        # 远程 API 使用 /valuation/history，底层是 stock_financial_analysis_indicator
+        endpoint = f"/api/v1/valuation/history/{symbol}"
+        
+        data = await self._request_api(endpoint)
+        df = pd.DataFrame(data)
+        
+        return DataResult(
+            success=True,
+            data=df,
+            latency_ms=(time.time() - start_time) * 1000
+        )
+
+    async def _fetch_industry(self, board_code: str = "", **kwargs) -> DataResult:
+        """获取行业数据 (EPIC-002)"""
+        start_time = time.time()
+        if board_code:
+            endpoint = f"/api/v1/industry/cons/{board_code}"
+        else:
+            endpoint = "/api/v1/industry/list"
+            
+        data = await self._request_api(endpoint)
+        df = pd.DataFrame(data)
+        
+        return DataResult(
+            success=True,
+            data=df,
+            latency_ms=(time.time() - start_time) * 1000
+        )
