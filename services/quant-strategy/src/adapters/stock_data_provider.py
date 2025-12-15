@@ -399,6 +399,25 @@ class StockDataProvider:
             logger.warning(f"Failed to fetch industry stats for {industry_code}: {e}. Falling back to absolute scoring.")
             return None
 
+    async def get_valuation_history(self, code: str, years: int = 5) -> dict[str, Any] | None:
+        """
+        获取历史估值数据 (For PE/PB Band Scoring)
+        
+        Args:
+            code: 股票代码
+            years: 历史年数
+            
+        Returns:
+            包含 'stats', 'pe_ttm_list', 'pb_ratio_list' 的字典
+        """
+        try:
+            # Call Real History API
+            endpoint = f"/api/v1/market/valuation/{code}/history?years={years}&frequency=D"
+            data = await self._make_request("GET", endpoint)
+            return data
+        except Exception as e:
+            logger.warning(f"Failed to fetch valuation history for {code}: {e}")
+            return None
+
 # 全局单例
 data_provider = StockDataProvider()
-

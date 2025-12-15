@@ -106,6 +106,17 @@ class Settings(BaseSettings):
     ocf_quality_excellent: float = 1.0  # OCF/NetProfit > 1.0
     ocf_quality_good: float = 0.8
 
+    # Valuation Scoring (EPIC-002 Story 2.3)
+    weight_pe_score: float = 0.5
+    weight_pb_score: float = 0.5
+
+    # Percentile Thresholds (Lower is better/cheaper)
+    val_undervalued_pct: float = 25.0   # < 25% = 100 pts
+    val_fair_low_pct: float = 50.0      # 25-50% = 80 pts
+    val_fair_high_pct: float = 75.0     # 50-75% = 60 pts
+    val_overvalued_pct: float = 90.0    # 75-90% = 40 pts
+                                        # > 90% = 20 pts
+
     class Config:
         env_file = ".env"
         env_prefix = "QS_"
