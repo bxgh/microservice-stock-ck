@@ -472,7 +472,7 @@ sequenceDiagram
 |------------|----------|--------|----------|----------|
 | **超高速源** | PyTDX | 1 | A股实时数据 | 0.05-0.3s |
 | **高速源** | MooTDX | 2 | A股分笔数据 | 0.3-0.7s |
-| **高速源** | AKShare | 3 | A股综合数据 | 0.25-1.2s |
+| **高速源** | AKShare (Remote) | 3 | A股综合数据 (估值/财务) | 0.25-1.2s |
 | **高速源** | QStock | 4 | A股专业数据 | 0.2-0.8s |
 | **国际源** | Yahoo Finance | 7 | 港股、美股 | 0.3-0.5s |
 | **付费源** | Tushare | 6 | A股高质量数据 | 0.2-0.8s |
@@ -523,6 +523,49 @@ sequenceDiagram
 4. **数据验证体系**: 多重验证算法确保数据质量和完整性
 5. **重试和恢复**: 指数退避重试和备用策略
 
+#### 4.2.3 混合代理架构 (Hybrid Proxy Architecture)
+
+为解决内网环境下不同数据源协议（HTTP/HTTPS vs TCP）的代理兼容性问题，系统采用了混合代理架构：
+
+```mermaid
+graph TD
+    subgraph "Get Stock Data Container"
+        A[Akshare Provider]
+        M[Mootdx Provider]
+        P[Proxychains4]
+        
+        A -- "HTTP GET (Direct)" --> PROXY
+        M -- "TCP Connect" --> P
+        P -- "Socks/HTTP Tunnel" --> PROXY
+    end
+    
+    subgraph "Infrastructure"
+        PROXY[Squid Proxy (192.168.151.18:3128)]
+    end
+    
+    subgraph "External"
+        Internet[Internet Resources]
+        RemoteAPI[Remote Akshare API]
+    end
+    
+    PROXY --> Internet
+    PROXY --> RemoteAPI
+```
+
+1. **显式代理 (Explicit Proxy)**: 
+   - 适用组件：**AkshareProvider** (基于 `aiohttp`)
+   - 机制：直接配置 `HTTP_PROXY` 环境变量
+   - 路径：`aiohttp` -> `192.168.151.18:3128` (直连) -> `Remote API`
+   - **关键配置**: 在 `proxychains.conf` 中配置 `localnet` 排除代理服务器IP，防止死循环。
+
+2. **透明代理 (Transparent Chain)**:
+   - 适用组件：**MootdxProvider** (基于 TCP Socket)
+   - 机制：通过 `proxychains4` 拦截 TCP 调用
+   - 路径：`Socket` -> `proxychains` -> `192.168.151.18:3128` -> `Internet`
+
+3. **Remote Akshare API**:
+   - 部署了 **v2.5.0** 远程服务，提供 `Baidu` 估值接口和 `Meta` 信息接口，替代不稳定的本地计算。
+
 ---
 
 ## 5. API接口设计
@@ -537,12 +580,12 @@ sequenceDiagram
 
 ### 5.2 核心API接口
 
-#### 5.2.1 股票数据获取接口
+#### 5.2.1 基础行情接口 (Quotes & Info)
 
 **接口定义：**
-- `GET /api/v1/stocks/{symbol}` - 获取实时股票数据
-- `GET /api/v1/stocks/{symbol}/history` - 获取股票历史数据
-- `GET /api/v1/stocks/search/{query}` - 搜索股票
+- `GET /api/v1/quotes/realtime?codes=...` - 批量获取实时行情 (Mootdx)
+- `GET /api/v1/stock/info/{code}` - 获取个股元数据 (Akshare/Remote)
+- `GET /api/v1/stock/search/{query}` - 搜索股票
 
 #### 5.2.2 分笔数据专业接口
 
@@ -564,6 +607,14 @@ sequenceDiagram
 - `POST /api/v1/batch/submit` - 提交批量任务
 - `GET /api/v1/batch/status/{task_id}` - 查询任务状态
 - `GET /api/v1/batch/result/{task_id}` - 获取任务结果
+
+#### 5.2.5 估值与财务接口 (Valuation & Finance) (EPIC-002)
+
+**接口定义：**
+- `GET /api/v1/market/valuation/{symbol}` - 获取实时估值 (PE/PB/市值) (Remote Akshare)
+- `GET /api/v1/market/valuation/{symbol}/history` - 获取历史估值走势
+- `GET /api/v1/finance/indicators/{symbol}` - 获取增强财务指标
+- `GET /api/v1/finance/industry/{code}/stats` - 获取行业统计数据
 
 ### 5.3 数据模型定义
 

@@ -35,6 +35,7 @@ class DataType(Enum):
     FUND_FLOW = "fund_flow"   # 资金流向
     FINANCE = "finance"       # 财务报表 (EPIC-002)
     VALUATION = "valuation"   # 估值数据 (EPIC-002)
+    VALUATION_BAIDU = "valuation_baidu" # 百度估值 (EPIC-002/005)
     INDUSTRY = "industry"     # 行业数据 (EPIC-002)
 
 

@@ -13,6 +13,8 @@ import numpy as np
 
 from .cache_manager import CacheManager
 from .time_aware_strategy import get_time_strategy
+from data_sources.providers.akshare_provider import AkshareProvider
+from data_sources.providers.base import DataType
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +30,7 @@ class ValuationService:
         self,
         cache_manager: Optional[CacheManager] = None,
         enable_cache: bool = True,
-        timeout: int = 45, # Higher timeout for heavy valuation queries
+        timeout: int = 45, 
     ):
         self._cache_manager = cache_manager
         self._enable_cache = enable_cache
@@ -37,6 +39,9 @@ class ValuationService:
         self._initialized = False
         self._lock = asyncio.Lock()
         self._stats_lock = asyncio.Lock()
+        
+        # Use Remote Provider
+        self._provider = AkshareProvider()
         
         self._stats = {
             'total_requests': 0,
@@ -59,13 +64,18 @@ class ValuationService:
                     logger.warning("CacheManager init failed, caching disabled")
                     self._enable_cache = False
             
+            # Initialize Provider
+            await self._provider.initialize()
+            
             self._initialized = True
-            logger.info("✅ ValuationService initialized")
+            logger.info("✅ ValuationService initialized (Remote Provider)")
             return True
 
     async def close(self) -> None:
         if self._cache_manager:
             await self._cache_manager.close()
+        if self._provider:
+            await self._provider.close()
         self._initialized = False
         logger.info("ValuationService closed")
 
@@ -74,13 +84,10 @@ class ValuationService:
             return await self.initialize()
         return True
 
-    async def _call_akshare(self, func_name: str, **kwargs) -> Optional[pd.DataFrame]:
-        """Call akshare via shared client"""
-        from .akshare_client import akshare_client
-        return await akshare_client.call(func_name, **kwargs)
+    # _call_akshare removed, using self._provider instead
 
     async def get_current_valuation(self, stock_code: str) -> Dict[str, Any]:
-        """Get real-time valuation metrics"""
+        """Get real-time valuation metrics via Remote API (Robust)"""
         if not await self._ensure_initialized():
             raise RuntimeError("ValuationService not initialized")
 
@@ -94,27 +101,30 @@ class ValuationService:
             async with self._stats_lock:
                 self._stats['cache_misses'] += 1
 
-        # Use stock_individual_info_em for fast single-stock info
-        info_df = await self._call_akshare('stock_individual_info_em', symbol=stock_code)
+        # 1. Fetch Meta for Market Cap (via STOCK_INFO)
+        # 2. Fetch Latest TTM PE/PB/PS from Baidu (more reliable than Spot)
         
-        if info_df is None or info_df.empty:
+        async def fetch_meta():
+            res = await self._provider.fetch(DataType.META, symbol=stock_code)
+            if res.success and not res.data.empty:
+                return res.data.iloc[0].to_dict()
             return {}
-            
-        # Parse info_df (columns: item, value)
-        info_dict = dict(zip(info_df['item'], info_df['value']))
-        
-        # To get PE/PB TTM, we check stock_zh_valuation_baidu for specific indicators
-        # Since spot_em is flaky, we use baidu for TTM ratios which is more reliable
-        # We fetch "总市值", "市盈率(TTM)", "市净率", "市销率(TTM)" concurrently-ish or just one by one
-        # Note: Baidu API returns history, we take the last row
-        
-        async def fetch_baidu_latest(indicator):
-             df = await self._call_akshare('stock_zh_valuation_baidu', symbol=stock_code, indicator=indicator)
-             if df is not None and not df.empty:
-                 return df.iloc[-1]['value']
-             return None
 
-        pe_ttm, pb_ratio, ps_ratio = await asyncio.gather(
+        async def fetch_baidu_latest(indicator):
+            res = await self._provider.fetch(DataType.VALUATION_BAIDU, symbol=stock_code, indicator=indicator)
+            if res.success and not res.data.empty:
+                # Baidu returns history, sorted by date asc by default? Let's sort to be safe
+                df = res.data
+                if 'date' in df.columns:
+                    df = df.sort_values('date')
+                elif '日期' in df.columns:
+                     df = df.sort_values('日期')
+                return df.iloc[-1]['value']
+            return None
+
+        # Execute concurrently
+        info_dict, pe_ttm, pb_ratio, ps_ratio = await asyncio.gather(
+            fetch_meta(),
             fetch_baidu_latest("市盈率(TTM)"),
             fetch_baidu_latest("市净率"),
             fetch_baidu_latest("市销率(TTM)")
@@ -130,19 +140,14 @@ class ValuationService:
         def to_billion(val):
             f = safe_float(val)
             return round(f / 100000000, 4) if f is not None else None
-
-        # Info Dict usage for backup or specific fields
-        # info_dict has '总市值', '流通市值'
-        
+            
         result = {
             'stock_code': stock_code,
             'report_date': datetime.now().strftime('%Y%m%d'),
-            
             'total_market_cap': to_billion(info_dict.get('总市值')),
             'circulating_market_cap': to_billion(info_dict.get('流通市值')),
-            
             'pe_ttm': safe_float(pe_ttm),
-            'pe_static': safe_float(info_dict.get('市盈率(动)')), # Fallback to dynamic if needed
+            'pe_static': None, # skipped
             'pb_ratio': safe_float(pb_ratio),
             'ps_ratio': safe_float(ps_ratio), 
             'pcf_ratio': None,
@@ -160,7 +165,7 @@ class ValuationService:
         years: int = 5,
         frequency: str = 'D'
     ) -> Dict[str, Any]:
-        """Get historical valuation with statistics via Baidu API"""
+        """Get historical valuation via Remote API (Baidu)"""
         if not await self._ensure_initialized():
              raise RuntimeError("ValuationService not initialized")
 
@@ -170,16 +175,25 @@ class ValuationService:
             if cached:
                 return cached
 
-        # Use stock_zh_valuation_baidu for history
-        # Need to fetch PE and PB separately and merge
+        # Use Provider to fetch history from Baidu (Robust)
+        # Needs separate calls for PE / PB then merge
         
         async def fetch_series(indicator, col_name):
-            df = await self._call_akshare('stock_zh_valuation_baidu', symbol=stock_code, indicator=indicator)
-            if df is not None:
-                df['date'] = pd.to_datetime(df['date'])
-                df = df.set_index('date')
-                df = df.rename(columns={'value': col_name})
-                return df
+            res = await self._provider.fetch(DataType.VALUATION_BAIDU, symbol=stock_code, indicator=indicator)
+            if res.success and not res.data.empty:
+                df = res.data
+                # Rename 'value' to col_name
+                # Ensure date exists
+                if 'date' in df.columns:
+                    df['date'] = pd.to_datetime(df['date'])
+                elif '日期' in df.columns:
+                     df['date'] = pd.to_datetime(df['日期'])
+                
+                if 'date' in df.columns:
+                    df = df.set_index('date')
+                    if 'value' in df.columns:
+                        df = df.rename(columns={'value': col_name})
+                        return df[[col_name]]
             return pd.DataFrame()
 
         pe_df, pb_df = await asyncio.gather(
@@ -191,39 +205,42 @@ class ValuationService:
         if pe_df.empty and pb_df.empty:
             return {}
             
-        merged = pe_df.join(pb_df, how='outer').sort_index()
-        
+        # Outer join on date index
+        df = pe_df.join(pb_df, how='outer').sort_index()
+
         # Filter last N years
         cutoff_date = pd.Timestamp.now() - pd.DateOffset(years=years)
-        merged = merged[merged.index >= cutoff_date]
+        df = df[df.index >= cutoff_date]
         
-        if merged.empty:
+        if df.empty:
             return {}
             
-        # Resample if needed (merged is Date indexed)
-        # Assuming frequency 'D', 'W', 'M'
+        # Resample
         if frequency == 'W':
-            merged = merged.resample('W').last().dropna()
+            df = df.resample('W').last().dropna()
         elif frequency == 'M':
-            merged = merged.resample('ME').last().dropna()
+            df = df.resample('ME').last().dropna()
 
         # Calculate statistics
+        pe_series = df['pe_ttm'] if 'pe_ttm' in df else pd.Series()
+        pb_series = df['pb'] if 'pb' in df else pd.Series()
+        
         stats = {
-            'pe_ttm': self._calculate_stats(merged['pe_ttm'] if 'pe_ttm' in merged else pd.Series()),
-            'pb_ratio': self._calculate_stats(merged['pb'] if 'pb' in merged else pd.Series())
+            'pe_ttm': self._calculate_stats(pe_series),
+            'pb_ratio': self._calculate_stats(pb_series)
         }
         
         # Chart Data
         MAX_POINTS = 500
-        if len(merged) > MAX_POINTS:
-            step = len(merged) // MAX_POINTS
-            chart_df = merged.iloc[::step]
+        if len(df) > MAX_POINTS:
+            step = len(df) // MAX_POINTS
+            chart_df = df.iloc[::step]
         else:
-            chart_df = merged
+            chart_df = df
         
         dates = chart_df.index.strftime('%Y-%m-%d').tolist()
-        pe_list = chart_df['pe_ttm'].where(pd.notnull(chart_df['pe_ttm']), None).tolist() if 'pe_ttm' in chart_df else []
-        pb_list = chart_df['pb'].where(pd.notnull(chart_df['pb']), None).tolist() if 'pb' in chart_df else []
+        pe_list = pe_series.reindex(chart_df.index).where(pd.notnull(pe_series), None).tolist() if not pe_series.empty else []
+        pb_list = pb_series.reindex(chart_df.index).where(pd.notnull(pb_series), None).tolist() if not pb_series.empty else []
         
         result = {
             'stock_code': stock_code,

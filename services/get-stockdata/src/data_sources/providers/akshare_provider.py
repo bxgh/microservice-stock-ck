@@ -58,7 +58,9 @@ class AkshareProvider(DataProvider):
             DataType.INDEX: 1,
             DataType.FINANCE: 1,   # EPIC-002 核心
             DataType.VALUATION: 1, # EPIC-002 核心
-            DataType.INDUSTRY: 1   # EPIC-002 核心
+            DataType.VALUATION_BAIDU: 1, # EPIC-002 核心 (Baidu)
+            DataType.INDUSTRY: 1,   # EPIC-002 核心
+            DataType.META: 1
         }
         
     @property
@@ -72,7 +74,9 @@ class AkshareProvider(DataProvider):
             DataType.INDEX, 
             DataType.FINANCE, 
             DataType.VALUATION,
-            DataType.INDUSTRY
+            DataType.VALUATION_BAIDU,
+            DataType.INDUSTRY,
+            DataType.META
         ]
     
     @property
@@ -136,8 +140,12 @@ class AkshareProvider(DataProvider):
                 return await self._fetch_finance(**kwargs)
             elif data_type == DataType.VALUATION:
                 return await self._fetch_valuation(**kwargs)
+            elif data_type == DataType.VALUATION_BAIDU:
+                return await self._fetch_valuation_baidu(**kwargs)
             elif data_type == DataType.INDUSTRY:
                 return await self._fetch_industry(**kwargs)
+            elif data_type == DataType.META:
+                return await self._fetch_meta(**kwargs)
             else:
                 return DataResult(False, error=f"Unsupported type: {data_type}")
                 
@@ -260,6 +268,23 @@ class AkshareProvider(DataProvider):
             latency_ms=(time.time() - start_time) * 1000
         )
 
+    async def _fetch_valuation_baidu(self, symbol: str = "", indicator: str = "市盈率(TTM)", **kwargs) -> DataResult:
+        """获取百度估值数据 (Robust)"""
+        start_time = time.time()
+        # Remote Endpoint: /api/v1/valuation/baidu/{symbol}?indicator=...
+        endpoint = f"/api/v1/valuation/baidu/{symbol}"
+        params = {"indicator": indicator}
+        
+        data = await self._request_api(endpoint, params=params)
+        df = pd.DataFrame(data)
+        
+        return DataResult(
+            success=True,
+            data=df,
+            latency_ms=(time.time() - start_time) * 1000,
+            extra={"source": "baidu", "indicator": indicator}
+        )
+
     async def _fetch_industry(self, board_code: str = "", **kwargs) -> DataResult:
         """获取行业数据 (EPIC-002)"""
         start_time = time.time()
@@ -271,6 +296,25 @@ class AkshareProvider(DataProvider):
         data = await self._request_api(endpoint)
         df = pd.DataFrame(data)
         
+        return DataResult(
+            success=True,
+            data=df,
+            latency_ms=(time.time() - start_time) * 1000
+        )
+
+    async def _fetch_meta(self, symbol: str = "", **kwargs) -> DataResult:
+        """获取个股元数据 (市值等)"""
+        start_time = time.time()
+        # Remote Endpoint: /api/v1/stock/info/{symbol}
+        endpoint = f"/api/v1/stock/info/{symbol}"
+        
+        data = await self._request_api(endpoint)
+        # API returns dict, wrap in list for DataFrame
+        if isinstance(data, dict):
+             df = pd.DataFrame([data])
+        else:
+             df = pd.DataFrame(data)
+
         return DataResult(
             success=True,
             data=df,
