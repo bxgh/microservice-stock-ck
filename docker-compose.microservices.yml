@@ -1,0 +1,50 @@
+services:
+  # MooTDX 数据源服务
+  mootdx-source:
+    build:
+      context: .
+      dockerfile: services/mootdx-source/Dockerfile
+      args:
+        - ENABLE_PROXY=true
+        - PROXY_URL=http://192.168.151.18:3128
+      network: host
+    container_name: microservice-stock-mootdx-source
+    restart: unless-stopped
+    environment:
+      - SERVICE_NAME=mootdx-source
+      - SERVICE_HOST=127.0.0.1
+      - SERVICE_PORT=50051
+      - NACOS_SERVER_ADDR=127.0.0.1:8848
+      - LOG_LEVEL=INFO
+      # 无需代理配置，使用 TCP 直连
+    network_mode: host
+    volumes:
+      - ./services/mootdx-source/src:/app/src  # 开发模式挂载源码
+
+  # AkShare 代理服务
+  akshare-source:
+    build:
+      context: .
+      dockerfile: services/akshare-source/Dockerfile
+      args:
+        - ENABLE_PROXY=true
+        - PROXY_URL=http://192.168.151.18:3128
+      network: host
+    container_name: microservice-stock-akshare-source
+    restart: unless-stopped
+    environment:
+      - SERVICE_NAME=akshare-source
+      - SERVICE_HOST=127.0.0.1
+      - SERVICE_PORT=50052
+      - NACOS_SERVER_ADDR=127.0.0.1:8848
+      - LOG_LEVEL=INFO
+      - AKSHARE_API_URL=http://124.221.80.250:8000
+      - PROXY_URL=http://192.168.151.18:3128
+    network_mode: host
+    volumes:
+      - ./services/akshare-source/src:/app/src
+
+volumes:
+  nacos_logs:
+  nacos_data:
+

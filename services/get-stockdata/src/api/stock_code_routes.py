@@ -119,6 +119,37 @@ async def get_stock_list(
             except Exception as e:
                 logger.warning(f"Failed to enrich stock list with quotes: {e}")
 
+        # Enrich with Industry Info
+        industry_service = getattr(request.app.state, "industry_service", None)
+        if industry_service:
+            try:
+                # 批量获取行业信息
+                codes = [s.code for s in paginated_stocks]
+                
+                # P1-2 Fix: Limit concurrent tasks to prevent memory spike
+                max_concurrent = 100
+                if len(codes) > max_concurrent:
+                    logger.warning(f"Limiting concurrent industry requests from {len(codes)} to {max_concurrent}")
+                
+                # 使用Semaphore控制并发数量
+                semaphore = asyncio.Semaphore(max_concurrent)
+                
+                async def fetch_with_limit(code):
+                    async with semaphore:
+                        return await industry_service.get_industry_info(code)
+                
+                # 并发获取所有股票的行业信息（带并发限制）
+                industry_tasks = [fetch_with_limit(code) for code in codes]
+                industry_results = await asyncio.gather(*industry_tasks, return_exceptions=True)
+                
+                # 更新股票信息
+                for stock, industry_info in zip(paginated_stocks, industry_results):
+                    if isinstance(industry_info, dict) and industry_info:
+                        stock.industry = industry_info.get('industry')
+                        stock.sector = industry_info.get('sector')
+            except Exception as e:
+                logger.warning(f"Failed to enrich stock list with industry info: {e}")
+
         # 构建分页信息
         pagination = PaginationInfo(
             total=total,

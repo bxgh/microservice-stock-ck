@@ -12,9 +12,13 @@ import logging
 import os
 from typing import List, Optional, Dict, Any, Union
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 import json
 import redis.asyncio as redis
 from tenacity import retry, stop_after_attempt, wait_exponential
+
+# Timezone constant
+CST = ZoneInfo("Asia/Shanghai")
 
 try:
     from ..models.stock_models import (
@@ -38,8 +42,9 @@ class StockCodeClient:
         """
         初始化股票代码客户端
         """
-        self.base_url = "http://124.221.80.250:8000/api/v1"
-        self.timeout = aiohttp.ClientTimeout(total=5.0)
+        # Default to 8111 (Remote API Port)
+        self.base_url = os.getenv("STOCK_API_URL", "http://124.221.80.250:8111/api/v1")
+        self.timeout = aiohttp.ClientTimeout(total=30.0) # Increased timeout for large lists
         self.redis_client: Optional[redis.Redis] = None
 
         # 从环境变量读取Redis配置
@@ -57,6 +62,10 @@ class StockCodeClient:
         self.memory_cache: Dict[str, Any] = {}
         self.cache_ttl_memory = 600  # 10分钟
         self.cache_ttl_redis = 1800  # 30分钟
+        
+        # Thread safety: async lock for shared state
+        self._http_lock = asyncio.Lock()
+        self._cache_lock = asyncio.Lock()
 
     async def initialize(self):
         """初始化Redis连接"""
@@ -81,27 +90,109 @@ class StockCodeClient:
     async def _make_request(self, endpoint: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
         """
         发起HTTP请求到外部API
-
+        
         Args:
             endpoint: API端点
             params: 请求参数
-
+            
         Returns:
             API响应数据
         """
         url = f"{self.base_url}{endpoint}"
 
-        async with aiohttp.ClientSession(timeout=self.timeout) as session:
-            try:
-                async with session.get(url, params=params) as response:
-                    response.raise_for_status()
-                    return await response.json()
-            except aiohttp.ClientError as e:
-                logger.error(f"API请求失败 {url}: {e}")
-                raise
-            except Exception as e:
-                logger.error(f"API请求异常 {url}: {e}")
-                raise
+        # Thread safety: use lock to protect concurrent access
+        async with self._http_lock:
+            # trust_env=True permits aiohttp to read HTTP_PROXY from env
+            async with aiohttp.ClientSession(timeout=self.timeout, trust_env=True) as session:
+                try:
+                    async with session.get(url, params=params) as response:
+                        response.raise_for_status()
+                        return await response.json()
+                except aiohttp.ClientError as e:
+                    logger.error(f"API请求失败 {url}: {e}")
+                    raise
+                except asyncio.TimeoutError as e:
+                    logger.error(f"API请求超时 {url}: {e}")
+                    raise
+
+    async def _fetch_stocks_from_mootdx(self) -> List[StockInfo]:
+        """
+        从本地Mootdx获取股票列表 (通过TCP协议直连通达信服务器)
+        
+        Returns:
+            股票信息列表
+        """
+        try:
+            from mootdx.quotes import Quotes
+            from mootdx.consts import MARKET_SH, MARKET_SZ
+            import asyncio
+            from concurrent.futures import ThreadPoolExecutor
+            
+            # 在线程池中执行Mootdx调用
+            loop = asyncio.get_event_loop()
+            
+            # 使用列表推导式或循环获取沪深两市数据
+            stocks = []
+            
+            def fetch_mootdx_data():
+                client = Quotes.factory('std')
+                data_sh = client.stocks(market=MARKET_SH)
+                data_sz = client.stocks(market=MARKET_SZ)
+                return data_sh, data_sz
+
+            with ThreadPoolExecutor() as executor:
+                df_sh, df_sz = await loop.run_in_executor(executor, fetch_mootdx_data)
+                
+            # 处理上海市场数据 - 使用vectorized operations
+            if df_sh is not None and not df_sh.empty:
+                codes_sh = df_sh['code'].astype(str).tolist()
+                names_sh = df_sh['name'].astype(str).tolist()
+                
+                stocks.extend([
+                    StockInfo(
+                        code=code,
+                        name=name,
+                        exchange="SH",
+                        asset_type="stock",
+                        is_active=True,
+                        industry=None,
+                        sector=None
+                    )
+                    for code, name in zip(codes_sh, names_sh)
+                    if code.startswith('6')
+                ])
+
+            # 处理深圳市场数据 - 使用vectorized operations
+            if df_sz is not None and not df_sz.empty:
+                codes_sz = df_sz['code'].astype(str).tolist()
+                names_sz = df_sz['name'].astype(str).tolist()
+                
+                stocks.extend([
+                    StockInfo(
+                        code=code,
+                        name=name,
+                        exchange="SZ",
+                        asset_type="stock",
+                        is_active=True,
+                        industry=None,
+                        sector=None
+                    )
+                    for code, name in zip(codes_sz, names_sz)
+                    if code.startswith('0') or code.startswith('3')
+                ])
+
+            # 处理北京市场 (Mootdx可能混在SZ或SH，或者需要特殊处理，暂时通过代码前缀补全)
+            # 北交所通常在扩展行情，这里先略过，或检查代码前缀
+            
+            logger.info(f"从本地Mootdx获取到 {len(stocks)} 只股票")
+            return stocks
+            
+        except ImportError:
+            logger.error("Mootdx库未安装")
+            return []
+        except (ValueError, KeyError) as e:
+            logger.error(f"从本地Mootdx数据解析失败: {e}")
+            return []
 
     async def _get_from_cache(self, cache_key: str) -> Optional[Any]:
         """从缓存获取数据"""
@@ -130,11 +221,12 @@ class StockCodeClient:
         """设置缓存"""
         ttl = ttl or self.cache_ttl_memory
 
-        # 设置内存缓存
-        self.memory_cache[cache_key] = {
-            'data': data,
-            'timestamp': datetime.now()
-        }
+        # Set memory cache with lock
+        async with self._cache_lock:
+            self.memory_cache[cache_key] = {
+                'data': data,
+                'timestamp': datetime.now(CST)
+            }
 
         # 设置Redis缓存
         if self.redis_client:
@@ -145,12 +237,14 @@ class StockCodeClient:
                     json.dumps(data, ensure_ascii=False, default=str)
                 )
                 logger.debug(f"设置Redis缓存: {cache_key}")
-            except Exception as e:
+            except (redis.RedisError, redis.ConnectionError) as e:
                 logger.warning(f"Redis缓存设置失败: {e}")
 
     async def get_all_stocks(self, limit: int = 1000) -> List[StockInfo]:
         """
         获取全市场股票列表
+        
+        优先从缓存获取，然后尝试本地akshare（绕过远程API）
 
         Args:
             limit: 返回数量限制
@@ -163,24 +257,23 @@ class StockCodeClient:
         # 尝试从缓存获取
         cached_data = await self._get_from_cache(cache_key)
         if cached_data:
+            logger.info(f"从缓存获取到 {len(cached_data)} 只股票")
             return cached_data[:limit]
 
-        # 从API获取
+        # 直接使用本地Mootdx获取（绕过远程API）
         try:
-            params = {"limit": min(limit, 1000)}
-            response_data = await self._make_request("/stocks", params)
+            stocks = await self._fetch_stocks_from_mootdx()
+            
+            if stocks:
+                # 缓存完整数据
+                await self._set_cache(cache_key, stocks)
+                logger.info(f"从本地Mootdx获取并缓存了 {len(stocks)} 只股票")
+                return stocks[:limit]
+            else:
+                logger.warning("本地Mootdx返回空列表")
+                return []
 
-            external_stocks = [
-                ExternalStockResponse(**item) for item in response_data.get("items", [])
-            ]
-            stocks = StockDataAdapter.from_external_list(external_stocks)
-
-            # 缓存完整数据
-            await self._set_cache(cache_key, stocks)
-
-            return stocks[:limit]
-
-        except Exception as e:
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as e:
             logger.error(f"获取全市场股票列表失败: {e}")
             return []
 
@@ -201,18 +294,14 @@ class StockCodeClient:
         if cached_data:
             return cached_data
 
-        # 从API获取
+        # 从本地akshare获取全部股票，然后按交易所筛选
         try:
-            params = {"exchange": exchange, "limit": 5000}
-            response_data = await self._make_request("/stocks", params)
-
-            external_stocks = [
-                ExternalStockResponse(**item) for item in response_data.get("items", [])
-            ]
-            stocks = StockDataAdapter.from_external_list(external_stocks)
+            all_stocks = await self.get_all_stocks(limit=10000)
+            stocks = [s for s in all_stocks if s.exchange == exchange.upper()]
 
             # 缓存数据
             await self._set_cache(cache_key, stocks)
+            logger.info(f"获取到交易所 {exchange} 的 {len(stocks)} 只股票")
 
             return stocks
 
@@ -238,20 +327,21 @@ class StockCodeClient:
         if cached_data:
             return cached_data[:limit]
 
-        # 从API获取
+        # 从本地获取全部股票，然后搜索
         try:
-            params = {"name_search": query, "limit": min(limit, 100)}
-            response_data = await self._make_request("/stocks", params)
-
-            external_stocks = [
-                ExternalStockResponse(**item) for item in response_data.get("items", [])
+            all_stocks = await self.get_all_stocks(limit=10000)
+            
+            # 模糊搜索（代码或名称包含关键词）
+            query_lower = query.lower()
+            results = [
+                s for s in all_stocks 
+                if query_lower in s.code.lower() or query_lower in s.name.lower()
             ]
-            stocks = StockDataAdapter.from_external_list(external_stocks)
 
             # 缓存搜索结果
-            await self._set_cache(cache_key, stocks, ttl=300)  # 搜索结果缓存5分钟
+            await self._set_cache(cache_key, results, ttl=300)  # 搜索结果缓存5分钟
 
-            return stocks[:limit]
+            return results[:limit]
 
         except Exception as e:
             logger.error(f"搜索股票 '{query}' 失败: {e}")

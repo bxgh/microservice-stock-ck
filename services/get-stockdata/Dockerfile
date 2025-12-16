@@ -1,3 +1,4 @@
+```dockerfile
 # Get Stock Data 微服务 - 应用镜像
 # 基于预构建的基础镜像，只包含应用代码
 FROM get-stockdata-base:latest
@@ -9,6 +10,9 @@ ENV PYTHONPATH=/app/src
 COPY src/ ./src/
 COPY config/ ./config/
 COPY entrypoint.sh /app/entrypoint.sh
+COPY tests/ ./tests/
+# 安装开发依赖 (如果需要，通常在生产镜像中不包含)
+RUN pip install --no-cache-dir pytest pytest-asyncio httpx
 
 # 设置权限
 RUN chmod +x /app/entrypoint.sh && \
@@ -25,3 +29,4 @@ ENTRYPOINT ["/app/entrypoint.sh"]
 
 # 启动命令
 CMD ["python", "src/main.py"]
+```

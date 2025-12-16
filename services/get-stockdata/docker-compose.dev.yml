@@ -37,6 +37,11 @@ services:
       - GSD_DB_NAME=${GSD_DB_NAME}
       - GSD_DB_USER=${GSD_DB_USER}
       - GSD_DB_PASSWORD=${GSD_DB_PASSWORD}
+      # Redis Config (host network mode, so use localhost)
+      - REDIS_HOST=${REDIS_HOST:-localhost}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-redis123}
+      - REDIS_DB=${REDIS_DB:-0}
     # 🔥 开发模式启动命令 - 启用热加载
     command: >
       uvicorn src.main:app

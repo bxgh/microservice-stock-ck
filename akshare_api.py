@@ -9,8 +9,12 @@ from fastapi import FastAPI, HTTPException, Response
 import akshare as ak
 import logging
 from datetime import datetime
+from zoneinfo import ZoneInfo
 import numpy as np
 import pandas as pd
+
+# Timezone constant
+CST = ZoneInfo("Asia/Shanghai")
 
 # 配置日志
 logging.basicConfig(
@@ -43,7 +47,7 @@ def root():
 
 @app.get("/health")
 def health():
-    return {"status": "healthy", "timestamp": datetime.now().isoformat(), "akshare_version": ak.__version__}
+    return {"status": "healthy", "timestamp": datetime.now(CST).isoformat(), "akshare_version": ak.__version__}
 
 # ==========================================
 # 1. 市场行情 (Market Data)
@@ -82,6 +86,76 @@ def get_stock_info(symbol: str):
     except Exception as e:
         logger.error(f"Info error: {e}")
         raise HTTPException(500, str(e))
+
+@app.get("/api/v1/stocks")
+def get_standardized_stocks(limit: int = 10000):
+    """
+    Standardized Stock List for StockCodeClient
+    Returns specific format: {items: [ExternalStockResponse...], total: ...}
+    """
+    df = None
+    try:
+        # 1. Fetch Spot Data (Latest list of all A-shares)
+        df = ak.stock_zh_a_spot_em()
+        
+        # 2. Transform to standardized format using vectorized operations
+        # Extract columns as vectors
+        codes = df['代码'].astype(str).tolist()
+        names = df['名称'].astype(str).tolist()
+        
+        # Vectorized exchange inference
+        exchanges = []
+        for code in codes:
+            if code.startswith("6"): 
+                exchanges.append("SH")
+            elif code.startswith("0") or code.startswith("3"): 
+                exchanges.append("SZ")
+            elif code.startswith("8") or code.startswith("4") or code.startswith("9"): 
+                exchanges.append("BJ")
+            else:
+                exchanges.append("UNKNOWN")
+        
+        # Build items using list comprehension (50x faster than iterrows)
+        timestamp = datetime.now(CST).isoformat()
+        items = [
+            {
+                "standard_code": code,
+                "name": name,
+                "exchange": exchange,
+                "security_type": "stock",
+                "is_active": True, 
+                "formats": {
+                    "standard": code,
+                    "akshare": code,
+                    "tushare": f"{code}.{exchange}" if exchange != "UNKNOWN" else code
+                },
+                "list_date": None, 
+                "delist_date": None,
+                "data_source": "akshare",
+                "last_updated": timestamp
+            }
+            for code, name, exchange in zip(codes, names, exchanges)
+        ]
+            
+        # 3. Pagination/Limit
+        total = len(items)
+        items = items[:limit]
+        
+        return {
+            "items": items,
+            "total": total,
+            "skip": 0,
+            "limit": limit,
+            "has_more": len(items) < total
+        }
+            
+    except Exception as e:
+        logger.error(f"Stocks list error: {e}")
+        raise HTTPException(status_code=503, detail=f"Failed to fetch stock list: {str(e)}")
+    finally:
+        # Explicit cleanup for large DataFrames
+        if df is not None:
+            del df
 
 # ==========================================
 # 2. 财务数据 (Financials)
@@ -129,8 +203,8 @@ def get_valuation_history(symbol: str):
         return safe_json_response(df)
     except Exception as e:
         logger.error(f"Valuation history error: {e}")
-        # Dont raise 500, return empty list
-        return Response(content="[]", media_type="application/json")
+        # P1-7 Fix: Raise explicit error instead of returning empty
+        raise HTTPException(status_code=503, detail=f"Valuation service error: {str(e)}")
 
 @app.get("/api/v1/valuation/baidu/{symbol}")
 def get_valuation_baidu(symbol: str, indicator: str = "市盈率(TTM)"):
@@ -144,8 +218,8 @@ def get_valuation_baidu(symbol: str, indicator: str = "市盈率(TTM)"):
         return safe_json_response(df)
     except Exception as e:
         logger.error(f"Valuation baidu error: {e}")
-        # Fallback empty
-        return Response(content="[]", media_type="application/json")
+        # P1-7 Fix: Raise explicit error instead of returning empty
+        raise HTTPException(status_code=503, detail=f"Baidu valuation service error: {str(e)}")
 
 # ==========================================
 # 4. 行业与板块
@@ -209,6 +283,56 @@ def get_rank_dragon_tiger(date: str):
         logger.error(f"Rank lhb error: {e}")
         raise HTTPException(500, str(e))
 
+@app.get("/api/v1/industries")
+async def get_industries():
+    """获取所有行业板块"""
+    df = None
+    try:
+        df = ak.stock_board_industry_name_em()
+        if df is None or df.empty:
+            return {"items": [], "total": 0}
+            
+        # Vectorized operations instead of iterrows
+        codes = df['板块代码'].astype(str).tolist()
+        names = df['板块名称'].astype(str).tolist()
+        
+        items = [
+            {"code": code, "name": name}
+            for code, name in zip(codes, names)
+        ]
+        return {"items": items, "total": len(items)}
+    except Exception as e:
+        logger.error(f"Error fetching industries: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if df is not None:
+            del df
+
+@app.get("/api/v1/industry/{code}/constituents")
+async def get_industry_constituents(code: str):
+    """获取行业成分股"""
+    df = None
+    try:
+        df = ak.stock_board_industry_cons_em(symbol=code)
+        if df is None or df.empty:
+             return {"items": [], "total": 0}
+        
+        # Vectorized operations
+        codes = df['代码'].astype(str).tolist()
+        names = df['名称'].astype(str).tolist()
+        
+        items = [
+            {"code": c, "name": n}
+            for c, n in zip(codes, names)
+        ]
+        return {"items": items, "total": len(items)}
+    except Exception as e:
+        logger.error(f"Error fetching constituents for {code}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if df is not None:
+            del df
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8111, timeout_keep_alive=30)
+    uvicorn.run(app, host="0.0.0.0", port=8111, log_level="info")
