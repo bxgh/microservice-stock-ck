@@ -153,6 +153,15 @@ except ImportError as e:
     ValuationService = None
     IndustryService = None
 
+# 4.5 数据源网关 (EPIC-006)
+try:
+    from api.gateway_routes import router as gateway_router
+except ImportError as e:
+    print(f"Warning: Gateway routes import failed: {e}")
+    from fastapi import APIRouter
+    gateway_router = APIRouter(prefix="/api/v1/gateway", tags=["Data Source Gateway"])
+
+
 # 5. 实时行情与流动性 (EPIC-005)
 try:
     from api.quotes_routes import router as quotes_router
@@ -684,6 +693,18 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"⚠️ LiquidityService initialization failed: {e}")
 
+    # EPIC-006: Initialize DataSourceGateway (gRPC data source gateway)
+    data_source_gateway = None
+    try:
+        from gateway import DataSourceGateway
+        data_source_gateway = DataSourceGateway(enable_circuit_breaker=True)
+        await data_source_gateway.initialize()
+        app.state.data_source_gateway = data_source_gateway
+        logger.info("✅ DataSourceGateway initialized with gRPC provider chains")
+    except Exception as e:
+        logger.warning(f"⚠️ DataSourceGateway initialization failed: {e}")
+
+
     # 尝试初始化调度器
     # DISABLED: Stock pool management moved to dedicated microservice
     # This prevents blocking startup with HS300 data fetching
@@ -916,13 +937,23 @@ async def shutdown():
         except Exception as e:
             logger.warning(f"ValuationService关闭失败: {e}")
 
-        # EPIC-002: Close IndustryService
+        # EPIC-002: Cleanup Industry Service
         try:
-            if hasattr(app, 'state') and hasattr(app.state, 'industry_service'):
+            if hasattr(app.state, 'industry_service') and app.state.industry_service:
+                logger.info("Closing IndustryService...")
                 await app.state.industry_service.close()
-                logger.info("✅ IndustryService closed")
+                logger.info("IndustryService closed")
         except Exception as e:
-            logger.warning(f"IndustryService关闭失败: {e}")
+            logger.error(f"Error closing IndustryService: {e}")
+
+        # EPIC-006: Cleanup DataSourceGateway  
+        try:
+            if hasattr(app.state, 'data_source_gateway') and app.state.data_source_gateway:
+                logger.info("Closing DataSourceGateway...")
+                await app.state.data_source_gateway.close()
+                logger.info("✅ DataSourceGateway closed")
+        except Exception as e:
+            logger.error(f"Error closing DataSourceGateway: {e}")
 
         # Story 004.03: 清理动态推广组件
         try:
@@ -983,6 +1014,7 @@ def create_app() -> FastAPI:
     app.include_router(finance_router)  # EPIC-002: 财务数据路由
     app.include_router(valuation_router)  # EPIC-002: 市场估值路由
     app.include_router(industry_router)  # EPIC-002: 行业数据路由
+    app.include_router(gateway_router)    # EPIC-006: 数据源网关路由
     app.include_router(quotes_router)     # EPIC-005: 实时行情路由
     app.include_router(liquidity_router)  # EPIC-005: 流动性数据路由
     app.include_router(status_router)     # EPIC-005: 股票状态路由
