@@ -17,12 +17,13 @@
 - [x] 配置 Squid 代理 (`http://192.168.151.18:3128`)
 
 ### 2. 网关逻辑完善
-- [/] 升级 `DataSourceGateway`
+- [x] 升级 `DataSourceGateway`
     - [x] 实现 `ProviderChain` 逻辑 (gRPC 版)
     - [x] 实现 `CircuitBreaker` (针对 gRPC 错误码)
     - [x] 实现数据源自动优选策略 (基于优先级配置)
-    - [ ] 集成到 main.py (需要重构启动逻辑)
-    - [ ] Nacos 服务发现 (预留接口)
+    - [x] 集成到 main.py (启动/关闭逻辑)
+    - [x] 创建监控路由 (stats/health/circuit-breaker)
+    - [ ] Nacos 服务发现 (预留接口，可选)
 
 ### 3. 清理与收尾
 - [x] 移除旧的 Provider 代码
