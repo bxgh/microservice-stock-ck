@@ -121,9 +121,22 @@ class AkShareService(data_source_pb2_grpc.DataSourceServiceServicer):
         )
         
     async def HealthCheck(self, request, context):
-        # 尝试 ping 远程 API
+        """健康检查 - 验证服务自身状态，不依赖远程 API"""
         try:
-            await self._fetch_remote("/api/health") # 假设有个健康检查端点
-            return data_source_pb2.HealthStatus(healthy=True, message="Remote API reachable")
-        except:
-             return data_source_pb2.HealthStatus(healthy=False, message="Remote API unreachable")
+            # 检查配置是否正确
+            if not self.api_url:
+                return data_source_pb2.HealthStatus(
+                    healthy=False, 
+                    message="AKSHARE_API_URL not configured"
+                )
+            
+            # 服务运行正常
+            return data_source_pb2.HealthStatus(
+                healthy=True, 
+                message=f"AkShare service is running (API: {self.api_url})"
+            )
+        except Exception as e:
+            return data_source_pb2.HealthStatus(
+                healthy=False, 
+                message=f"Health check error: {str(e)}"
+            )
