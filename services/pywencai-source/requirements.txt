@@ -1,0 +1,5 @@
+grpcio>=1.50.0
+grpcio-tools>=1.50.0
+pywencai>=0.7.0
+nacos-sdk-python>=0.1.8
+pandas>=1.5.0

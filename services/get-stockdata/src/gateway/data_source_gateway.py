@@ -102,9 +102,17 @@ class DataSourceGateway:
         # baostock 配置
         baostock = GrpcProviderConfig(
             name="baostock-source",
-            address="localhost:50053",
+            address="localhost:50054",
             priority=3,
             timeout=10.0
+        )
+        
+        # pywencai 配置
+        pywencai = GrpcProviderConfig(
+            name="pywencai-source",
+            address="localhost:50053",
+            priority=60,
+            timeout=30.0  # pywencai 查询较慢
         )
         
         # 配置映射：不同数据类型使用不同的 Provider 组合
@@ -118,11 +126,14 @@ class DataSourceGateway:
             # 历史K线：mootdx 优先，baostock 降级
             data_source_pb2.DATA_TYPE_HISTORY: [mootdx, baostock],
             
-            # 榜单数据：akshare
-            data_source_pb2.DATA_TYPE_RANKING: [akshare],
+            # 榜单数据：akshare 优先，pywencai 备选
+            data_source_pb2.DATA_TYPE_RANKING: [akshare, pywencai],
             
-            # 板块数据：akshare
-            data_source_pb2.DATA_TYPE_SECTOR: [akshare],
+            # 板块数据：pywencai 优先，akshare 降级
+            data_source_pb2.DATA_TYPE_SECTOR: [pywencai, akshare],
+            
+            # 自然语言选股：仅 pywencai
+            data_source_pb2.DATA_TYPE_SCREENING: [pywencai],
             
             # 财务数据：akshare 优先，baostock 降级
             data_source_pb2.DATA_TYPE_FINANCE: [akshare, baostock],
