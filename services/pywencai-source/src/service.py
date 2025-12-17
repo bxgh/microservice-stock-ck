@@ -65,7 +65,7 @@ class PywencaiService(data_source_pb2_grpc.DataSourceServiceServicer):
         """获取能力"""
         return data_source_pb2.Capabilities(
             supported_types=[
-                data_source_pb2.DATA_TYPE_SCREENING,  # 自然语言选股
+                # DATA_TYPE_SCREENING 暂未在proto中定义，暂时移除
                 data_source_pb2.DATA_TYPE_RANKING,    # 榜单
                 data_source_pb2.DATA_TYPE_SECTOR,     # 板块
             ],
@@ -81,21 +81,23 @@ class PywencaiService(data_source_pb2_grpc.DataSourceServiceServicer):
         try:
             data = None
             
-            # 1. 自然语言选股
-            if request.type == data_source_pb2.DATA_TYPE_SCREENING:
-                query = request.params.get("query", "")
-                if not query:
-                    raise ValueError("Query parameter required for SCREENING")
-                data = await self._query_pywencai(query)
+            # 1. 自然语言选股 (暂时注释，等proto定义后启用)
+            # if request.type == data_source_pb2.DATA_TYPE_SCREENING:
+            #     query = request.params.get("query", "")
+            #     if not query:
+            #         raise ValueError("Query parameter required for SCREENING")
+            #     data = await self._query_pywencai(query)
                 
             # 2. 榜单数据
-            elif request.type == data_source_pb2.DATA_TYPE_RANKING:
-                ranking_type = request.params.get("type", "limit_up")
+            if request.type == data_source_pb2.DATA_TYPE_RANKING:
+                params_dict = dict(request.params) if request.params else {}
+                ranking_type = params_dict.get("type", "limit_up")
                 data = await self._fetch_ranking(ranking_type)
                 
             # 3. 板块数据
             elif request.type == data_source_pb2.DATA_TYPE_SECTOR:
-                sector_type = request.params.get("type", "industry")
+                params_dict = dict(request.params) if request.params else {}
+                sector_type = params_dict.get("type", "industry")
                 data = await self._fetch_sector(sector_type)
             
             else:
@@ -171,6 +173,8 @@ class PywencaiService(data_source_pb2_grpc.DataSourceServiceServicer):
 
     async def _fetch_ranking(self, ranking_type: str) -> Optional[pd.DataFrame]:
         """获取榜单数据"""
+        logger.info(f"_fetch_ranking called with ranking_type={repr(ranking_type)}, type={type(ranking_type)}")
+        
         query_map = {
             "limit_up": "今日涨停股票",
             "continuous_limit_up": "连续涨停天数大于1",
@@ -180,6 +184,8 @@ class PywencaiService(data_source_pb2_grpc.DataSourceServiceServicer):
         }
         
         query = query_map.get(ranking_type)
+        logger.info(f"Query from map: {repr(query)}")
+        
         if not query:
             raise ValueError(f"Unknown ranking type: {ranking_type}")
         

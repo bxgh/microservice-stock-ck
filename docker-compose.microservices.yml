@@ -49,6 +49,9 @@ services:
     build:
       context: .
       dockerfile: services/pywencai-source/Dockerfile
+      args:
+        - ENABLE_PROXY=true
+        - PROXY_URL=http://192.168.151.18:3128
     container_name: microservice-stock-pywencai-source
     restart: unless-stopped
     environment:
