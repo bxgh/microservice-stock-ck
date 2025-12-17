@@ -58,22 +58,46 @@ class AkShareService(data_source_pb2_grpc.DataSourceServiceServicer):
         try:
             data = None
             
-            # 1. 龙虎榜 (示例)
+            # 1. 龙虎榜/排行榜数据
             if request.type == data_source_pb2.DATA_TYPE_RANKING:
-                # 映射到远程 API 端点 /api/public/stock_lhb_detail_em
-                # 参数可能在 request.params 里 (date)
-                date = request.params.get("date")
-                endpoint = "/api/public/stock_lhb_detail_em" # 假设的端点
-                params = {"date": date} if date else {}
-                data = await self._fetch_remote(endpoint, params)
+                # 使用实际的 API 端点
+                rank_type = request.params.get("type", "hot")  # hot, surge, limit_up, dragon_tiger
+                endpoint_map = {
+                    "hot": "/api/v1/akshare/rank/hot",
+                    "surge": "/api/v1/akshare/rank/surge",
+                    "limit_up": "/api/v1/akshare/rank/limit_up",
+                    "dragon_tiger": "/api/v1/akshare/rank/dragon_tiger"
+                }
+                endpoint = endpoint_map.get(rank_type, "/api/v1/akshare/rank/hot")
+                data = await self._fetch_remote(endpoint)
                 
             # 2. 财务数据
             elif request.type == data_source_pb2.DATA_TYPE_FINANCE:
-                code = request.codes[0] # 假设单只股票
-                endpoint = f"/api/public/stock_financial_abstract" # 假设端点
-                params = {"symbol": code}
-                data = await self._fetch_remote(endpoint, params)
+                if not request.codes:
+                    raise ValueError("Stock codes required for finance data")
+                symbol = request.codes[0]
+                # 使用实际的财务报表端点
+                endpoint = f"/api/v1/akshare/finance/statements/{symbol}"
+                data = await self._fetch_remote(endpoint)
                 
+            # 3. 估值数据  
+            elif request.type == data_source_pb2.DATA_TYPE_VALUATION:
+                if not request.codes:
+                    raise ValueError("Stock codes required for valuation data")
+                symbol = request.codes[0]
+                endpoint = f"/api/v1/akshare/valuation/history/{symbol}"
+                data = await self._fetch_remote(endpoint)
+            
+            # 4. 行业数据
+            elif request.type == data_source_pb2.DATA_TYPE_INDUSTRY:
+                # 行业列表或行业成分
+                board_code = request.params.get("board_code")
+                if board_code:
+                    endpoint = f"/api/v1/akshare/industry/cons/{board_code}"
+                else:
+                    endpoint = "/api/v1/akshare/industry/list"
+                data = await self._fetch_remote(endpoint)
+            
             else:
                  return data_source_pb2.DataResponse(
                     success=False, 
