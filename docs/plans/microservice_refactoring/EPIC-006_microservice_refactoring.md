@@ -4,7 +4,7 @@
 将 `get-stockdata` 单体服务拆分为独立的微服务架构 (`data-api` + 多个 `data-source` 服务)，解决网络环境复杂、连接异构、部署限制等问题，并为未来扩展打下基础。
 
 ## 关键成果 (Key Results)
-1.  **架构解耦**：实现 1 个 `data-api` 聚合服务和 3 个独立的数据源服务 (`mootdx`, `akshare`, `baostock`)。
+1.  **架构解耦**：实现 1 个 `data-api` 聚合服务和 4 个独立的数据源服务 (`mootdx`, `akshare`, `baostock`, `pywencai`)。
 2.  **网络隔离**：各数据源服务独立配置 HTTP 代理环境，互不干扰。
 3.  **统一接口**：基于 gRPC 定义标准化的 `DataSourceService` 接口。
 4.  **同机部署**：所有服务在 `192.168.151.41` 上通过 Docker Compose 编排运行，使用 `network_mode: host`。
@@ -48,6 +48,15 @@
 *   **Task 6.4.3**: 在 `data-api` 中完善 `DataSourceGateway`，实现基于 Nacos 的服务发现和自动降级路由。
 *   **Task 6.4.4**: **清理**：移除 `data-api` 中原本的 `data_sources/providers` 本地实现代码。
 *   **Task 6.4.5**: 全面回归测试，验证所有 API 端点。
+
+### Story 6.5: 抽取 Pywencai 服务 (补充完成)
+**目标**：补充遗漏的 Pywencai 数据源，完成微服务架构。
+
+*   **Task 6.5.1**: 创建 `services/pywencai-source` 项目结构（含 Node.js 环境）。
+*   **Task 6.5.2**: 迁移 `PywencaiProvider` 逻辑，实现自然语言查询接口。
+*   **Task 6.5.3**: 实现 gRPC 接口，支持 SCREENING、RANKING、SECTOR 数据类型。
+*   **Task 6.5.4**: 集成到 `DataSourceGateway`，配置降级链。
+*   **Task 6.5.5**: 验证自然语言查询功能（如"今日涨停股票"）。
 
 ---
 
