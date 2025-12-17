@@ -1,3 +1,4 @@
+# Pywencai Source - 使用与akshare-source相同的模式
 FROM python:3.10-slim
 
 # 构建参数
@@ -19,9 +20,18 @@ RUN if [ "$ENABLE_PROXY" = "true" ]; then \
         rm -f /etc/apt/apt.conf.d/00proxy; \
     fi
 
-# 注意: pywencai 理论上需要 Node.js v16+ 环境
-# 如果测试发现必须有Node.js，可以后续添加
-# 先用纯Python环境测试
+# 安装系统依赖 (包括proxychains4和nodejs)
+RUN apt-get update && apt-get install -y \
+    gcc curl proxychains4 nodejs npm \
+    && rm -rf /var/lib/apt/lists/*
+
+# 配置 proxychains4
+ARG PROXY_HOST=192.168.151.18
+ARG PROXY_PORT=3128
+RUN sed -i 's/^strict_chain/#strict_chain/' /etc/proxychains4.conf && \
+    sed -i 's/^#dynamic_chain/dynamic_chain/' /etc/proxychains4.conf && \
+    sed -i 's/^socks4.*127.0.0.1.*9050/#socks4 127.0.0.1 9050/' /etc/proxychains4.conf && \
+    echo "http ${PROXY_HOST} ${PROXY_PORT}" >> /etc/proxychains4.conf
 
 # 配置pip国内源 (Tencent)
 RUN mkdir -p ~/.pip && \
@@ -43,8 +53,15 @@ ENV PYTHONPATH=/app/libs/common:$PYTHONPATH
 # 复制服务代码
 COPY services/pywencai-source/src /app/src
 
+# 复制entrypoint
+COPY services/pywencai-source/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
 # 环境变量
 ENV SERVICE_NAME=pywencai-source
 ENV SERVICE_PORT=50053
+
+# 使用entrypoint配置运行时代理
+ENTRYPOINT ["/app/entrypoint.sh"]
 
 CMD ["python", "src/main.py"]
