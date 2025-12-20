@@ -1,0 +1,54 @@
+version: '3.8'
+
+services:
+  akshare-api:
+    build: 
+      context: ./akshare-api
+      args:
+        - ENABLE_PROXY=true
+        - PROXY_URL=http://192.168.151.18:3128
+    container_name: cloud-akshare-api
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  baostock-api:
+    build:
+      context: ./baostock-api
+      args:
+        - ENABLE_PROXY=true
+        - PROXY_URL=http://192.168.151.18:3128
+    container_name: cloud-baostock-api
+    ports:
+      - "8001:8001"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  pywencai-api:
+    build:
+      context: ./pywencai-api
+      args:
+        - ENABLE_PROXY=true
+        - PROXY_URL=http://192.168.151.18:3128
+    container_name: cloud-pywencai-api
+    ports:
+      - "8002:8002"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 60s
+      timeout: 20s
+      retries: 3
+
+networks:
+  default:
+    name: cloud-data-network
