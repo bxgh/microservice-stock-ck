@@ -1,4 +1,4 @@
-FROM python:3.10-slim
+FROM python:3.12-slim
 
 # 构建参数
 ARG ENABLE_PROXY=true
@@ -37,7 +37,7 @@ RUN mkdir -p ~/.pip && \
 COPY services/mootdx-source/requirements.txt /app/requirements.txt
 # 2. 共享库依赖 (如果有专门的 requirements) - 这里暂无，直接安装 libraries
 
-# 安装 Python 依赖
+# 安装 Python 依赖 (使用 pip.conf 中配置的腾讯云镜像)
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
 # 复制共享库
@@ -51,6 +51,13 @@ COPY services/mootdx-source/src /app/src
 # 环境变量
 ENV SERVICE_NAME=mootdx-source
 ENV SERVICE_PORT=50051
+
+# 暴露端口
+EXPOSE 50051
+
+# 健康检查 (检查gRPC端口是否可用)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:50051/ || exit 1
 
 # 启动命令
 CMD ["python", "src/main.py"]
