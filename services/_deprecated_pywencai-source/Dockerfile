@@ -1,5 +1,5 @@
 # Pywencai Source - 使用与akshare-source相同的模式
-FROM python:3.10-slim
+FROM python:3.12-slim
 
 # 构建参数
 ARG ENABLE_PROXY=true
@@ -36,15 +36,20 @@ RUN sed -i 's/^strict_chain/#strict_chain/' /etc/proxychains4.conf && \
 # 配置pip国内源 (Tencent)
 RUN mkdir -p ~/.pip && \
     echo '[global]' > ~/.pip/pip.conf && \
-    echo 'index-url = https://mirrors.cloud.tencent.com/pypi/simple/' >> ~/.pip/pip.conf && \
-    echo 'trusted-host = mirrors.cloud.tencent.com' >> ~/.pip/pip.conf && \
+    echo 'index-url = http://mirrors.aliyun.com/pypi/simple/' >> ~/.pip/pip.conf && \
+    echo 'trusted-host = mirrors.aliyun.com' >> ~/.pip/pip.conf && \
     echo 'timeout = 120' >> ~/.pip/pip.conf
 
 # 复制依赖文件
 COPY services/pywencai-source/requirements.txt /app/requirements.txt
 
 # 安装 Python 依赖
-RUN pip install --no-cache-dir -r /app/requirements.txt
+RUN if [ "$ENABLE_PROXY" = "true" ]; then \
+        http_proxy=$PROXY_URL https_proxy=$PROXY_URL \
+        pip install --no-cache-dir -r /app/requirements.txt; \
+    else \
+        pip install --no-cache-dir -r /app/requirements.txt; \
+    fi
 
 # 复制共享库
 COPY libs/common /app/libs/common
