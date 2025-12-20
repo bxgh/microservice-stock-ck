@@ -1,5 +1,27 @@
 services:
-  # MooTDX 数据源服务
+  # Mootdx API 服务 (通达信数据源)
+  mootdx-api:
+    build:
+      context: ./services/mootdx-api
+      dockerfile: Dockerfile
+      network: host
+    container_name: microservice-stock-mootdx-api
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - LOG_LEVEL=INFO
+    # ports:  # host模式不需要端口映射
+    #   - "8003:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health')"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
+    volumes:
+      - mootdx_config:/root/.mootdx
+
+  # MooTDX Source 服务 (gRPC + 路由)
   mootdx-source:
     build:
       context: .
@@ -10,62 +32,37 @@ services:
       network: host
     container_name: microservice-stock-mootdx-source
     restart: unless-stopped
+    depends_on:
+      mootdx-api:
+        condition: service_healthy
     environment:
       - SERVICE_NAME=mootdx-source
       - SERVICE_HOST=127.0.0.1
       - SERVICE_PORT=50051
       - NACOS_SERVER_ADDR=127.0.0.1:8848
       - LOG_LEVEL=INFO
-      # 无需代理配置，使用 TCP 直连
+      # mootdx-api URL (由于使用了 host 模式，可以使用 localhost 或 127.0.0.1)
+      - MOOTDX_API_URL=http://127.0.0.1:8003
+      # easyquotation: HTTP 需要代理
+      - HTTP_PROXY=http://192.168.151.18:3128
+      - HTTPS_PROXY=http://192.168.151.18:3128
+      # 云端 API URLs
+      - AKSHARE_API_URL=http://124.221.80.250:8000
+      - BAOSTOCK_API_URL=http://124.221.80.250:8001
+      - PYWENCAI_API_URL=http://124.221.80.250:8002
     network_mode: host
     volumes:
       - ./services/mootdx-source/src:/app/src  # 开发模式挂载源码
 
-  # AkShare 代理服务
-  akshare-source:
-    build:
-      context: .
-      dockerfile: services/akshare-source/Dockerfile
-      args:
-        - ENABLE_PROXY=true
-        - PROXY_URL=http://192.168.151.18:3128
-      network: host
-    container_name: microservice-stock-akshare-source
-    restart: unless-stopped
-    environment:
-      - SERVICE_NAME=akshare-source
-      - SERVICE_HOST=127.0.0.1
-      - SERVICE_PORT=50052
-      - NACOS_SERVER_ADDR=127.0.0.1:8848
-      - LOG_LEVEL=INFO
-      - AKSHARE_API_URL=http://124.221.80.250:8000
-      - PROXY_URL=http://192.168.151.18:3128
-    network_mode: host
-    volumes:
-      - ./services/akshare-source/src:/app/src
 
-  # Pywencai 自然语言查询服务
-  pywencai-source:
-    build:
-      context: .
-      dockerfile: services/pywencai-source/Dockerfile
-    container_name: microservice-stock-pywencai-source
-    restart: unless-stopped
-    environment:
-      - SERVICE_NAME=pywencai-source
-      - SERVICE_HOST=127.0.0.1
-      - SERVICE_PORT=50053
-      - NACOS_SERVER_ADDR=127.0.0.1:8848
-      - LOG_LEVEL=INFO
-      - ENABLE_PROXY_CHAINS=true
-      - PROXY_URL=http://192.168.151.18:3128
-    network_mode: host
-    volumes:
-      - ./services/pywencai-source/src:/app/src
 
+networks:
+  default:
+    name: microservice-stock-network
 
 
 volumes:
   nacos_logs:
   nacos_data:
+  mootdx_config:
 

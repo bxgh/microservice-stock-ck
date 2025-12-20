@@ -47,7 +47,7 @@ class AkshareProvider(DataProvider):
             proxy_url: 代理地址 (默认从环境变量获取)
         """
         # 从环境变量获取配置
-        self._api_url = api_url or os.getenv("AKSHARE_API_URL", "http://124.221.80.250:8111")
+        self._api_url = api_url or os.getenv("AKSHARE_API_URL", "http://124.221.80.250:8000")
         self._proxy = proxy_url or os.getenv("HTTP_PROXY", "http://192.168.151.18:3128")
         
         self._session: Optional[aiohttp.ClientSession] = None

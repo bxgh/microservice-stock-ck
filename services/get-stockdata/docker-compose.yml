@@ -16,6 +16,9 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - HEARTBEAT_INTERVAL=30
       - ENVIRONMENT=production
+      - HTTP_PROXY=http://192.168.151.18:3128
+      - HTTPS_PROXY=http://192.168.151.18:3128
+      - AKSHARE_API_URL=http://124.221.80.250:8000
     networks:
       - microservice-stock
     volumes:

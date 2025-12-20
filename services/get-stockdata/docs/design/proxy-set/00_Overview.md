@@ -14,7 +14,7 @@ graph TD
 
     subgraph TencentCloud [腾讯云服务器 124.221.80.250]
         B -->|Forward| C[Nginx/Squid]
-        C -->|Localhost| D[Akshare API Service :8111]
+        C -->|Localhost| D[Akshare API Service :8000]
         D -->|Direct| E[Public Data Sources]
         E[Sina/EastMoney/...] -.->|Data| D
     end
@@ -32,7 +32,7 @@ graph TD
 2.  **Internal Proxy (`192.168.151.18`)**:
     *   标准 Squid 代理，负责将请求转发到公网。
 
-3.  **Remote Akshare API (`124.221.80.250:8111`)**:
+3.  **Remote Akshare API (`124.221.80.250:8000`)**:
     *   **核心组件**: 基于 FastAPI 开发的 Python 微服务。
     *   **职责**:
         *   接收来自内网的标准化 API 请求 (如 `/api/v1/rank/hot`)。
@@ -57,7 +57,7 @@ services:
     environment:
       - HTTP_PROXY=http://192.168.151.18:3128
       - HTTPS_PROXY=http://192.168.151.18:3128
-      - AKSHARE_API_URL=http://124.221.80.250:8111
+      - AKSHARE_API_URL=http://124.221.80.250:8000
 ```
 
 相关代码位于 `src/data_sources/providers/akshare_provider.py`。

@@ -77,72 +77,32 @@ class DataSourceGateway:
     def _build_provider_configs(self) -> Dict[data_source_pb2.DataType, List[GrpcProviderConfig]]:
         """构建 Provider 配置
         
-        TODO: 从 Nacos 动态获取服务地址
-        目前使用硬编码配置
+        统一路由到 mootdx-source 容器，由其内部进行混合架构分发：
+        - Local: mootdx (TCP), easyquotation (HTTP)
+        - Cloud: akshare, baostock, pywencai (Remote APIs)
         
         Returns:
             Dict: 数据类型 -> Provider 配置列表
         """
-        # mootdx 配置
-        mootdx = GrpcProviderConfig(
-            name="mootdx-source",
+        # 统一的数据源配置
+        unified_source = GrpcProviderConfig(
+            name="unified-source",
             address="localhost:50051",
             priority=1,
-            timeout=5.0
+            timeout=30.0  # 增加超时以支持云端长连接请求
         )
         
-        # akshare 配置
-        akshare = GrpcProviderConfig(
-            name="akshare-source",
-            address="localhost:50052",
-            priority=2,
-            timeout=10.0
-        )
-        
-        # baostock 配置
-        baostock = GrpcProviderConfig(
-            name="baostock-source",
-            address="localhost:50054",
-            priority=3,
-            timeout=10.0
-        )
-        
-        # pywencai 配置
-        pywencai = GrpcProviderConfig(
-            name="pywencai-source",
-            address="localhost:50053",
-            priority=60,
-            timeout=30.0  # pywencai 查询较慢
-        )
-        
-        # 配置映射：不同数据类型使用不同的 Provider 组合
+        # 所有数据类型均路由到此统一服务
         configs = {
-            # 实时行情：mootdx 优先
-            data_source_pb2.DATA_TYPE_QUOTES: [mootdx],
-            
-            # 分笔数据：仅 mootdx
-            data_source_pb2.DATA_TYPE_TICK: [mootdx],
-            
-            # 历史K线：mootdx 优先，baostock 降级
-            data_source_pb2.DATA_TYPE_HISTORY: [mootdx, baostock],
-            
-            # 榜单数据：akshare 优先，pywencai 备选
-            data_source_pb2.DATA_TYPE_RANKING: [akshare, pywencai],
-            
-            # 板块数据：pywencai 优先，akshare 降级
-            data_source_pb2.DATA_TYPE_SECTOR: [pywencai, akshare],
-            
-            # 自然语言选股：仅 pywencai
-            data_source_pb2.DATA_TYPE_SCREENING: [pywencai],
-            
-            # 财务数据：akshare 优先，baostock 降级
-            data_source_pb2.DATA_TYPE_FINANCE: [akshare, baostock],
-            
-            # 估值数据：akshare
-            data_source_pb2.DATA_TYPE_VALUATION: [akshare],
-            
-            # 行业数据：baostock
-            data_source_pb2.DATA_TYPE_INDUSTRY: [baostock],
+            data_source_pb2.DATA_TYPE_QUOTES: [unified_source],
+            data_source_pb2.DATA_TYPE_TICK: [unified_source],
+            data_source_pb2.DATA_TYPE_HISTORY: [unified_source],
+            data_source_pb2.DATA_TYPE_RANKING: [unified_source],
+            data_source_pb2.DATA_TYPE_SECTOR: [unified_source],
+            data_source_pb2.DATA_TYPE_SCREENING: [unified_source],
+            data_source_pb2.DATA_TYPE_FINANCE: [unified_source],
+            data_source_pb2.DATA_TYPE_VALUATION: [unified_source],
+            data_source_pb2.DATA_TYPE_INDUSTRY: [unified_source],
         }
         
         return configs
