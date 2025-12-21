@@ -667,7 +667,7 @@ class MooTDXService(data_source_pb2_grpc.DataSourceServiceServicer):
         # 检查所有数据源状态
         healthy = all([
             self.mootdx_client is not None,
-            self.easyquotation_client is not None,
+            self.easy_handler is not None,
             self.cloud_client is not None
         ])
         

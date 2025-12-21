@@ -99,10 +99,10 @@ class DataSourceGateway:
             data_source_pb2.DATA_TYPE_HISTORY: [unified_source],
             data_source_pb2.DATA_TYPE_RANKING: [unified_source],
             data_source_pb2.DATA_TYPE_SECTOR: [unified_source],
-            data_source_pb2.DATA_TYPE_SCREENING: [unified_source],
             data_source_pb2.DATA_TYPE_FINANCE: [unified_source],
             data_source_pb2.DATA_TYPE_VALUATION: [unified_source],
             data_source_pb2.DATA_TYPE_INDUSTRY: [unified_source],
+            data_source_pb2.DATA_TYPE_INDEX: [unified_source],
         }
         
         return configs

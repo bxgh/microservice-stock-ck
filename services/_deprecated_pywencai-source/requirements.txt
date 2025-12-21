@@ -1,6 +1,0 @@
-grpcio==1.76.0
-grpcio-tools==1.76.0
-pywencai==0.13.1
-nacos-sdk-python<=2.1.0
-pandas==2.3.3
-

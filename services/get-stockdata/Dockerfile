@@ -1,4 +1,3 @@
-```dockerfile
 # Get Stock Data 微服务 - 应用镜像
 # 基于预构建的基础镜像，只包含应用代码
 FROM get-stockdata-base:latest
@@ -29,4 +28,3 @@ ENTRYPOINT ["/app/entrypoint.sh"]
 
 # 启动命令
 CMD ["python", "src/main.py"]
-```

@@ -47,7 +47,7 @@ services:
       - HTTP_PROXY=http://192.168.151.18:3128
       - HTTPS_PROXY=http://192.168.151.18:3128
       # 云端 API URLs
-      - AKSHARE_API_URL=http://124.221.80.250:8000
+      - AKSHARE_API_URL=http://124.221.80.250:8003
       - BAOSTOCK_API_URL=http://124.221.80.250:8001
       - PYWENCAI_API_URL=http://124.221.80.250:8002
     network_mode: host

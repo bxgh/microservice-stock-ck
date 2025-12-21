@@ -62,6 +62,7 @@ class DataServiceManager:
         config: Optional[Dict] = None,
         enable_circuit_breaker: bool = True,
         enable_time_aware: bool = True,
+        use_grpc: bool = True,  # 默认使用 gRPC 调用 mootdx-source
     ):
         """初始化
         
@@ -69,19 +70,24 @@ class DataServiceManager:
             config: 自定义配置 (数据源优先级等)
             enable_circuit_breaker: 是否启用熔断器
             enable_time_aware: 是否启用时段感知策略
+            use_grpc: 是否使用 gRPC 调用 mootdx-source（默认 True）
         """
         self._config = config or {}
         self._enable_circuit_breaker = enable_circuit_breaker
         self._enable_time_aware = enable_time_aware
+        self._use_grpc = use_grpc
         
         # 时段策略
         self._time_strategy = get_time_strategy() if enable_time_aware else None
         
-        # Provider 实例
+        # Provider 实例 (本地模式)
         self._providers: List[DataProvider] = []
         
-        # ProviderChain 实例 (按数据类型)
+        # ProviderChain 实例 (按数据类型，本地模式)
         self._chains: Dict[DataType, ProviderChain] = {}
+        
+        # gRPC 模式: DataSourceGateway
+        self._gateway = None
         
         # 状态
         self._initialized = False
@@ -92,7 +98,10 @@ class DataServiceManager:
         self._init_locks = {}  # 每个provider的初始化锁
     
     async def initialize(self) -> bool:
-        """初始化数据源（混合策略：核心顺序+可选懒加载）
+        """初始化数据源
+        
+        gRPC 模式: 使用 DataSourceGateway 调用 mootdx-source
+        本地模式: 使用本地 Provider（降级用）
         
         Returns:
             bool: 是否成功
@@ -101,7 +110,24 @@ class DataServiceManager:
             if self._initialized:
                 return True
             
-            logger.info("=== Initializing DataServiceManager (Hybrid Strategy) ===")
+            # === gRPC 模式 (默认) ===
+            if self._use_grpc:
+                logger.info("=== Initializing DataServiceManager (gRPC Mode) ===")
+                try:
+                    from gateway.data_source_gateway import DataSourceGateway
+                    self._gateway = DataSourceGateway(
+                        enable_circuit_breaker=self._enable_circuit_breaker
+                    )
+                    await self._gateway.initialize()
+                    self._initialized = True
+                    logger.info("✅ DataServiceManager initialized in gRPC mode (mootdx-source:50051)")
+                    return True
+                except Exception as e:
+                    logger.error(f"gRPC initialization failed: {e}, falling back to local mode")
+                    self._use_grpc = False  # 降级到本地模式
+            
+            # === 本地模式 (降级) ===
+            logger.info("=== Initializing DataServiceManager (Local Mode) ===")
             
             # 创建所有 Provider 实例（但不立即初始化）
             provider_instances = {
@@ -234,6 +260,16 @@ class DataServiceManager:
     async def close(self) -> None:
         """关闭所有数据源"""
         async with self._lock:
+            # gRPC 模式: 关闭 gateway
+            if self._gateway:
+                try:
+                    await self._gateway.close()
+                    logger.info("DataSourceGateway closed")
+                except Exception as e:
+                    logger.error(f"Gateway close error: {e}")
+                self._gateway = None
+            
+            # 本地模式: 关闭 providers
             for provider in self._providers:
                 try:
                     await provider.close()
@@ -264,7 +300,62 @@ class DataServiceManager:
                     enable_circuit_breaker=self._enable_circuit_breaker,
                 )
     
-    # ========== 数据获取 API ==========
+    async def _fetch_via_grpc(self, data_type_name: str, codes: List[str] = None, **kwargs) -> DataResult:
+        """通过 gRPC Gateway 获取数据
+        
+        Args:
+            data_type_name: 数据类型名称 (如 "DATA_TYPE_QUOTES")
+            codes: 股票代码列表
+            **kwargs: 其他参数
+        
+        Returns:
+            DataResult: 统一的数据结果
+        """
+        import json
+        import pandas as pd
+        from datasource.v1 import data_source_pb2
+        
+        # 构建 gRPC 请求
+        data_type = getattr(data_source_pb2, data_type_name, None)
+        if data_type is None:
+            return DataResult(success=False, error=f"Unknown data type: {data_type_name}")
+        
+        # 将 kwargs 转换为 params
+        params = {k: str(v) for k, v in kwargs.items() if v is not None}
+        
+        request = data_source_pb2.DataRequest(
+            type=data_type,
+            codes=codes or [],
+            params=params
+        )
+        
+        try:
+            response = await self._gateway.fetch(request)
+            
+            if not response.success:
+                return DataResult(
+                    success=False,
+                    error=response.error_message,
+                    source=response.source_name
+                )
+            
+            # 解析 JSON 响应为 DataFrame
+            if response.json_data:
+                data = json.loads(response.json_data)
+                df = pd.DataFrame(data) if isinstance(data, list) else pd.DataFrame([data])
+            else:
+                df = pd.DataFrame()
+            
+            return DataResult(
+                success=True,
+                data=df,
+                source=response.source_name,
+                latency_ms=response.latency_ms
+            )
+            
+        except Exception as e:
+            logger.error(f"gRPC fetch error for {data_type_name}: {e}")
+            return DataResult(success=False, error=str(e))
     
     async def get_quotes(self, codes: List[str], **kwargs) -> DataResult:
         """获取实时行情
@@ -275,6 +366,11 @@ class DataServiceManager:
         Returns:
             DataResult
         """
+        # gRPC 模式
+        if self._gateway:
+            return await self._fetch_via_grpc("DATA_TYPE_QUOTES", codes=codes, **kwargs)
+        
+        # 本地模式
         chain = self._chains.get(DataType.QUOTES)
         if not chain:
             return DataResult(success=False, error="No provider for QUOTES")
@@ -289,6 +385,11 @@ class DataServiceManager:
             start: 起始位置
             count: 数量
         """
+        # gRPC 模式
+        if self._gateway:
+            return await self._fetch_via_grpc("DATA_TYPE_TICK", codes=[code], **kwargs)
+        
+        # 本地模式
         chain = self._chains.get(DataType.TICK)
         if not chain:
             return DataResult(success=False, error="No provider for TICK")
@@ -311,6 +412,18 @@ class DataServiceManager:
             end_date: 结束日期
             frequency: 周期 (d/w/m/5/15/30/60)
         """
+        # gRPC 模式
+        if self._gateway:
+            return await self._fetch_via_grpc(
+                "DATA_TYPE_HISTORY",
+                codes=[code],
+                start_date=start_date,
+                end_date=end_date,
+                frequency=frequency,
+                **kwargs
+            )
+        
+        # 本地模式
         chain = self._chains.get(DataType.HISTORY)
         if not chain:
             return DataResult(success=False, error="No provider for HISTORY")
@@ -340,6 +453,16 @@ class DataServiceManager:
                 - "dragon_tiger": 龙虎榜
             date_str: 日期 (YYYYMMDD)
         """
+        # gRPC 模式
+        if self._gateway:
+            return await self._fetch_via_grpc(
+                "DATA_TYPE_RANKING",
+                ranking_type=ranking_type,
+                date_str=date_str,
+                **kwargs
+            )
+        
+        # 本地模式
         chain = self._chains.get(DataType.RANKING)
         if not chain:
             return DataResult(success=False, error="No provider for RANKING")
@@ -362,6 +485,15 @@ class DataServiceManager:
                 - "industry": 行业涨幅榜
                 - "concept": 概念涨幅榜
         """
+        # gRPC 模式
+        if self._gateway:
+            return await self._fetch_via_grpc(
+                "DATA_TYPE_SECTOR",
+                sector_type=sector_type,
+                **kwargs
+            )
+        
+        # 本地模式
         chain = self._chains.get(DataType.SECTOR)
         if not chain:
             return DataResult(success=False, error="No provider for SECTOR")

@@ -29,7 +29,7 @@ class CloudAPIClient:
         self.proxy = os.getenv("HTTP_PROXY")
         
         # 云端 API 基础 URL
-        self.akshare_url = os.getenv("AKSHARE_API_URL", "http://124.221.80.250:8000")
+        self.akshare_url = os.getenv("AKSHARE_API_URL", "http://124.221.80.250:8003")
         self.baostock_url = os.getenv("BAOSTOCK_API_URL", "http://124.221.80.250:8001")
         self.pywencai_url = os.getenv("PYWENCAI_API_URL", "http://124.221.80.250:8002")
         

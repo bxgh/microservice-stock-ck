@@ -1,5 +1,0 @@
-baostock>=0.8.9
-pandas>=2.1.0
-grpcio==1.76.0
-protobuf==6.33.2
-nacos-sdk-python<=2.1.0

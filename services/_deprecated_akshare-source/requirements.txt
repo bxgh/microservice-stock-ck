@@ -1,7 +1,0 @@
-grpcio>=1.60.0
-protobuf>=4.25.0
-nacos-sdk-python<=2.1.0
-pandas>=1.4.0,<2.0.0
-aiohttp>=3.9.0
-python-dotenv>=1.0.0
-numpy>=1.22.0,<2.0.0
