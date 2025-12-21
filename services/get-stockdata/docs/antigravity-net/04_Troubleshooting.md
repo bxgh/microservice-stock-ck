@@ -38,9 +38,9 @@
 **现象**: 关闭 VS Code 后服务器无法上网。
 
 **解决**:
-1.  在本地 Windows 运行 `e:\setup\antigravity\keep_ssh_tunnel.ps1`。
+1.  在本地 Windows 运行 `keep_ssh_tunnel.ps1` (确保脚本配置为 RemoteForward 8118)。
 2.  确保 PowerShell 窗口保持开启。
-3.  服务器会自动切换到 `8119` 端口。
+3.  GOST 会自动通过 `8118` 端口继续工作。
 
 ---
 

@@ -1053,4 +1053,4 @@ if __name__ == "__main__":
     main()
 
 # 创建app实例供uvicorn导入
-app = create_app()
+app = create_app() 

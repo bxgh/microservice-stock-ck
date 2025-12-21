@@ -68,10 +68,17 @@ async def get_stock_list(
             name_contains=name_search
         )
 
-        # 如果有名称搜索，使用搜索接口
+        # 判断是否有实际筛选条件
+        has_filters = any([exchange, asset_type, is_active is not None, name_search])
+
         if name_search:
+            # 名称搜索
             stocks = await client.search_stocks(name_search, limit)
+        elif not has_filters:
+            # 无筛选条件 - 使用 get_all_stocks (优先从 Stock Dictionary API 获取)
+            stocks = await client.get_all_stocks(limit=5000)
         else:
+            # 有筛选条件
             stocks = await client.filter_stocks(filters)
 
         # 应用分页
@@ -85,7 +92,7 @@ async def get_stock_list(
         if quotes_service:
             try:
                 # 1. Get codes
-                codes = [s.code for s in paginated_stocks]
+                codes = [s.stock_code for s in paginated_stocks]
                 # 2. Get batch quotes
                 quotes = await quotes_service.get_realtime_quotes(codes)
                 # 3. Create mapping
@@ -93,8 +100,8 @@ async def get_stock_list(
                 
                 # 4. Update stock info
                 for stock in paginated_stocks:
-                    if stock.code in quote_map:
-                        q = quote_map[stock.code]
+                    if stock.stock_code in quote_map:
+                        q = quote_map[stock.stock_code]
                         # Update fields if available
                         if q.get('market_cap'):
                             # Ensure unit consistency. 
@@ -124,7 +131,7 @@ async def get_stock_list(
         if industry_service:
             try:
                 # 批量获取行业信息
-                codes = [s.code for s in paginated_stocks]
+                codes = [s.stock_code for s in paginated_stocks]
                 
                 # P1-2 Fix: Limit concurrent tasks to prevent memory spike
                 max_concurrent = 100

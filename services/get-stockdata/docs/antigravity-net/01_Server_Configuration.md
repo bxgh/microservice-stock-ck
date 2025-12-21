@@ -18,8 +18,7 @@
         "Retries": 3,
         "ServeNodes": ["redirect://:12345"],
         "ChainNodes": [
-            "http://127.0.0.1:8118",  // VS Code 隧道
-            "http://127.0.0.1:8119"   // 手动备用隧道
+            "http://127.0.0.1:8118"   // VS Code 隧道
         ]
     }
     ```

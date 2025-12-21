@@ -14,6 +14,9 @@ tenacity>=8.2.0
 grpcio>=1.60.0
 grpcio-tools>=1.60.0
 
+# 股票基础数据 (EPIC-005: 通达信本地连接)
+mootdx>=0.9.0
+
 # 服务注册发现
 aiohttp>=3.9.0
 
