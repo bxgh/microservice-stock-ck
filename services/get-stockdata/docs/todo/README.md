@@ -8,10 +8,9 @@
 
 ```
 docs/todo/
-├── README.md              # 本文件
-├── story_007_01.md        # Story 007.01 待办事项
-├── story_007_02.md        # Story 007.02 待办事项（待创建）
-└── ...                    # 其他 Story 待办事项
+├── README.md                              # 本文件
+├── EPIC_002_COMPLETE_DATA_REQUIREMENTS.md # EPIC-002 数据需求清单
+└── (Story 007 系列已归档至 docs/reports/archive/20251221_epic007_todos/)
 ```
 
 ---
@@ -20,8 +19,8 @@ docs/todo/
 
 ### 文件命名规则
 
-- Story 级别：`story_XXX_YY.md`（如 `story_007_01.md`）
-- Epic 级别：`epic_XXX.md`（如 `epic_007.md`）
+- Story 级别：`story_XXX_YY.md`（如 `story_002_01.md`）
+- Epic 级别：`epic_XXX.md`（如 `epic_002.md`）
 
 ### 内容规范
 
@@ -35,6 +34,7 @@ docs/todo/
 
 ### 优先级定义
 
+- **P0 - 最高优先级**：阻塞性需求，必须立即完成
 - **P1 - 高优先级**：必须完成，影响功能稳定性
 - **P2 - 中优先级**：重要但非紧急，影响用户体验
 - **P3 - 低优先级**：优化项，按需完成
@@ -55,17 +55,18 @@ docs/todo/
 - **新增事项**：添加到对应优先级分类下
 - **调整优先级**：根据实际需求调整
 
-### 关闭待办文档
+### 归档待办文档
 
-当所有 P1 和 P2 事项完成后，在文档顶部标记 `状态: ✅ 已完成`。
+当 Epic 完成或待办事项长期未更新时，归档到 `docs/reports/archive/`。
 
 ---
 
 ## 📊 当前待办事项
 
-| Story | 文档 | P1 完成度 | P2 完成度 | 总体状态 |
-|-------|------|----------|----------|---------|
-| 007.01 | [story_007_01.md](./story_007_01.md) | 0/2 | 0/3 | ⚠️ 进行中 |
+| Epic/Story | 文档 | 状态 | 说明 |
+|-----------|------|------|------|
+| EPIC-002 | [EPIC_002_COMPLETE_DATA_REQUIREMENTS.md](./EPIC_002_COMPLETE_DATA_REQUIREMENTS.md) | 📋 需求文档 | quant-strategy 数据需求 |
+| EPIC-007 | 已归档 | ✅ 已完成 | Story 007 系列已归档 |
 
 ---
 
@@ -74,7 +75,8 @@ docs/todo/
 - **设计文档**：`docs/plans/epics/`
 - **验收报告**：`docs/reports/`
 - **实现代码**：`src/`
+- **归档文档**：`docs/reports/archive/`
 
 ---
 
-**最后更新**: 2025-12-06 22:12
+**最后更新**: 2025-12-21 20:32
