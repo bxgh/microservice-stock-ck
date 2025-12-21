@@ -637,12 +637,29 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"⚠️ Config manager not available: {e}")
 
+    # Initialize ClickHouse Writer for all services
+    clickhouse_writer = None
+    try:
+        from storage.clickhouse_writer import ClickHouseWriter
+        clickhouse_writer = ClickHouseWriter(
+            host=os.getenv('CLICKHOUSE_HOST', 'microservice-stock-clickhouse'),
+            port=int(os.getenv('CLICKHOUSE_PORT', '9000')),
+            database=os.getenv('CLICKHOUSE_DB', 'stock_data'),
+            user=os.getenv('CLICKHOUSE_USER', 'default'),
+            password=os.getenv('CLICKHOUSE_PASSWORD', ''),
+            batch_size=10 # Use small batch for interactive/API requests to avoid delay
+        )
+        app.state.clickhouse_writer = clickhouse_writer
+        logger.info("✅ Global ClickHouse Writer initialized")
+    except Exception as e:
+        logger.warning(f"⚠️ Global ClickHouse Writer initialization failed: {e}")
+
 
     # EPIC-002: Initialize Financial Service
     financial_service = None
     try:
         if FinancialService:
-            financial_service = FinancialService()
+            financial_service = FinancialService(clickhouse_writer=clickhouse_writer)
             # Initialize (load cache etc)
             await financial_service.initialize()
             app.state.financial_service = financial_service
@@ -654,7 +671,7 @@ async def lifespan(app: FastAPI):
     valuation_service = None
     try:
         if ValuationService:
-            valuation_service = ValuationService()
+            valuation_service = ValuationService(clickhouse_writer=clickhouse_writer)
             await valuation_service.initialize()
             app.state.valuation_service = valuation_service
             logger.info("✅ ValuationService initialized")
@@ -665,7 +682,7 @@ async def lifespan(app: FastAPI):
     industry_service = None
     try:
         if IndustryService:
-            industry_service = IndustryService()
+            industry_service = IndustryService(clickhouse_writer=clickhouse_writer)
             await industry_service.initialize()
             app.state.industry_service = industry_service
             logger.info("✅ IndustryService initialized")
@@ -813,6 +830,13 @@ async def lifespan(app: FastAPI):
                 config_manager.stop_watching()
             except Exception as e:
                 logger.warning(f"Error stopping config watcher: {e}")
+        
+        if clickhouse_writer:
+            try:
+                clickhouse_writer.close()
+                logger.info("✅ Global ClickHouse Writer closed")
+            except Exception as e:
+                logger.warning(f"Error closing ClickHouse Writer: {e}")
         
         await shutdown()
         logger.info("Service shutdown complete")

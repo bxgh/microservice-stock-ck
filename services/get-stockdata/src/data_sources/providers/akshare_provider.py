@@ -254,14 +254,19 @@ class AkshareProvider(DataProvider):
         )
 
     async def _fetch_valuation(self, symbol: str = "", **kwargs) -> DataResult:
-        """获取估值历史 (EPIC-002) - 实际上是财务指标"""
+        """获取个股估值数据 (EPIC-002)"""
         start_time = time.time()
-        # 远程 API 使用 /valuation/history，底层是 stock_financial_analysis_indicator
-        endpoint = f"/api/v1/valuation/history/{symbol}"
+        # 远程 API 使用 /api/v1/valuation/{symbol}
+        endpoint = f"/api/v1/valuation/{symbol}"
         
         data = await self._request_api(endpoint)
-        df = pd.DataFrame(data)
         
+        # API 返回字典，转为 DataFrame
+        if isinstance(data, dict):
+            df = pd.DataFrame([data])
+        else:
+            df = pd.DataFrame(data)
+            
         return DataResult(
             success=True,
             data=df,
@@ -270,32 +275,42 @@ class AkshareProvider(DataProvider):
 
     async def _fetch_valuation_baidu(self, symbol: str = "", indicator: str = "市盈率(TTM)", **kwargs) -> DataResult:
         """获取百度估值数据 (Robust)"""
+        # 注意：云端暂未提供 baidu 端点，保留逻辑但在 kwargs 中处理可能的回退
         start_time = time.time()
-        # Remote Endpoint: /api/v1/valuation/baidu/{symbol}?indicator=...
         endpoint = f"/api/v1/valuation/baidu/{symbol}"
         params = {"indicator": indicator}
         
-        data = await self._request_api(endpoint, params=params)
-        df = pd.DataFrame(data)
-        
-        return DataResult(
-            success=True,
-            data=df,
-            latency_ms=(time.time() - start_time) * 1000,
-            extra={"source": "baidu", "indicator": indicator}
-        )
+        try:
+            data = await self._request_api(endpoint, params=params)
+            df = pd.DataFrame(data)
+            return DataResult(
+                success=True,
+                data=df,
+                latency_ms=(time.time() - start_time) * 1000,
+                extra={"source": "baidu", "indicator": indicator}
+            )
+        except Exception as e:
+            logger.warning(f"Baidu valuation failed: {e}")
+            return DataResult(False, error=str(e))
 
-    async def _fetch_industry(self, board_code: str = "", **kwargs) -> DataResult:
+    async def _fetch_industry(self, symbol: str = "", **kwargs) -> DataResult:
         """获取行业数据 (EPIC-002)"""
         start_time = time.time()
-        if board_code:
-            endpoint = f"/api/v1/industry/cons/{board_code}"
+        
+        # 如果提供了 symbol，则获取个股行业信息
+        if symbol:
+            endpoint = f"/api/v1/industry/stock/{symbol}"
         else:
+            # 否则获取行业列表
             endpoint = "/api/v1/industry/list"
             
         data = await self._request_api(endpoint)
-        df = pd.DataFrame(data)
         
+        if isinstance(data, dict):
+            df = pd.DataFrame([data])
+        else:
+            df = pd.DataFrame(data)
+            
         return DataResult(
             success=True,
             data=df,

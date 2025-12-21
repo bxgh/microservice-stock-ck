@@ -15,6 +15,14 @@ from .cache_manager import CacheManager
 from .time_aware_strategy import get_time_strategy
 from data_sources.providers.akshare_provider import AkshareProvider
 from data_sources.providers.base import DataType
+from storage.clickhouse_writer import ClickHouseWriter, ValuationData
+import time
+
+try:
+    from api.routers.metrics import record_data_source_request
+except ImportError:
+    def record_data_source_request(source, success, duration):
+        pass
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +38,8 @@ class ValuationService:
         self,
         cache_manager: Optional[CacheManager] = None,
         enable_cache: bool = True,
-        timeout: int = 45, 
+        timeout: int = 45,
+        clickhouse_writer: Optional[ClickHouseWriter] = None,
     ):
         self._cache_manager = cache_manager
         self._enable_cache = enable_cache
@@ -42,6 +51,7 @@ class ValuationService:
         
         # Use Remote Provider
         self._provider = AkshareProvider()
+        self._clickhouse_writer = clickhouse_writer
         
         self._stats = {
             'total_requests': 0,
@@ -87,9 +97,15 @@ class ValuationService:
     # _call_akshare removed, using self._provider instead
 
     async def get_current_valuation(self, stock_code: str) -> Dict[str, Any]:
-        """Get real-time valuation metrics via Remote API (Robust)"""
+        """获取实时估值指标 (EPIC-002)
+        
+        使用云端 AkShare API 获取实时 PE/PB/市值等数据
+        """
         if not await self._ensure_initialized():
             raise RuntimeError("ValuationService not initialized")
+
+        async with self._stats_lock:
+            self._stats['total_requests'] += 1
 
         cache_key = f"valuation:current:{stock_code}"
         if self._enable_cache:
@@ -101,60 +117,68 @@ class ValuationService:
             async with self._stats_lock:
                 self._stats['cache_misses'] += 1
 
-        # 1. Fetch Meta for Market Cap (via STOCK_INFO)
-        # 2. Fetch Latest TTM PE/PB/PS from Baidu (more reliable than Spot)
+        # 调用云端 API (通过 Provider)
+        start_time = time.time()
+        success = False
+        try:
+            res = await self._provider.fetch(DataType.VALUATION, symbol=stock_code)
+            
+            if not res.success or res.data.empty:
+                logger.warning(f"Failed to fetch valuation from cloud for {stock_code}")
+                return {}
+            success = True
+        finally:
+            duration = time.time() - start_time
+            record_data_source_request("cloud_akshare_valuation", success, duration)
+            
+        data = res.data.iloc[0].to_dict()
         
-        async def fetch_meta():
-            res = await self._provider.fetch(DataType.META, symbol=stock_code)
-            if res.success and not res.data.empty:
-                return res.data.iloc[0].to_dict()
-            return {}
-
-        async def fetch_baidu_latest(indicator):
-            res = await self._provider.fetch(DataType.VALUATION_BAIDU, symbol=stock_code, indicator=indicator)
-            if res.success and not res.data.empty:
-                # Baidu returns history, sorted by date asc by default? Let's sort to be safe
-                df = res.data
-                if 'date' in df.columns:
-                    df = df.sort_values('date')
-                elif '日期' in df.columns:
-                     df = df.sort_values('日期')
-                return df.iloc[-1]['value']
-            return None
-
-        # Execute concurrently
-        info_dict, pe_ttm, pb_ratio, ps_ratio = await asyncio.gather(
-            fetch_meta(),
-            fetch_baidu_latest("市盈率(TTM)"),
-            fetch_baidu_latest("市净率"),
-            fetch_baidu_latest("市销率(TTM)")
-        )
-
+        # 单位转换常量 (元 -> 亿元)
+        YUAN_TO_YI = 100_000_000
+        
         def safe_float(val):
             try:
-                return float(val) if val is not None else None
+                if val is None or (isinstance(val, float) and np.isnan(val)):
+                    return None
+                return round(float(val), 4)
             except:
                 return None
 
-        # Convert to billion yuan
-        def to_billion(val):
-            f = safe_float(val)
-            return round(f / 100000000, 4) if f is not None else None
-            
         result = {
             'stock_code': stock_code,
             'report_date': datetime.now().strftime('%Y%m%d'),
-            'total_market_cap': to_billion(info_dict.get('总市值')),
-            'circulating_market_cap': to_billion(info_dict.get('流通市值')),
-            'pe_ttm': safe_float(pe_ttm),
-            'pe_static': None, # skipped
-            'pb_ratio': safe_float(pb_ratio),
-            'ps_ratio': safe_float(ps_ratio), 
+            'total_market_cap': safe_float(data.get('market_cap', 0) / YUAN_TO_YI) if data.get('market_cap') else None,
+            'circulating_market_cap': None, # 云端暂未提供
+            'pe_ttm': safe_float(data.get('pe')),
+            'pe_static': None,
+            'pb_ratio': safe_float(data.get('pb')),
+            'ps_ratio': safe_float(data.get('ps')), 
             'pcf_ratio': None,
-            'dividend_yield_ttm': None 
+            'dividend_yield_ttm': safe_float(data.get('dividend_yield'))
         }
         
-        if self._enable_cache:
+        # 写入 ClickHouse (Story 9.2)
+        if self._clickhouse_writer and result:
+            try:
+                trade_date = datetime.now() # Use now for real-time
+                v_data = ValuationData(
+                    stock_code=stock_code,
+                    trade_date=trade_date,
+                    total_market_cap=result.get('total_market_cap', 0.0),
+                    circulating_market_cap=result.get('circulating_market_cap', 0.0) or 0.0,
+                    pe_ttm=result.get('pe_ttm', 0.0),
+                    pe_static=result.get('pe_static', 0.0) or 0.0,
+                    pb_ratio=result.get('pb_ratio', 0.0),
+                    ps_ratio=result.get('ps_ratio', 0.0) or 0.0,
+                    pcf_ratio=result.get('pcf_ratio', 0.0) or 0.0,
+                    dividend_yield_ttm=result.get('dividend_yield_ttm', 0.0)
+                )
+                self._clickhouse_writer.write_valuation([v_data])
+            except Exception as e:
+                logger.error(f"Failed to write valuation to ClickHouse: {e}")
+
+        # 缓存 (时段感知 TTL)
+        if self._enable_cache and result:
             await self._cache_manager.set(cache_key, result, ttl=300) 
             
         return result

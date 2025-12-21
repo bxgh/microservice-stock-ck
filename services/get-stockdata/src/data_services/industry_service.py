@@ -13,6 +13,15 @@ import numpy as np
 
 from .cache_manager import CacheManager
 from .akshare_client import akshare_client
+from data_sources.providers.base import DataType
+from storage.clickhouse_writer import ClickHouseWriter, IndustryInfoData
+import time
+
+try:
+    from api.routers.metrics import record_data_source_request
+except ImportError:
+    def record_data_source_request(source, success, duration):
+        pass
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +39,7 @@ class IndustryService:
         cache_manager: Optional[CacheManager] = None,
         enable_cache: bool = True,
         timeout: int = 45,
+        clickhouse_writer: Optional[ClickHouseWriter] = None,
     ):
         self._cache_manager = cache_manager
         self._enable_cache = enable_cache
@@ -37,6 +47,7 @@ class IndustryService:
         
         self._initialized = False
         self._lock = asyncio.Lock()
+        self._clickhouse_writer = clickhouse_writer
         
     async def initialize(self) -> bool:
         async with self._lock:
@@ -50,20 +61,36 @@ class IndustryService:
                 if not await self._cache_manager.initialize():
                     self._enable_cache = False
             
+            # 使用 AkshareProvider (远程)
+            from data_sources.providers.akshare_provider import AkshareProvider
+            self._provider = AkshareProvider()
+            await self._provider.initialize()
+            
             self._initialized = True
-            logger.info("✅ IndustryService initialized")
+            logger.info("✅ IndustryService initialized (Remote Provider)")
             return True
+
+    async def close(self) -> None:
+        """关闭服务并释放资源"""
+        if self._cache_manager:
+            await self._cache_manager.close()
+        if hasattr(self, '_provider') and self._provider:
+            await self._provider.close()
+        self._initialized = False
+        logger.info("IndustryService closed")
 
     async def _ensure_initialized(self) -> bool:
         if not self._initialized:
             return await self.initialize()
         return True
 
-    async def get_industry_info(self, stock_code: str) -> Dict[str, str]:
-        """Get industry classification for a stock
+    async def get_industry_info(self, stock_code: str) -> Dict[str, Any]:
+        """获取股票的行业分类
+        
+        使用云端 AkShare API 获取行业、总股本、上市日期等
         
         Returns:
-            Dict: {'industry': '行业名称', 'sector': '板块名称'}
+            Dict: {'industry': '行业名称', 'sector': '板块名称', 'listing_date': datetime, 'total_shares': float}
         """
         if not await self._ensure_initialized():
              return {}
@@ -74,27 +101,53 @@ class IndustryService:
             if cached:
                 return cached
         
-        # Use stock_individual_info_em
-        df = await akshare_client.call('stock_individual_info_em', symbol=stock_code)
+        # 调用云端 API
+        start_time = time.time()
+        success = False
+        try:
+            res = await self._provider.fetch(DataType.INDUSTRY, symbol=stock_code)
+            if res.success:
+                success = True
+        finally:
+            duration = time.time() - start_time
+            record_data_source_request("cloud_akshare_industry", success, duration)
         
-        result = {'industry': '', 'sector': '', 'listing_date': None}
-        if df is not None and not df.empty:
-            info_dict = dict(zip(df['item'], df['value']))
-            result['industry'] = info_dict.get('行业', '')
+        result = {'industry': '', 'sector': '', 'listing_date': None, 'total_shares': None}
+        
+        if res.success and not res.data.empty:
+            data = res.data.iloc[0].to_dict()
+            result['industry'] = data.get('industry', '')
+            result['total_shares'] = data.get('total_share')
             
-            # Parse listing date (YYYYMMDD)
-            l_date = str(info_dict.get('上市时间', ''))
+            # 解析上市日期 (YYYYMMDD)
+            l_date = str(data.get('list_date', ''))
             if l_date and len(l_date) == 8:
                 try:
                     dt = datetime.strptime(l_date, '%Y%m%d')
                     result['listing_date'] = dt
                 except ValueError:
                     pass
-            # Try to infer sector or get it from elsewhere? 
-            # Currently '行业' is usually the SW level 2 or similar
+
+        # 写入 ClickHouse (Story 9.2)
+        if self._clickhouse_writer and result.get('industry'):
+            try:
+                i_data = IndustryInfoData(
+                    stock_code=stock_code,
+                    industry=result.get('industry', ''),
+                    sector=result.get('sector', ''),
+                    list_date=result.get('listing_date'),
+                    total_shares=int(result.get('total_shares', 0)) if result.get('total_shares') else 0
+                )
+                self._clickhouse_writer.write_industry_info([i_data])
+            except Exception as e:
+                logger.error(f"Failed to write industry info to ClickHouse: {e}")
         
         if self._enable_cache and result['industry']:
-            await self._cache_manager.set(cache_key, result, ttl=86400 * 3) # Cache for 3 days
+            # 序列化处理: datetime 转为字符串
+            cache_data = result.copy()
+            if isinstance(cache_data.get('listing_date'), datetime):
+                cache_data['listing_date'] = cache_data['listing_date'].strftime('%Y-%m-%d')
+            await self._cache_manager.set(cache_key, cache_data, ttl=86400 * 3) # Cache for 3 days
             
         return result
 

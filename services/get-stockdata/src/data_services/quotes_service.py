@@ -9,11 +9,14 @@ import logging
 from typing import Any, Dict, List, Optional
 from datetime import datetime
 import pandas as pd
-import akshare as ak
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
-import requests
 
 from .cache_manager import CacheManager
+from .akshare_client import akshare_client
+
+try:
+    from api.routers.metrics import record_data_source_request
+except ImportError:
+    def record_data_source_request(source, success, duration): pass
 
 logger = logging.getLogger(__name__)
 
@@ -70,15 +73,9 @@ class QuotesService:
             return await self.initialize()
         return True
     
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10),
-        retry=retry_if_exception_type((requests.exceptions.RequestException, ConnectionError, OSError)),
-        reraise=True
-    )
-    def _fetch_akshare_data(self):
-        """Sync wrapper for retries"""
-        return ak.stock_zh_a_spot_em()
+    async def _fetch_market_snapshot_raw(self):
+        """Fetch using AkShareClient with metrics and resilience"""
+        return await akshare_client.call('stock_zh_a_spot_em')
 
     def _generate_mock_snapshot(self) -> pd.DataFrame:
         """Generate mock data for fallback when API fails"""
@@ -107,17 +104,8 @@ class QuotesService:
                 return self._snapshot_cache
             
         try:
-            loop = asyncio.get_event_loop()
-            
-            # Use tenacity via a sync wrapper run in DEDICATED executor
-            # CRITICAL FIX: Add asyncio.wait_for to prevent hanging forever if thread blocks
-            # Set wait_for timeout strictly larger than internal retries to allow them to happen, 
-            # or just rely on wrapper retrying?
-            # AkShare fetch might take time. Let's give it 25s (slightly > timeout=20)
-            df = await asyncio.wait_for(
-                loop.run_in_executor(self._executor, self._fetch_akshare_data),
-                timeout=self._timeout + 5
-            )
+            # 使用重构后的 AkShareClient 调用
+            df = await self._fetch_market_snapshot_raw()
             
             if df is not None and not df.empty:
                 # Normalize columns

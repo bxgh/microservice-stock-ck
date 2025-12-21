@@ -17,6 +17,12 @@ from datasource.v1 import data_source_pb2, data_source_pb2_grpc
 
 from .circuit_breaker import GrpcCircuitBreaker, CircuitBreakerConfig
 
+try:
+    from ..api.routers.metrics import record_data_source_request, record_circuit_breaker_state
+except (ImportError, ValueError):
+    def record_data_source_request(source, success, duration): pass
+    def record_circuit_breaker_state(source, state): pass
+
 logger = logging.getLogger(__name__)
 
 
@@ -213,6 +219,7 @@ class GrpcProviderChain:
                 )
                 
                 latency_ms = (time.time() - start_time) * 1000
+                duration = time.time() - start_time
                 
                 if response.success:
                     # 成功
@@ -224,21 +231,22 @@ class GrpcProviderChain:
                     if is_fallback:
                         logger.info(f"Using fallback provider: {provider.name}")
                     
+                    record_data_source_request(f"grpc_{provider.name}_{self.data_type}", True, duration)
                     return response
                 else:
                     # 返回失败
                     logger.debug(f"Provider {provider.name} returned failure: {response.error_message}")
                     async with self._lock:
                         self._record_failure(provider.name, response.error_message, None)
+                    record_data_source_request(f"grpc_{provider.name}_{self.data_type}", False, duration)
                     
             except grpc.aio.AioRpcError as e:
                 latency_ms = (time.time() - start_time) * 1000
                 error_msg = f"gRPC error: {e.code()} - {e.details()}"
-                logger.warning(f"Provider {provider.name} failed: {error_msg}")
-                
                 async with self._lock:
                     self._record_failure(provider.name, error_msg, e.code())
                 
+                record_data_source_request(f"grpc_{provider.name}_{self.data_type}", False, time.time() - start_time)
                 continue
             
             except Exception as e:
@@ -305,7 +313,10 @@ class GrpcProviderChain:
         if self.enable_circuit_breaker:
             cb = self._circuit_breakers.get(provider_name)
             if cb:
+                was_open = cb.is_open()
                 cb.record_success()
+                if was_open and not cb.is_open():
+                     record_circuit_breaker_state(f"grpc_{provider_name}", "closed")
     
     def _record_failure(
         self,
@@ -324,7 +335,10 @@ class GrpcProviderChain:
         if self.enable_circuit_breaker:
             cb = self._circuit_breakers.get(provider_name)
             if cb:
+                was_closed = not cb.is_open()
                 cb.record_failure(status_code)
+                if was_closed and cb.is_open():
+                    record_circuit_breaker_state(f"grpc_{provider_name}", "open")
     
     def get_stats(self) -> ChainStats:
         """获取统计信息"""

@@ -95,6 +95,57 @@ class SnapshotData:
         self.pool_level = pool_level
 
 
+class FinancialIndicatorData:
+    """财务指标数据模型"""
+    def __init__(self, stock_code: str, report_date: datetime, report_type: str, **kwargs):
+        self.stock_code = stock_code
+        self.report_date = report_date.date() if isinstance(report_date, datetime) else report_date
+        self.report_type = report_type
+        self.revenue = kwargs.get('revenue', 0.0)
+        self.operating_cost = kwargs.get('operating_cost', 0.0)
+        self.operating_profit = kwargs.get('operating_profit', 0.0)
+        self.net_profit = kwargs.get('net_profit', 0.0)
+        self.total_assets = kwargs.get('total_assets', 0.0)
+        self.net_assets = kwargs.get('net_assets', 0.0)
+        self.goodwill = kwargs.get('goodwill', 0.0)
+        self.monetary_funds = kwargs.get('monetary_funds', 0.0)
+        self.interest_bearing_debt = kwargs.get('interest_bearing_debt', 0.0)
+        self.accounts_receivable = kwargs.get('accounts_receivable', 0.0)
+        self.inventory = kwargs.get('inventory', 0.0)
+        self.accounts_payable = kwargs.get('accounts_payable', 0.0)
+        self.operating_cash_flow = kwargs.get('operating_cash_flow', 0.0)
+        self.major_shareholder_pledge_ratio = kwargs.get('major_shareholder_pledge_ratio', 0.0)
+        self.data_source = kwargs.get('data_source', 'akshare')
+
+
+class ValuationData:
+    """估值数据模型"""
+    def __init__(self, stock_code: str, trade_date: datetime, **kwargs):
+        self.stock_code = stock_code
+        self.trade_date = trade_date.date() if isinstance(trade_date, datetime) else trade_date
+        self.total_market_cap = kwargs.get('total_market_cap', 0.0)
+        self.circulating_market_cap = kwargs.get('circulating_market_cap', 0.0)
+        self.pe_ttm = kwargs.get('pe_ttm', 0.0)
+        self.pe_static = kwargs.get('pe_static', 0.0)
+        self.pb_ratio = kwargs.get('pb_ratio', 0.0)
+        self.ps_ratio = kwargs.get('ps_ratio', 0.0)
+        self.pcf_ratio = kwargs.get('pcf_ratio', 0.0)
+        self.dividend_yield_ttm = kwargs.get('dividend_yield_ttm', 0.0)
+        self.data_source = kwargs.get('data_source', 'akshare')
+
+
+class IndustryInfoData:
+    """行业信息数据模型"""
+    def __init__(self, stock_code: str, industry: str, sector: str, list_date: Optional[datetime] = None, **kwargs):
+        self.stock_code = stock_code
+        self.industry = industry
+        self.sector = sector
+        self.list_date = list_date.date() if isinstance(list_date, datetime) else list_date
+        self.total_shares = kwargs.get('total_shares', 0)
+        self.data_source = kwargs.get('data_source', 'akshare')
+        self.updated_at = datetime.now()
+
+
 class ClickHouseWriter:
     """
     ClickHouse 数据写入器
@@ -133,7 +184,10 @@ class ClickHouseWriter:
         self.batch_size = batch_size
         
         self.client: Optional[Client] = None
-        self._buffer: List[SnapshotData] = []
+        self._snapshot_buffer: List[SnapshotData] = []
+        self._finance_buffer: List[FinancialIndicatorData] = []
+        self._valuation_buffer: List[ValuationData] = []
+        self._industry_buffer: List[IndustryInfoData] = []
         self._init_client()
         
     def _init_client(self):
@@ -153,39 +207,47 @@ class ClickHouseWriter:
             raise
             
     def write_snapshot(self, snapshot: SnapshotData):
-        """
-        写入单条快照数据（异步缓冲）
-        
-        Args:
-            snapshot: 快照数据对象
-        """
-        self._buffer.append(snapshot)
-        
-        if len(self._buffer) >= self.batch_size:
-            self.flush()
+        """写入单条快照数据"""
+        self._snapshot_buffer.append(snapshot)
+        if len(self._snapshot_buffer) >= self.batch_size:
+            self.flush_snapshots()
             
     def write_snapshots(self, snapshots: List[SnapshotData]):
-        """
-        批量写入快照数据
-        
-        Args:
-            snapshots: 快照数据列表
-        """
-        self._buffer.extend(snapshots)
-        
-        if len(self._buffer) >= self.batch_size:
-            self.flush()
-            
+        """批量写入快照数据"""
+        self._snapshot_buffer.extend(snapshots)
+        if len(self._snapshot_buffer) >= self.batch_size:
+            self.flush_snapshots()
+
+    def write_financial_indicators(self, data: List[FinancialIndicatorData]):
+        """批量写入财务指标"""
+        self._finance_buffer.extend(data)
+        if len(self._finance_buffer) >= self.batch_size:
+            self.flush_finance()
+
+    def write_valuation(self, data: List[ValuationData]):
+        """批量写入估值数据"""
+        self._valuation_buffer.extend(data)
+        if len(self._valuation_buffer) >= self.batch_size:
+            self.flush_valuation()
+
+    def write_industry_info(self, data: List[IndustryInfoData]):
+        """批量写入行业信息"""
+        self._industry_buffer.extend(data)
+        if len(self._industry_buffer) >= self.batch_size:
+            self.flush_industry()
+
     def flush(self):
-        """强制提交缓冲区数据"""
-        if not self._buffer:
+        """提交所有缓冲区数据"""
+        self.flush_snapshots()
+        self.flush_finance()
+        self.flush_valuation()
+        self.flush_industry()
+
+    def flush_snapshots(self):
+        if not self._snapshot_buffer:
             return
-            
         try:
-            # 准备数据
-            data = [self._to_row(snapshot) for snapshot in self._buffer]
-            
-            # 批量插入（明确指定列名，跳过 created_at 使用默认值）
+            data = [self._to_row(s) for s in self._snapshot_buffer]
             self.client.execute(
                 '''INSERT INTO snapshot_data (
                     snapshot_time, trade_date, stock_code, stock_name, market,
@@ -199,13 +261,91 @@ class ClickHouseWriter:
                 ) VALUES''',
                 data
             )
-            
-            logger.info(f"✅ 写入 {len(self._buffer)} 条快照数据到 ClickHouse")
-            self._buffer.clear()
-            
+            logger.info(f"✅ 写入 {len(self._snapshot_buffer)} 条快照数据到 ClickHouse")
+            self._snapshot_buffer.clear()
         except ClickHouseError as e:
-            logger.error(f"❌ ClickHouse 写入失败: {e}")
-            # 可以选择重试或记录失败数据
+            logger.error(f"❌ ClickHouse Snapshot 写入失败: {e}")
+            raise
+
+    def flush_finance(self):
+        if not self._finance_buffer:
+            return
+        try:
+            data = [
+                (
+                    f.stock_code, f.report_date, f.report_type,
+                    f.revenue, f.operating_cost, f.operating_profit, f.net_profit,
+                    f.total_assets, f.net_assets, f.goodwill, f.monetary_funds,
+                    f.interest_bearing_debt, f.accounts_receivable, f.inventory, f.accounts_payable,
+                    f.operating_cash_flow, f.major_shareholder_pledge_ratio,
+                    f.data_source
+                ) for f in self._finance_buffer
+            ]
+            self.client.execute(
+                '''INSERT INTO financial_indicators (
+                    stock_code, report_date, report_type,
+                    revenue, operating_cost, operating_profit, net_profit,
+                    total_assets, net_assets, goodwill, monetary_funds,
+                    interest_bearing_debt, accounts_receivable, inventory, accounts_payable,
+                    operating_cash_flow, major_shareholder_pledge_ratio,
+                    data_source
+                ) VALUES''',
+                data
+            )
+            logger.info(f"✅ 写入 {len(self._finance_buffer)} 条财务指标到 ClickHouse")
+            self._finance_buffer.clear()
+        except ClickHouseError as e:
+            logger.error(f"❌ ClickHouse Finance 写入失败: {e}")
+            raise
+
+    def flush_valuation(self):
+        if not self._valuation_buffer:
+            return
+        try:
+            data = [
+                (
+                    v.stock_code, v.trade_date,
+                    v.total_market_cap, v.circulating_market_cap,
+                    v.pe_ttm, v.pe_static, v.pb_ratio, v.ps_ratio, v.pcf_ratio, v.dividend_yield_ttm,
+                    v.data_source
+                ) for v in self._valuation_buffer
+            ]
+            self.client.execute(
+                '''INSERT INTO valuation_data (
+                    stock_code, trade_date,
+                    total_market_cap, circulating_market_cap,
+                    pe_ttm, pe_static, pb_ratio, ps_ratio, pcf_ratio, dividend_yield_ttm,
+                    data_source
+                ) VALUES''',
+                data
+            )
+            logger.info(f"✅ 写入 {len(self._valuation_buffer)} 条估值数据到 ClickHouse")
+            self._valuation_buffer.clear()
+        except ClickHouseError as e:
+            logger.error(f"❌ ClickHouse Valuation 写入失败: {e}")
+            raise
+
+    def flush_industry(self):
+        if not self._industry_buffer:
+            return
+        try:
+            data = [
+                (
+                    i.stock_code, i.industry, i.sector, i.list_date, i.total_shares,
+                    i.data_source, i.updated_at
+                ) for i in self._industry_buffer
+            ]
+            self.client.execute(
+                '''INSERT INTO industry_info (
+                    stock_code, industry, sector, list_date, total_shares,
+                    data_source, updated_at
+                ) VALUES''',
+                data
+            )
+            logger.info(f"✅ 写入 {len(self._industry_buffer)} 条行业信息到 ClickHouse")
+            self._industry_buffer.clear()
+        except ClickHouseError as e:
+            logger.error(f"❌ ClickHouse Industry 写入失败: {e}")
             raise
             
     def _to_row(self, snapshot: SnapshotData) -> tuple:
@@ -262,7 +402,10 @@ class ClickHouseWriter:
     def get_stats(self) -> Dict[str, Any]:
         """获取写入统计信息"""
         return {
-            'buffer_size': len(self._buffer),
+            'snapshot_buffer': len(self._snapshot_buffer),
+            'finance_buffer': len(self._finance_buffer),
+            'valuation_buffer': len(self._valuation_buffer),
+            'industry_buffer': len(self._industry_buffer),
             'batch_size': self.batch_size,
             'host': self.host,
             'database': self.database
@@ -270,8 +413,7 @@ class ClickHouseWriter:
         
     def close(self):
         """关闭连接"""
-        if self._buffer:
-            self.flush()  # 提交剩余数据
+        self.flush()  # 提交剩余数据
             
         if self.client:
             self.client.disconnect()

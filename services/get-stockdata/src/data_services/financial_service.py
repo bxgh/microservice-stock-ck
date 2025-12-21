@@ -24,7 +24,17 @@ from datetime import datetime
 import pandas as pd
 
 from .cache_manager import CacheManager
+from .akshare_client import akshare_client
 from .time_aware_strategy import get_time_strategy
+from storage.clickhouse_writer import ClickHouseWriter, FinancialIndicatorData
+
+try:
+    from api.routers.metrics import record_data_source_request
+except ImportError:
+    def record_data_source_request(source, success, duration):
+        pass
+
+import time
 from .akshare_client import akshare_client
 
 logger = logging.getLogger(__name__)
@@ -90,6 +100,7 @@ class FinancialService:
         cache_manager: Optional[CacheManager] = None,
         enable_cache: bool = True,
         timeout: int = 30,
+        clickhouse_writer: Optional[ClickHouseWriter] = None,
     ):
         """初始化
         
@@ -98,9 +109,18 @@ class FinancialService:
             enable_cache: 是否启用缓存
             timeout: API 超时时间(秒)
         """
+        import os
+        import aiohttp
+        
         self._cache_manager = cache_manager
         self._enable_cache = enable_cache
         self._timeout = timeout
+        
+        # 云端 AkShare API 配置 (EPIC-002)
+        self._akshare_api_url = os.getenv("AKSHARE_API_URL", "http://124.221.80.250:8003")
+        self._proxy_url = os.getenv("PROXY_URL", "http://192.168.151.18:3128")
+        self._session: Optional[aiohttp.ClientSession] = None
+        self._clickhouse_writer = clickhouse_writer
         
         self._initialized = False
         self._lock = asyncio.Lock()
@@ -112,6 +132,7 @@ class FinancialService:
             'cache_hits': 0,
             'cache_misses': 0,
             'akshare_calls': 0,
+            'cloud_api_calls': 0,  # 新增：云端 API 调用次数
             'timeout_errors': 0,
         }
     
@@ -132,6 +153,12 @@ class FinancialService:
                     logger.warning("CacheManager init failed, caching disabled")
                     self._enable_cache = False
             
+            # 初始化 HTTP session (EPIC-002)
+            import aiohttp
+            timeout = aiohttp.ClientTimeout(total=self._timeout)
+            self._session = aiohttp.ClientSession(timeout=timeout)
+            logger.info(f"Cloud API endpoint: {self._akshare_api_url}")
+            
             self._initialized = True
             logger.info("✅ FinancialService initialized")
             return True
@@ -140,6 +167,11 @@ class FinancialService:
         """关闭服务"""
         if self._cache_manager:
             await self._cache_manager.close()
+        
+        # 关闭 HTTP session
+        if self._session:
+            await self._session.close()
+            self._session = None
         
         self._initialized = False
         logger.info("FinancialService closed")
@@ -370,10 +402,60 @@ class FinancialService:
         
         return result
     
+    # ========== EPIC-002: 云端 API 调用 ==========
+    
+    async def _call_cloud_api(self, endpoint: str) -> Optional[Dict[str, Any]]:
+        """调用云端 AkShare API
+        
+        Args:
+            endpoint: API 端点 (如 '/api/v1/finance/indicators/600519')
+            
+        Returns:
+            Dict: API 返回的数据，失败返回 None
+        """
+        if not self._session:
+            logger.error("HTTP session not initialized")
+            return None
+        
+        url = f"{self._akshare_api_url}{endpoint}"
+        start_time = time.time()
+        success = False
+        
+        try:
+            async with self._stats_lock:
+                self._stats['cloud_api_calls'] += 1
+            
+            logger.debug(f"Calling cloud API: {url}")
+            
+            async with self._session.get(url, proxy=self._proxy_url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    logger.debug(f"Cloud API success: {endpoint}")
+                    success = True
+                    return data
+                else:
+                    error_text = await resp.text()
+                    logger.warning(f"Cloud API returned {resp.status}: {error_text[:200]}")
+                    return None
+                    
+        except asyncio.TimeoutError:
+            logger.error(f"Cloud API timeout: {endpoint}")
+            async with self._stats_lock:
+                self._stats['timeout_errors'] += 1
+            return None
+        except Exception as e:
+            logger.error(f"Cloud API error: {e}", exc_info=True)
+            return None
+        finally:
+            duration = time.time() - start_time
+            record_data_source_request(f"cloud_akshare_finance", success, duration)
+    
     # ========== EPIC-002: 增强财务数据 ==========
 
     async def get_enhanced_indicators(self, code: str) -> Dict[str, Any]:
         """获取增强财务指标 (EPIC-002)
+        
+        使用云端 AkShare API 获取完整的财务报表数据
         
         Args:
             code: 股票代码
@@ -381,6 +463,140 @@ class FinancialService:
         Returns:
             Dict: 包含完整财务报表字段的字典
         """
+        if not await self._ensure_initialized():
+            raise RuntimeError("FinancialService not initialized")
+        
+        async with self._stats_lock:
+            self._stats['total_requests'] += 1
+        
+        # 缓存键
+        cache_key = f"financial:enhanced:{code}"
+        
+        if self._enable_cache:
+            cached = await self._cache_manager.get(cache_key)
+            if cached is not None:
+                async with self._stats_lock:
+                    self._stats['cache_hits'] += 1
+                return cached
+            
+            async with self._stats_lock:
+                self._stats['cache_misses'] += 1
+        
+        # 调用云端 API
+        endpoint = f"/api/v1/finance/indicators/{code}"
+        data = await self._call_cloud_api(endpoint)
+        
+        if not data:
+            logger.warning(f"No financial data from cloud API for {code}")
+            # 降级到旧方法
+            return await self._get_enhanced_indicators_fallback(code)
+        
+        # 数据转换：元 -> 亿元
+        result = self._transform_cloud_financial_data(data, code)
+        
+        # 写入 ClickHouse (Story 9.2)
+        if self._clickhouse_writer and result:
+            try:
+                report_date = datetime.strptime(result['report_date'], '%Y%m%d') if result.get('report_date') else datetime.now()
+                fi_data = FinancialIndicatorData(
+                    stock_code=code,
+                    report_date=report_date,
+                    report_type=result.get('report_type', 'Annual'),
+                    revenue=data.get('revenue', 0) / YUAN_TO_YI_YUAN,
+                    operating_cost=data.get('operating_cost', 0) / YUAN_TO_YI_YUAN,
+                    operating_profit=data.get('operating_profit', 0) / YUAN_TO_YI_YUAN,
+                    net_profit=data.get('net_profit', 0) / YUAN_TO_YI_YUAN,
+                    total_assets=data.get('total_assets', 0) / YUAN_TO_YI_YUAN,
+                    net_assets=data.get('net_assets', 0) / YUAN_TO_YI_YUAN,
+                    goodwill=data.get('goodwill', 0) / YUAN_TO_YI_YUAN,
+                    monetary_funds=data.get('monetary_funds', 0) / YUAN_TO_YI_YUAN,
+                    interest_bearing_debt=data.get('interest_bearing_debt', 0) / YUAN_TO_YI_YUAN,
+                    accounts_receivable=data.get('accounts_receivable', 0) / YUAN_TO_YI_YUAN,
+                    inventory=data.get('inventory', 0) / YUAN_TO_YI_YUAN,
+                    accounts_payable=data.get('accounts_payable', 0) / YUAN_TO_YI_YUAN,
+                    operating_cash_flow=data.get('operating_cash_flow', 0) / YUAN_TO_YI_YUAN,
+                    major_shareholder_pledge_ratio=0.0 # TODO: Get from source if available
+                )
+                self._clickhouse_writer.write_financial_indicators([fi_data])
+            except Exception as e:
+                logger.error(f"Failed to write financial indicators to ClickHouse: {e}")
+
+        # 缓存 (1天)
+        if self._enable_cache and result:
+            await self._cache_manager.set(cache_key, result, ttl=86400)
+        
+        return result
+
+    def _transform_cloud_financial_data(self, data: Dict[str, Any], code: str) -> Dict[str, Any]:
+        """转换云端 API 返回的财务数据
+        
+        将单位从元转换为亿元，并映射到标准的 Schema 字段
+        """
+        result = {
+            'stock_code': code,
+            'report_date': data.get('report_date', ''),
+        }
+        
+        # 1. 计算 report_type (从 report_date 推断)
+        report_date_str = str(data.get('report_date', ''))
+        if '一季' in report_date_str or 'Q1' in report_date_str:
+            result['report_type'] = 'Q1'
+        elif '二季' in report_date_str or '中报' in report_date_str or 'Q2' in report_date_str:
+            result['report_type'] = 'Q2'
+        elif '三季' in report_date_str or 'Q3' in report_date_str:
+            result['report_type'] = 'Q3'
+        elif '年报' in report_date_str or 'Annual' in report_date_str or '四季' in report_date_str:
+            result['report_type'] = 'Annual'
+        else:
+            result['report_type'] = 'Q3'  # 默认值
+        
+        # 2. 需要转换单位的字段 (元 -> 亿元) 并映射 field names
+        # Mapping: {cloud_field: schema_field}
+        field_mapping = {
+            'total_assets': 'total_assets',
+            'total_equity': 'net_assets',       # Total Equity -> Net Assets
+            'operating_income': 'revenue',      # Operating Income -> Revenue
+            'operating_cost': 'operating_cost',
+            'operating_profit': 'operating_profit',
+            'net_profit': 'net_profit',
+            'monetary_funds': 'monetary_funds',
+            'inventory': 'inventory',
+            'accounts_receivable': 'accounts_receivable',
+            'net_operating_cash_flow': 'operating_cash_flow', # Map to operating_cash_flow
+            'goodwill': 'goodwill'
+        }
+        
+        for cloud_field, schema_field in field_mapping.items():
+            if cloud_field in data and data[cloud_field] is not None:
+                try:
+                    val = float(data[cloud_field])
+                    if not math.isnan(val):
+                        result[schema_field] = round(val / YUAN_TO_YI_YUAN, FINANCIAL_PRECISION)
+                    else:
+                        result[schema_field] = None
+                except (ValueError, TypeError):
+                    result[schema_field] = None
+            else:
+                result[schema_field] = None
+        
+        # 3. 计算有息负债 (利息负担债务)
+        st_debt = float(data.get('short_term_loans') or 0)
+        lt_debt = float(data.get('long_term_loans') or 0)
+        bond = float(data.get('bond_payable') or 0)
+        if any([st_debt, lt_debt, bond]):
+            result['interest_bearing_debt'] = round((st_debt + lt_debt + bond) / YUAN_TO_YI_YUAN, FINANCIAL_PRECISION)
+        else:
+            result['interest_bearing_debt'] = None
+            
+        # 4. 其他字段
+        result['accounts_payable'] = None # 云端暂未提供
+        result['major_shareholder_pledge_ratio'] = None # 云端暂未提供
+        
+        return result
+    
+    async def _get_enhanced_indicators_fallback(self, code: str) -> Dict[str, Any]:
+        """降级方法：使用旧的新浪财经 API"""
+        logger.info(f"Using fallback method for {code}")
         # 复用 get_financial_history 获取最新一期数据
         history = await self.get_financial_history(code, periods=1)
         if not history or not history.get('data'):
