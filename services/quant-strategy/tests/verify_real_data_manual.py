@@ -1,13 +1,14 @@
 
 import asyncio
-import sys
 import os
+import sys
 
 # tests/ is parallel to src/, so we add ../src to path
 sys.path.append(os.path.join(os.path.dirname(__file__), '../src'))
 
 from adapters.stock_data_provider import data_provider
 from config.settings import settings
+
 
 async def main():
     print("--- Configuration ---")
@@ -19,13 +20,13 @@ async def main():
         # Assuming get-stockdata is running and these codes are valid
         codes = ['600519', '000001']
         df = await data_provider.get_realtime_quotes(codes)
-        
+
         if not df.empty:
             print(f"SUCCESS: Fetched {len(df)} records.")
             print(df[['code', 'name', 'price', 'volume', 'change_pct', 'timestamp']])
         else:
             print("WARNING: Returned empty DataFrame. Is the market open or service reachable?")
-            
+
     except Exception as e:
         print(f"ERROR: Failed to fetch quotes. Reason: {e}")
 

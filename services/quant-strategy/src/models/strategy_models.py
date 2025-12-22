@@ -2,9 +2,10 @@
 策略相关数据模型
 """
 
-from datetime import datetime, date
+from datetime import date, datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -30,9 +31,9 @@ class Strategy(BaseModel):
     id: str = Field(..., description="策略唯一ID")
     name: str = Field(..., description="策略名称")
     strategy_type: StrategyType = Field(..., description="策略类型")
-    description: Optional[str] = Field(None, description="策略描述")
-    parameters: Dict[str, Any] = Field(default_factory=dict, description="策略参数")
-    stock_pool: List[str] = Field(default_factory=list, description="股票池")
+    description: str | None = Field(None, description="策略描述")
+    parameters: dict[str, Any] = Field(default_factory=dict, description="策略参数")
+    stock_pool: list[str] = Field(default_factory=list, description="股票池")
     enabled: bool = Field(True, description="是否启用")
     created_at: datetime = Field(default_factory=datetime.now, description="创建时间")
     updated_at: datetime = Field(default_factory=datetime.now, description="更新时间")
@@ -47,9 +48,9 @@ class StrategyCreate(BaseModel):
     """创建策略请求模型"""
     name: str = Field(..., description="策略名称")
     strategy_type: StrategyType = Field(..., description="策略类型")
-    description: Optional[str] = Field(None, description="策略描述")
-    parameters: Dict[str, Any] = Field(default_factory=dict, description="策略参数")
-    stock_pool: List[str] = Field(default_factory=list, description="股票池")
+    description: str | None = Field(None, description="策略描述")
+    parameters: dict[str, Any] = Field(default_factory=dict, description="策略参数")
+    stock_pool: list[str] = Field(default_factory=list, description="股票池")
 
 
 class Signal(BaseModel):
@@ -60,10 +61,10 @@ class Signal(BaseModel):
     direction: SignalDirection = Field(..., description="信号方向")
     strength: float = Field(..., ge=0.0, le=1.0, description="信号强度 (0-1)")
     price: float = Field(..., description="触发价格")
-    volume: Optional[int] = Field(None, description="建议交易量")
-    reason: Optional[str] = Field(None, description="信号触发原因")
+    volume: int | None = Field(None, description="建议交易量")
+    reason: str | None = Field(None, description="信号触发原因")
     timestamp: datetime = Field(default_factory=datetime.now, description="信号生成时间")
-    metadata: Dict[str, Any] = Field(default_factory=dict, description="附加信息")
+    metadata: dict[str, Any] = Field(default_factory=dict, description="附加信息")
 
     class Config:
         json_encoders = {
@@ -97,7 +98,7 @@ class BacktestResult(BaseModel):
     win_rate: float = Field(..., description="胜率")
     total_trades: int = Field(..., description="总交易次数")
     status: str = Field(..., description="回测状态")
-    message: Optional[str] = Field(None, description="状态消息")
+    message: str | None = Field(None, description="状态消息")
 
     class Config:
         json_encoders = {
@@ -125,7 +126,7 @@ class SmartMoneyParameters(BaseModel):
 class OrderBookParameters(BaseModel):
     """Order Book Pressure策略参数"""
     depth_levels: int = Field(5, description="盘口深度档位")
-    weights: List[float] = Field([5, 4, 3, 2, 1], description="各档位权重")
+    weights: list[float] = Field([5, 4, 3, 2, 1], description="各档位权重")
     pressure_threshold: float = Field(0.3, description="压力阈值")
 
 

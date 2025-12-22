@@ -1,7 +1,7 @@
+from datetime import date
+
 from fastapi import APIRouter
 from pydantic import BaseModel
-from typing import List, Optional
-from datetime import date
 
 from services.stock_pool.blacklist_service import blacklist_service
 
@@ -11,19 +11,19 @@ class BlacklistAddRequest(BaseModel):
     code: str
     reason: str
     reason_type: str  # tech_stop, fundamental, regulatory, permanent
-    loss_amount: Optional[float] = None
+    loss_amount: float | None = None
 
 class BlacklistCheckRequest(BaseModel):
-    codes: List[str]
+    codes: list[str]
 
 class BlacklistResponse(BaseModel):
     code: str
     is_blacklisted: bool
-    reason: Optional[str] = None
-    release_date: Optional[date] = None
+    reason: str | None = None
+    release_date: date | None = None
 
 class BatchCheckResponse(BaseModel):
-    results: List[BlacklistResponse]
+    results: list[BlacklistResponse]
 
 @router.post("", response_model=BlacklistResponse)
 async def add_to_blacklist(request: BlacklistAddRequest):

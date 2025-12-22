@@ -1,6 +1,9 @@
-from sqlalchemy import Column, String, Date, Boolean, Float, Text, Index, Integer
-from database.models import Base
 from datetime import date
+
+from sqlalchemy import Boolean, Column, Date, Float, Index, Integer, String, Text
+
+from database.models import Base
+
 
 class BlacklistStock(Base):
     __tablename__ = 'blacklist'
@@ -9,7 +12,7 @@ class BlacklistStock(Base):
     code = Column(String(10), nullable=False, unique=True)
     reason = Column(Text, nullable=False)
     # reason_type: 'tech_stop' | 'fundamental' | 'regulatory' | 'permanent'
-    reason_type = Column(String(20), nullable=False) 
+    reason_type = Column(String(20), nullable=False)
     added_date = Column(Date, nullable=False, default=date.today)
     is_permanent = Column(Boolean, default=False)
     release_date = Column(Date, nullable=True)

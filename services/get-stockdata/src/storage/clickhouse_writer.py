@@ -7,6 +7,7 @@ ClickHouse 写入器
 """
 
 import logging
+import asyncio
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 from clickhouse_driver import Client
@@ -188,6 +189,7 @@ class ClickHouseWriter:
         self._finance_buffer: List[FinancialIndicatorData] = []
         self._valuation_buffer: List[ValuationData] = []
         self._industry_buffer: List[IndustryInfoData] = []
+        self._lock = asyncio.Lock()
         self._init_client()
         
     def _init_client(self):
@@ -206,44 +208,56 @@ class ClickHouseWriter:
             logger.error(f"❌ ClickHouse 连接失败: {e}")
             raise
             
-    def write_snapshot(self, snapshot: SnapshotData):
+    async def write_snapshot(self, snapshot: SnapshotData):
         """写入单条快照数据"""
-        self._snapshot_buffer.append(snapshot)
-        if len(self._snapshot_buffer) >= self.batch_size:
-            self.flush_snapshots()
+        async with self._lock:
+            self._snapshot_buffer.append(snapshot)
+            if len(self._snapshot_buffer) >= self.batch_size:
+                await self.flush_snapshots()
             
-    def write_snapshots(self, snapshots: List[SnapshotData]):
+    async def write_snapshots(self, snapshots: List[SnapshotData]):
         """批量写入快照数据"""
-        self._snapshot_buffer.extend(snapshots)
-        if len(self._snapshot_buffer) >= self.batch_size:
-            self.flush_snapshots()
+        async with self._lock:
+            self._snapshot_buffer.extend(snapshots)
+            if len(self._snapshot_buffer) >= self.batch_size:
+                await self.flush_snapshots()
 
-    def write_financial_indicators(self, data: List[FinancialIndicatorData]):
+    async def write_financial_indicators(self, data: List[FinancialIndicatorData]):
         """批量写入财务指标"""
-        self._finance_buffer.extend(data)
-        if len(self._finance_buffer) >= self.batch_size:
-            self.flush_finance()
+        logger.debug(f"write_financial_indicators called with {len(data)} items")
+        async with self._lock:
+            self._finance_buffer.extend(data)
+            logger.debug(f"Finance buffer size: {len(self._finance_buffer)}, batch_size: {self.batch_size}")
+            if len(self._finance_buffer) >= self.batch_size:
+                await self.flush_finance()
 
-    def write_valuation(self, data: List[ValuationData]):
+    async def write_valuation(self, data: List[ValuationData]):
         """批量写入估值数据"""
-        self._valuation_buffer.extend(data)
-        if len(self._valuation_buffer) >= self.batch_size:
-            self.flush_valuation()
+        logger.debug(f"write_valuation called with {len(data)} items")
+        async with self._lock:
+            self._valuation_buffer.extend(data)
+            logger.debug(f"Valuation buffer size: {len(self._valuation_buffer)}, batch_size: {self.batch_size}")
+            if len(self._valuation_buffer) >= self.batch_size:
+                await self.flush_valuation()
 
-    def write_industry_info(self, data: List[IndustryInfoData]):
+    async def write_industry_info(self, data: List[IndustryInfoData]):
         """批量写入行业信息"""
-        self._industry_buffer.extend(data)
-        if len(self._industry_buffer) >= self.batch_size:
-            self.flush_industry()
+        logger.debug(f"write_industry_info called with {len(data)} items")
+        async with self._lock:
+            self._industry_buffer.extend(data)
+            logger.debug(f"Industry buffer size: {len(self._industry_buffer)}, batch_size: {self.batch_size}")
+            if len(self._industry_buffer) >= self.batch_size:
+                await self.flush_industry()
 
-    def flush(self):
+    async def flush(self):
         """提交所有缓冲区数据"""
-        self.flush_snapshots()
-        self.flush_finance()
-        self.flush_valuation()
-        self.flush_industry()
+        async with self._lock:
+            await self.flush_snapshots()
+            await self.flush_finance()
+            await self.flush_valuation()
+            await self.flush_industry()
 
-    def flush_snapshots(self):
+    async def flush_snapshots(self):
         if not self._snapshot_buffer:
             return
         try:
@@ -261,16 +275,18 @@ class ClickHouseWriter:
                 ) VALUES''',
                 data
             )
-            logger.info(f"✅ 写入 {len(self._snapshot_buffer)} 条快照数据到 ClickHouse")
+            logger.info(f"✅ 成功写入 {items_count} 条快照到 ClickHouse")
             self._snapshot_buffer.clear()
         except ClickHouseError as e:
-            logger.error(f"❌ ClickHouse Snapshot 写入失败: {e}")
+            logger.error(f"❌ ClickHouse Snapshot 写入失败 (Table: snapshot_data): {e}")
             raise
 
-    def flush_finance(self):
+    async def flush_finance(self):
+        # 假设调用此方法时已经持有 self._lock
         if not self._finance_buffer:
             return
         try:
+            items_count = len(self._finance_buffer)
             data = [
                 (
                     f.stock_code, f.report_date, f.report_type,
@@ -292,16 +308,18 @@ class ClickHouseWriter:
                 ) VALUES''',
                 data
             )
-            logger.info(f"✅ 写入 {len(self._finance_buffer)} 条财务指标到 ClickHouse")
+            logger.info(f"✅ 成功写入 {items_count} 条财务指标到 ClickHouse")
             self._finance_buffer.clear()
         except ClickHouseError as e:
-            logger.error(f"❌ ClickHouse Finance 写入失败: {e}")
+            logger.error(f"❌ ClickHouse Finance 写入失败 (Table: financial_indicators): {e}")
             raise
 
-    def flush_valuation(self):
+    async def flush_valuation(self):
+        # 假设调用此方法时已经持有 self._lock
         if not self._valuation_buffer:
             return
         try:
+            items_count = len(self._valuation_buffer)
             data = [
                 (
                     v.stock_code, v.trade_date,
@@ -319,16 +337,18 @@ class ClickHouseWriter:
                 ) VALUES''',
                 data
             )
-            logger.info(f"✅ 写入 {len(self._valuation_buffer)} 条估值数据到 ClickHouse")
+            logger.info(f"✅ 成功写入 {items_count} 条估值数据到 ClickHouse")
             self._valuation_buffer.clear()
         except ClickHouseError as e:
-            logger.error(f"❌ ClickHouse Valuation 写入失败: {e}")
+            logger.error(f"❌ ClickHouse Valuation 写入失败 (Table: valuation_data): {e}")
             raise
 
-    def flush_industry(self):
+    async def flush_industry(self):
+        # 假设调用此方法时已经持有 self._lock
         if not self._industry_buffer:
             return
         try:
+            items_count = len(self._industry_buffer)
             data = [
                 (
                     i.stock_code, i.industry, i.sector, i.list_date, i.total_shares,
@@ -342,10 +362,10 @@ class ClickHouseWriter:
                 ) VALUES''',
                 data
             )
-            logger.info(f"✅ 写入 {len(self._industry_buffer)} 条行业信息到 ClickHouse")
+            logger.info(f"✅ 成功写入 {items_count} 条行业信息到 ClickHouse")
             self._industry_buffer.clear()
         except ClickHouseError as e:
-            logger.error(f"❌ ClickHouse Industry 写入失败: {e}")
+            logger.error(f"❌ ClickHouse Industry 写入失败 (Table: industry_info): {e}")
             raise
             
     def _to_row(self, snapshot: SnapshotData) -> tuple:
@@ -393,6 +413,9 @@ class ClickHouseWriter:
             查询结果列表
         """
         try:
+            # 查询操作通常是只读的，不涉及缓冲区修改，因此不需要锁
+            # 但如果客户端连接本身可能被其他线程/协程断开或重新初始化，则需要保护
+            # 考虑到_init_client只在初始化时调用，close在结束时调用，这里暂时不加锁
             result = self.client.execute(sql)
             return result
         except ClickHouseError as e:
@@ -401,6 +424,7 @@ class ClickHouseWriter:
             
     def get_stats(self) -> Dict[str, Any]:
         """获取写入统计信息"""
+        # 读取缓冲区长度是原子操作，不需要锁
         return {
             'snapshot_buffer': len(self._snapshot_buffer),
             'finance_buffer': len(self._finance_buffer),
@@ -412,49 +436,35 @@ class ClickHouseWriter:
         }
         
     def close(self):
-        """关闭连接"""
-        self.flush()  # 提交剩余数据
-            
+        """关闭客户端"""
+        # 在非异步上下文（如程序退出）中调用 flush() 需要特殊处理
+        # 理想情况下，应该在异步事件循环中调用 await self.flush()
+        # 这里为了兼容同步调用，尝试执行 flush，但可能无法完全刷新所有数据
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # 如果事件循环正在运行，可以尝试调度 flush
+                # 但在 close 方法中通常不建议阻塞等待，所以这里只是一个提示
+                logger.warning("ClickHouseWriter.close() called in running event loop. Consider awaiting self.flush() explicitly.")
+                # asyncio.create_task(self.flush()) # 不等待结果，可能导致数据丢失
+            else:
+                # 如果没有运行的事件循环，创建一个新的并运行 flush
+                # 这在某些情况下可能导致问题，但对于简单的清理是可行的
+                logger.debug("Running flush in a new event loop for ClickHouseWriter.close()")
+                loop.run_until_complete(self.flush())
+        except RuntimeError:
+            # No running event loop, and cannot create a new one (e.g., in a thread)
+            logger.warning("ClickHouseWriter.close() called without an active event loop. Buffers might not be flushed.")
+        except Exception as e:
+            logger.error(f"Error during flush in ClickHouseWriter.close(): {e}")
+
         if self.client:
-            self.client.disconnect()
-            logger.info("ClickHouse 客户端已断开")
+            try:
+                self.client.disconnect()
+                logger.info("ClickHouse 客户端已断开")
+            except Exception as e:
+                logger.error(f"ClickHouse 关闭异常: {e}")
+            self.client = None
 
 
-# 使用示例
-if __name__ == "__main__":
-    # 配置日志
-    logging.basicConfig(level=logging.INFO)
-    
-    # 创建写入器
-    writer = ClickHouseWriter(
-        host='localhost',
-        port=9000,
-        database='stock_data',
-        batch_size=1000
-    )
-    
-    # 创建测试数据
-    test_snapshot = SnapshotData(
-        snapshot_time=datetime.now(),
-        trade_date=datetime.now(),
-        stock_code='000001',
-        stock_name='平安银行',
-        market='SZ',
-        current_price=12.50,
-        bid_price1=12.49, bid_volume1=100,
-        ask_price1=12.50, ask_volume1=200,
-        total_volume=1000000,
-        total_amount=12500000.0,
-        pool_level='L1'
-    )
-    
-    # 写入数据
-    writer.write_snapshot(test_snapshot)
-    writer.flush()
-    
-    # 查询验证
-    result = writer.query("SELECT count() FROM snapshot_data")
-    print(f"总记录数: {result[0][0]}")
-    
-    # 关闭连接
-    writer.close()
+

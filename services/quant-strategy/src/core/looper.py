@@ -1,8 +1,8 @@
 import asyncio
 import logging
-from typing import Callable, List, Optional
-from datetime import datetime
 import traceback
+from collections.abc import Callable
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -17,13 +17,13 @@ class InternalLooper:
     
     不处理复杂的业务调度，业务调度由外部 task-scheduler 通过 API 触发。
     """
-    
-    def __init__(self) -> None:
-        self._tasks: List[asyncio.Task] = []
-        self._running: bool = False
-        self._loops: List[dict] = []
 
-    def add_loop(self, func: Callable, interval_seconds: int, name: Optional[str] = None) -> None:
+    def __init__(self) -> None:
+        self._tasks: list[asyncio.Task] = []
+        self._running: bool = False
+        self._loops: list[dict] = []
+
+    def add_loop(self, func: Callable, interval_seconds: int, name: str | None = None) -> None:
         """
         添加一个循环任务
         
@@ -42,10 +42,10 @@ class InternalLooper:
         """启动所有后台循环"""
         if self._running:
             return
-            
+
         self._running = True
         logger.info(f"Starting InternalLooper with {len(self._loops)} loops")
-        
+
         for loop_config in self._loops:
             task = asyncio.create_task(
                 self._run_loop(
@@ -60,31 +60,31 @@ class InternalLooper:
         """停止所有任务"""
         self._running = False
         logger.info("Stopping InternalLooper...")
-        
+
         for task in self._tasks:
             task.cancel()
-            
+
         if self._tasks:
             await asyncio.gather(*self._tasks, return_exceptions=True)
             self._tasks.clear()
-            
+
         logger.info("InternalLooper stopped")
 
     async def _run_loop(self, func: Callable, interval: int, name: str) -> None:
         """单个任务的执行循环"""
         logger.info(f"Started loop task: {name} (interval={interval}s)")
-        
+
         while self._running:
             try:
                 start_time = datetime.now()
                 await func()
-                
+
                 # 计算需要休眠的时间，保持精确间隔
                 elapsed = (datetime.now() - start_time).total_seconds()
                 sleep_time = max(0.1, interval - elapsed)
-                
+
                 await asyncio.sleep(sleep_time)
-                
+
             except asyncio.CancelledError:
                 break
             except Exception as e:

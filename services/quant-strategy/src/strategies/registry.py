@@ -4,9 +4,9 @@
 使用单例模式确保全局唯一，使用asyncio.Lock保证并发安全。
 """
 
-from typing import Dict, List, Optional
 import asyncio
 import logging
+from typing import Optional
 
 from .base import BaseStrategy
 
@@ -34,10 +34,10 @@ class StrategyRegistry:
         >>> all_ids = registry.list_all()
         >>> await registry.stop_all()
     """
-    
+
     _instance: Optional['StrategyRegistry'] = None
     _lock_singleton = asyncio.Lock()
-    
+
     def __new__(cls) -> 'StrategyRegistry':
         """确保单例模式
         
@@ -47,16 +47,16 @@ class StrategyRegistry:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
-    
+
     def __init__(self):
         """初始化注册表（只执行一次）"""
         # 避免重复初始化
         if not hasattr(self, '_initialized'):
-            self._strategies: Dict[str, BaseStrategy] = {}
-            self._lock: Optional[asyncio.Lock] = None
+            self._strategies: dict[str, BaseStrategy] = {}
+            self._lock: asyncio.Lock | None = None
             self._initialized = True
             logger.info("StrategyRegistry initialized")
-    
+
     def _ensure_lock(self) -> asyncio.Lock:
         """确保Lock绑定到当前event loop
         
@@ -71,11 +71,11 @@ class StrategyRegistry:
                     return self._lock
         except RuntimeError:
             pass
-        
+
         # 创建新lock
         self._lock = asyncio.Lock()
         return self._lock
-    
+
     async def register(
         self,
         strategy_id: str,
@@ -100,7 +100,7 @@ class StrategyRegistry:
                 raise ValueError(
                     f"Strategy '{strategy_id}' already registered"
                 )
-            
+
             try:
                 # 注册前先初始化
                 logger.info(f"Registering strategy '{strategy_id}'...")
@@ -113,7 +113,7 @@ class StrategyRegistry:
             except Exception as e:
                 logger.error(f"Failed to register strategy '{strategy_id}': {e}")
                 raise
-    
+
     async def unregister(self, strategy_id: str) -> None:
         """从注册表注销策略
         
@@ -128,7 +128,7 @@ class StrategyRegistry:
             if strategy_id not in self._strategies:
                 logger.warning(f"Strategy '{strategy_id}' not found, skip unregister")
                 return
-            
+
             try:
                 strategy = self._strategies.pop(strategy_id)
                 logger.info(f"Unregistering strategy '{strategy_id}'...")
@@ -140,8 +140,8 @@ class StrategyRegistry:
             except Exception as e:
                 logger.error(f"Failed to unregister strategy '{strategy_id}': {e}")
                 # 策略已从字典中移除，即使close失败也继续
-    
-    def get(self, strategy_id: str) -> Optional[BaseStrategy]:
+
+    def get(self, strategy_id: str) -> BaseStrategy | None:
         """获取指定策略实例（非阻塞）
         
         此方法不加锁，允许读取过程中的脏读，
@@ -154,8 +154,8 @@ class StrategyRegistry:
             策略实例，如果不存在则返回None
         """
         return self._strategies.get(strategy_id)
-    
-    def list_all(self) -> List[str]:
+
+    def list_all(self) -> list[str]:
         """列出所有已注册的策略ID（非阻塞）
         
         此方法不加锁，返回当前时刻的策略ID列表。
@@ -164,7 +164,7 @@ class StrategyRegistry:
             策略ID列表
         """
         return list(self._strategies.keys())
-    
+
     def count(self) -> int:
         """获取已注册策略数量
         
@@ -172,7 +172,7 @@ class StrategyRegistry:
             策略数量
         """
         return len(self._strategies)
-    
+
     async def start_all(self) -> None:
         """启动所有策略
         
@@ -185,31 +185,31 @@ class StrategyRegistry:
         if not self._strategies:
             logger.info("No strategies to start")
             return
-        
+
         logger.info(f"Starting all strategies ({len(self._strategies)} in total)...")
-        
+
         tasks = [
             strategy.initialize()
             for strategy in self._strategies.values()
         ]
-        
+
         # return_exceptions=True 确保一个失败不影响其他
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        
+
         # 统计结果
         success_count = sum(1 for r in results if not isinstance(r, Exception))
         fail_count = len(results) - success_count
-        
+
         logger.info(
             f"All strategies started. "
             f"Success: {success_count}, Failed: {fail_count}"
         )
-        
+
         # 记录失败的策略
         for strategy_id, result in zip(self._strategies.keys(), results):
             if isinstance(result, Exception):
                 logger.error(f"Strategy '{strategy_id}' start failed: {result}")
-    
+
     async def stop_all(self) -> None:
         """停止所有策略并清空注册表
         
@@ -219,30 +219,30 @@ class StrategyRegistry:
         if not self._strategies:
             logger.info("No strategies to stop")
             return
-        
+
         logger.info(f"Stopping all strategies ({len(self._strategies)} in total)...")
-        
+
         tasks = [
             strategy.close()
             for strategy in self._strategies.values()
         ]
-        
+
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        
+
         # 统计结果
         success_count = sum(1 for r in results if not isinstance(r, Exception))
         fail_count = len(results) - success_count
-        
+
         logger.info(
             f"All strategies stopped. "
             f"Success: {success_count}, Failed: {fail_count}"
         )
-        
+
         # 记录失败的策略
         for strategy_id, result in zip(list(self._strategies.keys()), results):
             if isinstance(result, Exception):
                 logger.error(f"Strategy '{strategy_id}' stop failed: {result}")
-        
+
         # 清空注册表
         lock = self._ensure_lock()
         async with lock:

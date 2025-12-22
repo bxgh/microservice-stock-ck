@@ -7,9 +7,8 @@ Provides endpoints for:
 - Triggering pool refresh (for task-scheduler)
 """
 import logging
-from typing import Optional, List
-from datetime import datetime
 from dataclasses import asdict
+from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -33,21 +32,21 @@ class FilterConfigResponse(BaseModel):
     min_market_cap: float
     min_turnover_ratio: float
     is_active: bool
-    updated_at: Optional[datetime] = None
+    updated_at: datetime | None = None
 
 
 class FilterConfigUpdateRequest(BaseModel):
     """筛选配置更新请求"""
-    min_list_months: Optional[int] = Field(None, ge=1, le=120, description="最小上市月份")
-    min_avg_turnover: Optional[float] = Field(None, ge=0, description="最小日均成交额(万元)")
-    min_market_cap: Optional[float] = Field(None, ge=0, description="最小市值(亿元)")
-    min_turnover_ratio: Optional[float] = Field(None, ge=0, le=100, description="最小换手率(%)")
+    min_list_months: int | None = Field(None, ge=1, le=120, description="最小上市月份")
+    min_avg_turnover: float | None = Field(None, ge=0, description="最小日均成交额(万元)")
+    min_market_cap: float | None = Field(None, ge=0, description="最小市值(亿元)")
+    min_turnover_ratio: float | None = Field(None, ge=0, le=100, description="最小换手率(%)")
 
 
 class RefreshRequest(BaseModel):
     """刷新请求 (供 task-scheduler 调用)"""
     triggered_by: str = Field("manual", description="触发来源")
-    job_id: Optional[str] = Field(None, description="调度任务ID")
+    job_id: str | None = Field(None, description="调度任务ID")
 
 
 class RefreshResponse(BaseModel):
@@ -66,17 +65,17 @@ class StockItem(BaseModel):
     """股票项"""
     code: str
     name: str
-    exchange: Optional[str] = None
-    market_cap: Optional[float] = None
-    avg_turnover_20d: Optional[float] = None
-    turnover_ratio_20d: Optional[float] = None
+    exchange: str | None = None
+    market_cap: float | None = None
+    avg_turnover_20d: float | None = None
+    turnover_ratio_20d: float | None = None
 
 
 class UniversePoolResponse(BaseModel):
     """Universe Pool 响应"""
     success: bool
     total: int
-    stocks: List[StockItem]
+    stocks: list[StockItem]
 
 
 class PoolStatsResponse(BaseModel):
@@ -87,7 +86,7 @@ class PoolStatsResponse(BaseModel):
     by_exchange: dict
     avg_market_cap: float
     avg_turnover: float
-    last_refresh: Optional[datetime] = None
+    last_refresh: datetime | None = None
 
 
 # ========================
@@ -107,7 +106,7 @@ async def get_universe_pool(
     try:
         await universe_pool_service.initialize()
         stocks = await universe_pool_service.get_qualified_stocks(limit=limit, offset=offset)
-        
+
         stock_items = [
             StockItem(
                 code=s.code,
@@ -119,7 +118,7 @@ async def get_universe_pool(
             )
             for s in stocks
         ]
-        
+
         return UniversePoolResponse(
             success=True,
             total=len(stock_items),
@@ -140,7 +139,7 @@ async def get_universe_stats():
     try:
         await universe_pool_service.initialize()
         stats = await universe_pool_service.get_pool_stats()
-        
+
         return PoolStatsResponse(
             success=True,
             total_qualified=stats.total_qualified,
@@ -175,14 +174,14 @@ async def refresh_universe_pool(request: RefreshRequest = None):
     """
     if request is None:
         request = RefreshRequest()
-    
+
     try:
         await universe_pool_service.initialize()
         result = await universe_pool_service.refresh_universe_pool(
             triggered_by=request.triggered_by,
             job_id=request.job_id
         )
-        
+
         return RefreshResponse(**asdict(result))
     except Exception as e:
         logger.error(f"Failed to refresh universe pool: {e}")
@@ -199,7 +198,7 @@ async def get_filter_config():
     try:
         await universe_pool_service.initialize()
         config = await universe_pool_service.get_active_config()
-        
+
         return FilterConfigResponse(
             config_name=config.config_name,
             min_list_months=config.min_list_months,
@@ -230,7 +229,7 @@ async def update_filter_config(request: FilterConfigUpdateRequest):
             min_market_cap=request.min_market_cap,
             min_turnover_ratio=request.min_turnover_ratio
         )
-        
+
         return FilterConfigResponse(
             config_name=config.config_name,
             min_list_months=config.min_list_months,
@@ -264,7 +263,7 @@ async def reset_filter_config():
             min_market_cap=30.0,
             min_turnover_ratio=0.3
         )
-        
+
         return FilterConfigResponse(
             config_name=config.config_name,
             min_list_months=config.min_list_months,

@@ -2,8 +2,9 @@
 健康检查 API 测试
 """
 
-import pytest
 from unittest.mock import patch
+
+import pytest
 from fastapi.testclient import TestClient
 
 from main import create_app

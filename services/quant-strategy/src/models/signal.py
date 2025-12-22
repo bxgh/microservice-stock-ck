@@ -3,12 +3,13 @@ Signal数据结构
 
 定义策略生成的交易信号标准格式
 """
+import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional, Dict, Any
 from enum import Enum
+from typing import Any
+
 import pytz
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -42,27 +43,27 @@ class Signal:
     strategy_name: str           # 策略名称
     reason: str                  # 触发原因
     score: float                 # 信号强度 (0-100)
-    price: Optional[float] = None           # 触发价格
-    metadata: Optional[Dict[str, Any]] = None  # 额外数据
-    
+    price: float | None = None           # 触发价格
+    metadata: dict[str, Any] | None = None  # 额外数据
+
     def __post_init__(self):
         """初始化后验证"""
         # 确保timestamp有时区信息
         if self.timestamp.tzinfo is None:
             raise ValueError("timestamp必须包含时区信息")
-        
+
         # 验证score范围
         if not 0 <= self.score <= 100:
             raise ValueError(f"score必须在0-100之间，当前: {self.score}")
-        
+
         # 验证stock_code格式
         if not self.stock_code or len(self.stock_code) != 6:
             raise ValueError(f"stock_code必须是6位数字，当前: {self.stock_code}")
-        
+
         # 初始化metadata
         if self.metadata is None:
             self.metadata = {}
-    
+
     @classmethod
     def create(
         cls,
@@ -72,8 +73,8 @@ class Signal:
         strategy_name: str,
         reason: str,
         score: float,
-        price: Optional[float] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        price: float | None = None,
+        metadata: dict[str, Any] | None = None
     ) -> 'Signal':
         """
         创建Signal实例，自动添加CST时间戳
@@ -93,7 +94,7 @@ class Signal:
         """
         cst = pytz.timezone('Asia/Shanghai')
         timestamp = datetime.now(cst)
-        
+
         return cls(
             stock_code=stock_code,
             signal_type=signal_type,
@@ -105,7 +106,7 @@ class Signal:
             price=price,
             metadata=metadata
         )
-    
+
     def is_valid(self) -> bool:
         """
         验证信号是否有效
@@ -124,22 +125,22 @@ class Signal:
                 self.reason
             ]):
                 return False
-            
+
             # score范围检查
             if not 0 <= self.score <= 100:
                 return False
-            
+
             # 时区检查
             if self.timestamp.tzinfo is None:
                 return False
-            
+
             return True
-            
+
         except (ValueError, TypeError, AttributeError) as e:
             logger.warning(f"Signal validation failed: {e}")
             return False
-    
-    def to_dict(self) -> Dict[str, Any]:
+
+    def to_dict(self) -> dict[str, Any]:
         """
         转换为字典格式
         

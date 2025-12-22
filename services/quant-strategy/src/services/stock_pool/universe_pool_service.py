@@ -7,18 +7,18 @@ Manages the Universe Pool (全市场基础池), including:
 - Qualification checking and filtering
 - Persistence to Tencent Cloud MySQL
 """
-import logging
 import asyncio
-from datetime import datetime, date
-from dateutil.relativedelta import relativedelta
-from typing import List, Dict, Optional, Any
+import logging
 from dataclasses import dataclass
+from datetime import date, datetime
+from typing import Any
 
+from dateutil.relativedelta import relativedelta
 from sqlalchemy import select
 
-from database.session import get_session
-from database.stock_pool_models import UniverseStock, UniverseFilterConfig, PoolTransition
 from adapters.stock_data_provider import data_provider
+from database.session import get_session
+from database.stock_pool_models import PoolTransition, UniverseFilterConfig, UniverseStock
 
 logger = logging.getLogger(__name__)
 
@@ -41,10 +41,10 @@ class PoolStats:
     """池统计信息"""
     total_qualified: int
     total_disqualified: int
-    by_exchange: Dict[str, int]
+    by_exchange: dict[str, int]
     avg_market_cap: float
     avg_turnover: float
-    last_refresh: Optional[datetime]
+    last_refresh: datetime | None
 
 
 class UniversePoolService:
@@ -57,7 +57,7 @@ class UniversePoolService:
     3. 持久化到腾讯云 MySQL
     4. 记录池流转历史
     """
-    
+
     # 默认配置 (当数据库无配置时使用)
     DEFAULT_CONFIG = {
         'min_list_months': 12,
@@ -65,24 +65,24 @@ class UniversePoolService:
         'min_market_cap': 30.0,
         'min_turnover_ratio': 0.3
     }
-    
+
     def __init__(self):
         self._lock = asyncio.Lock()
         self._initialized = False
-    
+
     async def initialize(self) -> None:
         """初始化服务"""
         if self._initialized:
             return
-        
+
         await data_provider.initialize()
-        
+
         # 确保默认配置存在
         await self._ensure_default_config()
-        
+
         self._initialized = True
         logger.info("UniversePoolService initialized")
-    
+
     async def _ensure_default_config(self) -> None:
         """确保默认配置存在于数据库"""
         async for session in get_session():
@@ -92,7 +92,7 @@ class UniversePoolService:
                 )
             )
             existing = result.scalar_one_or_none()
-            
+
             if not existing:
                 default_config = UniverseFilterConfig(
                     config_name='default',
@@ -103,7 +103,7 @@ class UniversePoolService:
                 session.add(default_config)
                 await session.commit()
                 logger.info("Created default filter configuration")
-    
+
     async def get_active_config(self) -> UniverseFilterConfig:
         """获取当前激活的筛选配置"""
         async for session in get_session():
@@ -113,19 +113,19 @@ class UniversePoolService:
                 ).order_by(UniverseFilterConfig.updated_at.desc())
             )
             config = result.scalar_one_or_none()
-            
+
             if not config:
                 # 返回默认配置对象
                 return UniverseFilterConfig(**self.DEFAULT_CONFIG, config_name='default', is_active=True)
-            
+
             return config
-    
+
     async def update_filter_config(
         self,
-        min_list_months: Optional[int] = None,
-        min_avg_turnover: Optional[float] = None,
-        min_market_cap: Optional[float] = None,
-        min_turnover_ratio: Optional[float] = None
+        min_list_months: int | None = None,
+        min_avg_turnover: float | None = None,
+        min_market_cap: float | None = None,
+        min_turnover_ratio: float | None = None
     ) -> UniverseFilterConfig:
         """
         更新筛选配置
@@ -146,11 +146,11 @@ class UniversePoolService:
                 )
             )
             config = result.scalar_one_or_none()
-            
+
             if not config:
                 config = UniverseFilterConfig(config_name='default', is_active=True)
                 session.add(config)
-            
+
             # 更新非空字段
             if min_list_months is not None:
                 config.min_list_months = min_list_months
@@ -160,18 +160,18 @@ class UniversePoolService:
                 config.min_market_cap = min_market_cap
             if min_turnover_ratio is not None:
                 config.min_turnover_ratio = min_turnover_ratio
-            
+
             config.updated_at = datetime.now()
             await session.commit()
             await session.refresh(config)
-            
+
             logger.info(f"Filter config updated: {config}")
             return config
-    
+
     async def refresh_universe_pool(
         self,
         triggered_by: str = "manual",
-        job_id: Optional[str] = None
+        job_id: str | None = None
     ) -> RefreshResult:
         """
         刷新 Universe Pool
@@ -187,13 +187,13 @@ class UniversePoolService:
         """
         start_time = datetime.now()
         logger.info(f"Starting Universe Pool refresh (triggered by: {triggered_by}, job_id: {job_id})")
-        
+
         async with self._lock:
             try:
                 # 1. 获取当前配置
                 config = await self.get_active_config()
                 logger.info(f"Using config: min_cap={config.min_market_cap}亿, min_turnover={config.min_avg_turnover}万")
-                
+
                 # 2. 从 get-stockdata 获取全市场股票
                 all_stocks = await self._fetch_all_stocks()
                 if not all_stocks:
@@ -207,17 +207,17 @@ class UniversePoolService:
                         duration_seconds=(datetime.now() - start_time).total_seconds(),
                         message="Failed to fetch stock list from get-stockdata"
                     )
-                
+
                 logger.info(f"Fetched {len(all_stocks)} stocks from get-stockdata")
-                
+
                 # 3. 应用筛选规则
                 qualified, disqualified = await self._apply_filters(all_stocks, config)
-                
+
                 # 4. 持久化到数据库
                 new_entries, removed_entries = await self._persist_results(qualified, disqualified)
-                
+
                 duration = (datetime.now() - start_time).total_seconds()
-                
+
                 result = RefreshResult(
                     success=True,
                     total_stocks=len(all_stocks),
@@ -228,10 +228,10 @@ class UniversePoolService:
                     duration_seconds=duration,
                     message=f"Universe Pool refreshed: {len(qualified)} qualified stocks"
                 )
-                
+
                 logger.info(f"✅ Universe Pool refresh complete: {result}")
                 return result
-                
+
             except Exception as e:
                 logger.exception(f"Universe Pool refresh failed: {e}")
                 return RefreshResult(
@@ -244,21 +244,22 @@ class UniversePoolService:
                     duration_seconds=(datetime.now() - start_time).total_seconds(),
                     message=f"Refresh failed: {str(e)}"
                 )
-    
-    async def _fetch_all_stocks(self) -> List[Dict[str, Any]]:
+
+    async def _fetch_all_stocks(self) -> list[dict[str, Any]]:
         """从 get-stockdata 获取全市场股票列表"""
         try:
-            stocks = await data_provider.get_all_stocks(limit=6000)
+            # Note: API limit max is 1000, for full list use pagination or increase API limit
+            stocks = await data_provider.get_all_stocks(limit=1000)
             return stocks
         except Exception as e:
             logger.error(f"Failed to fetch stock list: {e}")
             return []
-    
+
     async def _apply_filters(
         self,
-        stocks: List[Dict[str, Any]],
+        stocks: list[dict[str, Any]],
         config: UniverseFilterConfig
-    ) -> tuple[List[Dict], List[Dict]]:
+    ) -> tuple[list[dict], list[dict]]:
         """
         应用筛选规则
         
@@ -267,28 +268,30 @@ class UniversePoolService:
         """
         qualified = []
         disqualified = []
-        
+
         today = date.today()
         min_list_date = today - relativedelta(months=config.min_list_months)
-        
+
         for stock in stocks:
             code = stock.get('code', '')
             name = stock.get('name', '')
-            
+
             # 准备筛选数据
             stock_data = {
                 'code': code,
                 'name': name,
                 'list_date': stock.get('list_date'),
                 'exchange': stock.get('exchange', self._get_exchange(code)),
+                'industry': stock.get('industry'),  # 新增：行业信息
+                'industry_code': stock.get('industry_code'),  # 新增：行业代码
                 'avg_turnover_20d': stock.get('avg_turnover_20d', stock.get('turnover', 0)),
                 'market_cap': stock.get('market_cap', stock.get('total_mv', 0)),
                 'turnover_ratio_20d': stock.get('turnover_ratio_20d', stock.get('turnover_ratio', 0)),
             }
-            
+
             # 应用筛选规则
             disqualify_reason = self._check_qualification(stock_data, config, min_list_date)
-            
+
             if disqualify_reason:
                 stock_data['is_qualified'] = False
                 stock_data['disqualify_reason'] = disqualify_reason
@@ -297,16 +300,16 @@ class UniversePoolService:
                 stock_data['is_qualified'] = True
                 stock_data['disqualify_reason'] = None
                 qualified.append(stock_data)
-        
+
         logger.info(f"Filter results: {len(qualified)} qualified, {len(disqualified)} disqualified")
         return qualified, disqualified
-    
+
     def _check_qualification(
         self,
-        stock: Dict[str, Any],
+        stock: dict[str, Any],
         config: UniverseFilterConfig,
         min_list_date: date
-    ) -> Optional[str]:
+    ) -> str | None:
         """
         检查单只股票是否合格
         
@@ -315,11 +318,11 @@ class UniversePoolService:
         """
         stock.get('code', '')  # Used for logging context if needed
         name = stock.get('name', '')
-        
+
         # 规则1: ST/*ST 过滤
         if 'ST' in name.upper() or '*ST' in name.upper():
             return "ST股票"
-        
+
         # 规则2: 上市时间检查
         list_date = stock.get('list_date')
         if list_date:
@@ -331,27 +334,27 @@ class UniversePoolService:
                         list_date = datetime.strptime(list_date, '%Y%m%d').date()
                     except ValueError:
                         list_date = None
-            
+
             if list_date and list_date > min_list_date:
                 return f"上市不足{config.min_list_months}个月"
-        
+
         # 规则3: 成交额检查
         avg_turnover = stock.get('avg_turnover_20d', 0) or 0
         if avg_turnover < config.min_avg_turnover:
             return f"日均成交额{avg_turnover:.0f}万 < {config.min_avg_turnover}万"
-        
+
         # 规则4: 市值检查
         market_cap = stock.get('market_cap', 0) or 0
         if market_cap < config.min_market_cap:
             return f"市值{market_cap:.1f}亿 < {config.min_market_cap}亿"
-        
+
         # 规则5: 换手率检查
         turnover_ratio = stock.get('turnover_ratio_20d', 0) or 0
         if turnover_ratio < config.min_turnover_ratio:
             return f"换手率{turnover_ratio:.2f}% < {config.min_turnover_ratio}%"
-        
+
         return None  # 合格
-    
+
     def _get_exchange(self, code: str) -> str:
         """根据代码判断交易所"""
         if not code:
@@ -363,11 +366,11 @@ class UniversePoolService:
         elif code.startswith(('4', '8')):
             return 'BJ'
         return 'UNKNOWN'
-    
+
     async def _persist_results(
         self,
-        qualified: List[Dict],
-        disqualified: List[Dict]
+        qualified: list[dict],
+        disqualified: list[dict]
     ) -> tuple[int, int]:
         """
         持久化筛选结果到数据库
@@ -380,25 +383,27 @@ class UniversePoolService:
             result = await session.execute(select(UniverseStock))
             existing_stocks = {s.code: s for s in result.scalars().all()}
             existing_qualified = {code for code, s in existing_stocks.items() if s.is_qualified}
-            
+
             new_qualified_codes = {s['code'] for s in qualified}
-            
+
             # 计算变更
             new_entries = new_qualified_codes - existing_qualified
             removed_entries = existing_qualified - new_qualified_codes
-            
+
             # 更新或插入记录
             now = datetime.now()
             all_stocks = qualified + disqualified
-            
+
             for stock_data in all_stocks:
                 code = stock_data['code']
                 existing = existing_stocks.get(code)
-                
+
                 if existing:
                     # 更新现有记录
                     existing.name = stock_data['name']
                     existing.exchange = stock_data.get('exchange')
+                    existing.industry = stock_data.get('industry')  # 新增：更新行业
+                    existing.industry_code = stock_data.get('industry_code')  # 新增：更新行业代码
                     existing.avg_turnover_20d = stock_data.get('avg_turnover_20d')
                     existing.market_cap = stock_data.get('market_cap')
                     existing.turnover_ratio_20d = stock_data.get('turnover_ratio_20d')
@@ -412,6 +417,8 @@ class UniversePoolService:
                         name=stock_data['name'],
                         list_date=stock_data.get('list_date') if isinstance(stock_data.get('list_date'), date) else None,
                         exchange=stock_data.get('exchange'),
+                        industry=stock_data.get('industry'),  # 新增：行业名称
+                        industry_code=stock_data.get('industry_code'),  # 新增：行业代码
                         avg_turnover_20d=stock_data.get('avg_turnover_20d'),
                         market_cap=stock_data.get('market_cap'),
                         turnover_ratio_20d=stock_data.get('turnover_ratio_20d'),
@@ -421,7 +428,7 @@ class UniversePoolService:
                         updated_at=now
                     )
                     session.add(new_stock)
-                
+
                 # 记录流转 (新进入或移出)
                 if code in new_entries:
                     transition = PoolTransition(
@@ -441,17 +448,17 @@ class UniversePoolService:
                         reason=stock_data.get('disqualify_reason', 'No longer qualified')
                     )
                     session.add(transition)
-            
+
             await session.commit()
-            
+
             logger.info(f"Persisted {len(all_stocks)} stocks: {len(new_entries)} new, {len(removed_entries)} removed")
             return len(new_entries), len(removed_entries)
-    
+
     async def get_qualified_stocks(
         self,
         limit: int = 5000,
         offset: int = 0
-    ) -> List[UniverseStock]:
+    ) -> list[UniverseStock]:
         """获取所有合格的股票"""
         async for session in get_session():
             result = await session.execute(
@@ -461,7 +468,7 @@ class UniversePoolService:
                 .limit(limit)
             )
             return result.scalars().all()
-    
+
     async def get_pool_stats(self) -> PoolStats:
         """获取池统计信息"""
         async for session in get_session():
@@ -470,31 +477,31 @@ class UniversePoolService:
                 select(UniverseStock).where(UniverseStock.is_qualified.is_(True))
             )
             qualified_stocks = qualified_result.scalars().all()
-            
+
             # 不合格数量
             disqualified_result = await session.execute(
                 select(UniverseStock).where(UniverseStock.is_qualified.is_(False))
             )
             disqualified_stocks = disqualified_result.scalars().all()
-            
+
             # 按交易所分组
             by_exchange = {}
             total_cap = 0.0
             total_turnover = 0.0
-            
+
             for stock in qualified_stocks:
                 exchange = stock.exchange or 'UNKNOWN'
                 by_exchange[exchange] = by_exchange.get(exchange, 0) + 1
                 total_cap += stock.market_cap or 0
                 total_turnover += stock.avg_turnover_20d or 0
-            
+
             qualified_count = len(qualified_stocks)
-            
+
             # 最后刷新时间
             last_refresh = None
             if qualified_stocks:
                 last_refresh = max(s.updated_at for s in qualified_stocks)
-            
+
             return PoolStats(
                 total_qualified=qualified_count,
                 total_disqualified=len(disqualified_stocks),

@@ -3,10 +3,11 @@ BaseStrategy 抽象基类
 
 所有策略必须继承此类并实现其抽象方法
 """
-from abc import ABC, abstractmethod
-from typing import List, Dict, Any, Optional
-import pandas as pd
 import logging
+from abc import ABC, abstractmethod
+from typing import Any
+
+import pandas as pd
 
 from models.signal import Signal
 
@@ -22,8 +23,8 @@ class BaseStrategy(ABC):
     - generate_signals(): 生成交易信号
     - validate_parameters(): 验证策略参数
     """
-    
-    def __init__(self, name: str, parameters: Optional[Dict[str, Any]] = None):
+
+    def __init__(self, name: str, parameters: dict[str, Any] | None = None):
         """
         初始化策略
         
@@ -35,7 +36,7 @@ class BaseStrategy(ABC):
         self.parameters = parameters or {}
         self._initialized = False
         logger.info(f"Strategy {name} created with parameters: {self.parameters}")
-    
+
     @abstractmethod
     async def initialize(self) -> None:
         """
@@ -45,9 +46,9 @@ class BaseStrategy(ABC):
         子类必须实现此方法
         """
         pass
-    
+
     @abstractmethod
-    async def generate_signals(self, data: pd.DataFrame) -> List[Signal]:
+    async def generate_signals(self, data: pd.DataFrame) -> list[Signal]:
         """
         生成交易信号
         
@@ -61,7 +62,7 @@ class BaseStrategy(ABC):
             ValueError: 数据验证失败
         """
         pass
-    
+
     @abstractmethod
     def validate_parameters(self) -> bool:
         """
@@ -74,8 +75,8 @@ class BaseStrategy(ABC):
             ValueError: 参数无效时抛出异常并说明原因
         """
         pass
-    
-    async def on_bar(self, bar: Dict[str, Any]) -> None:
+
+    async def on_bar(self, bar: dict[str, Any]) -> None:
         """
         K线数据回调 (可选实现)
         
@@ -83,8 +84,8 @@ class BaseStrategy(ABC):
             bar: K线数据字典
         """
         pass
-    
-    async def on_tick(self, tick: Dict[str, Any]) -> None:
+
+    async def on_tick(self, tick: dict[str, Any]) -> None:
         """
         Tick数据回调 (可选实现)
         
@@ -92,8 +93,8 @@ class BaseStrategy(ABC):
             tick: Tick数据字典
         """
         pass
-    
-    def get_info(self) -> Dict[str, Any]:
+
+    def get_info(self) -> dict[str, Any]:
         """
         获取策略信息
         
@@ -106,13 +107,13 @@ class BaseStrategy(ABC):
             'initialized': self._initialized,
             'class': self.__class__.__name__
         }
-    
+
     async def _mark_initialized(self) -> None:
         """标记策略已初始化"""
         self._initialized = True
         logger.info(f"Strategy {self.name} initialized")
-    
-    async def backtest(self, signals: List[Signal]) -> "BacktestResult":  # type: ignore # noqa: F821
+
+    async def backtest(self, signals: list[Signal]) -> "BacktestResult":  # type: ignore # noqa: F821
         """
         回测策略信号
         
@@ -123,13 +124,13 @@ class BaseStrategy(ABC):
             BacktestResult对象
         """
         from backtest.vectorized_engine import VectorizedBacktester
-        
+
         backtester = VectorizedBacktester()
         result = await backtester.backtest_signals(signals, self.name)
-        
+
         logger.info(f"Backtest completed for {self.name}")
         return result
-    
+
     def is_initialized(self) -> bool:
         """检查策略是否已初始化"""
         return self._initialized

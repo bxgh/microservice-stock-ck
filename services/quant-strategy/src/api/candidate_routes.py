@@ -1,20 +1,18 @@
-from fastapi import APIRouter, Query
-from pydantic import BaseModel
-from typing import List, Optional
 from datetime import date
 
-from services.stock_pool.candidate_service import candidate_service
+from fastapi import APIRouter, Query, Request
+from pydantic import BaseModel
 
 router = APIRouter(prefix="/api/v1/candidates", tags=["stock-pool"])
 
 class CandidateResponse(BaseModel):
     code: str
     pool_type: str
-    sub_pool: Optional[str]
+    sub_pool: str | None
     score: float
     rank: int
     entry_date: date
-    entry_reason: Optional[str]
+    entry_reason: str | None
 
 class RefreshResponse(BaseModel):
     status: str
@@ -22,11 +20,15 @@ class RefreshResponse(BaseModel):
     count: int
 
 @router.post("/refresh", response_model=RefreshResponse)
-async def refresh_pool(pool_type: str = Query(..., regex="^(long|swing)$")):
+async def refresh_pool(
+    request: Request,
+    pool_type: str = Query(..., regex="^(long|swing)$")
+):
     """
     手动刷新候选池
     pool_type: 'long' or 'swing'
     """
+    candidate_service = request.app.state.candidate_service
     count = await candidate_service.refresh_pool(pool_type)
     return RefreshResponse(
         status="success",
@@ -34,15 +36,17 @@ async def refresh_pool(pool_type: str = Query(..., regex="^(long|swing)$")):
         count=count
     )
 
-@router.get("/{pool_type}", response_model=List[CandidateResponse])
+@router.get("/{pool_type}", response_model=list[CandidateResponse])
 async def get_candidates(
+    request: Request,
     pool_type: str,
-    sub_pool: Optional[str] = None,
+    sub_pool: str | None = None,
     limit: int = 100
 ):
     """
     查询候选池
     """
+    candidate_service = request.app.state.candidate_service
     candidates = await candidate_service.get_candidates(pool_type, sub_pool, limit)
     return [
         CandidateResponse(

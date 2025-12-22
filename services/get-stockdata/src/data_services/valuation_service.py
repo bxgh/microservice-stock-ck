@@ -164,16 +164,16 @@ class ValuationService:
                 v_data = ValuationData(
                     stock_code=stock_code,
                     trade_date=trade_date,
-                    total_market_cap=result.get('total_market_cap', 0.0),
-                    circulating_market_cap=result.get('circulating_market_cap', 0.0) or 0.0,
-                    pe_ttm=result.get('pe_ttm', 0.0),
-                    pe_static=result.get('pe_static', 0.0) or 0.0,
-                    pb_ratio=result.get('pb_ratio', 0.0),
-                    ps_ratio=result.get('ps_ratio', 0.0) or 0.0,
-                    pcf_ratio=result.get('pcf_ratio', 0.0) or 0.0,
-                    dividend_yield_ttm=result.get('dividend_yield_ttm', 0.0)
+                    total_market_cap=result.get('total_market_cap') or 0.0,
+                    circulating_market_cap=result.get('circulating_market_cap') or 0.0,
+                    pe_ttm=result.get('pe_ttm') or 0.0,
+                    pe_static=result.get('pe_static') or 0.0,
+                    pb_ratio=result.get('pb_ratio') or 0.0,
+                    ps_ratio=result.get('ps_ratio') or 0.0,
+                    pcf_ratio=result.get('pcf_ratio') or 0.0,
+                    dividend_yield_ttm=result.get('dividend_yield_ttm') or 0.0
                 )
-                self._clickhouse_writer.write_valuation([v_data])
+                await self._clickhouse_writer.write_valuation([v_data])
             except Exception as e:
                 logger.error(f"Failed to write valuation to ClickHouse: {e}")
 

@@ -6,7 +6,8 @@
 
 import asyncio
 import logging
-from typing import Callable, Any, Awaitable, Union
+from collections.abc import Awaitable, Callable
+from typing import Any, Union
 
 logger = logging.getLogger(__name__)
 
@@ -15,15 +16,15 @@ EventHandler = Union[Callable[[Any], Any], Callable[[Any], Awaitable[Any]]]
 
 class EventBus:
     """事件总线 (单例)"""
-    
+
     _instance = None
-    
+
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._subscribers = {}
         return cls._instance
-    
+
     def __init__(self):
         pass
 
@@ -47,10 +48,10 @@ class EventBus:
         """发布事件"""
         if topic not in self._subscribers:
             return
-            
+
         handlers = self._subscribers[topic]
         logger.debug(f"Publishing event to {topic} ({len(handlers)} handlers)")
-        
+
         # 并发执行所有处理器
         tasks = []
         for handler in handlers:
@@ -59,7 +60,7 @@ class EventBus:
             else:
                 # 同步处理器也在 Task 中运行以免阻塞 Loop
                 tasks.append(asyncio.create_task(self._safe_execute_sync(handler, event)))
-        
+
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 

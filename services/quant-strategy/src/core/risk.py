@@ -8,10 +8,10 @@
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from typing import Dict, Any
 
 # 避免循环引用，只在类型检查时导入
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
 if TYPE_CHECKING:
     from strategies.signal import Signal
 
@@ -19,15 +19,15 @@ logger = logging.getLogger(__name__)
 
 class RiskRule(ABC):
     """风控规则基类"""
-    
+
     @property
     @abstractmethod
     def name(self) -> str:
         """规则名称"""
         pass
-        
+
     @abstractmethod
-    async def check(self, signal: 'Signal', context: Dict[str, Any] = None) -> bool:
+    async def check(self, signal: 'Signal', context: dict[str, Any] = None) -> bool:
         """
         执行风控检查
         
@@ -42,31 +42,31 @@ class RiskRule(ABC):
 
 class RiskManager:
     """风控管理器 (单例)"""
-    
+
     _instance = None
-    
+
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._rules = []
             cls._instance._lock = asyncio.Lock()
         return cls._instance
-    
+
     def __init__(self):
         # 初始化逻辑在 __new__ 中完成，避免重复初始化
         pass
-        
+
     def add_rule(self, rule: RiskRule):
         """添加风控规则"""
         self._rules.append(rule)
         logger.info(f"Added risk rule: {rule.name}")
-        
+
     def clear_rules(self):
         """清空所有规则"""
         self._rules = []
         logger.info("Cleared all risk rules")
-        
-    async def validate(self, signal: 'Signal', context: Dict[str, Any] = None) -> bool:
+
+    async def validate(self, signal: 'Signal', context: dict[str, Any] = None) -> bool:
         """
         验证信号是否符合所有风控规则
         
@@ -79,9 +79,9 @@ class RiskManager:
         """
         if not self._rules:
             return True
-            
+
         context = context or {}
-        
+
         for rule in self._rules:
             try:
                 passed = await rule.check(signal, context)
@@ -94,5 +94,5 @@ class RiskManager:
                 # 或者选择放行并报警？这里选择拒绝 (Fail Safe)
                 logger.warning(f"Signal rejected due to risk rule error: {rule.name}")
                 return False
-                
+
         return True

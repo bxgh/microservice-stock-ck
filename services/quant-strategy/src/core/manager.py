@@ -6,15 +6,15 @@
 
 import asyncio
 import logging
-from typing import Coroutine
+from collections.abc import Coroutine
 
 logger = logging.getLogger(__name__)
 
 class BackgroundTaskManager:
     """后台任务管理器 (单例)"""
-    
+
     _instance = None
-    
+
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
@@ -40,7 +40,7 @@ class BackgroundTaskManager:
         async with self._lock:
             if self._stopping:
                 raise RuntimeError("System is shutting down, cannot start new tasks")
-                
+
             if name in self._tasks:
                 existing_task = self._tasks[name]
                 if not existing_task.done():
@@ -49,14 +49,14 @@ class BackgroundTaskManager:
                 else:
                     # 清理已完成的旧任务
                     del self._tasks[name]
-            
+
             # 创建新任务
             task = asyncio.create_task(coro, name=name)
             self._tasks[name] = task
-            
+
             # 添加完成回调
             task.add_done_callback(lambda t: self._on_task_done(name, t))
-            
+
             logger.info(f"Background task started: {name}")
             return task
 
@@ -74,7 +74,7 @@ class BackgroundTaskManager:
         if not task:
             logger.warning(f"Task {name} not found to stop")
             return False
-            
+
         if not task.done():
             logger.info(f"Stopping background task: {name}...")
             task.cancel()
@@ -86,26 +86,26 @@ class BackgroundTaskManager:
                 except Exception as e:
                     logger.error(f"Error during task {name} cancellation: {e}")
             logger.info(f"Background task stopped: {name}")
-        
+
         return True
 
     async def shutdown(self):
         """关闭所有任务"""
         logger.info("Shutting down BackgroundTaskManager...")
         self._stopping = True
-        
+
         tasks_to_stop = []
         async with self._lock:
             tasks_to_stop = list(self._tasks.keys())
-            
+
         for name in tasks_to_stop:
             await self.stop_task(name, wait=False)
-            
+
         # 等待所有任务结束
         pending = [t for t in self._tasks.values() if not t.done()]
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
-            
+
         logger.info(f"BackgroundTaskManager shutdown complete. Stopped {len(tasks_to_stop)} tasks.")
 
     def _on_task_done(self, name: str, task: asyncio.Task):
@@ -121,7 +121,7 @@ class BackgroundTaskManager:
             logger.info(f"Background task {name} was cancelled")
         except Exception as e:
             logger.error(f"Error checking status for task {name}: {e}")
-            
+
         # 即使任务完成，也保留在字典中直到被显式清理或覆盖？
         # 或者在这里移除？为了避免字典无限增长，应该移除。
         # 注意：这里需要考虑并发安全，但 done_callback 在 loop 中运行，通常是安全的
@@ -129,7 +129,7 @@ class BackgroundTaskManager:
         # 简单起见，这里不直接从 self._tasks 删除，防止迭代中修改字典的问题
         # 可以在 start_task 时清理，或者提供一个 cleanup 方法
         pass
-        
+
     def get_task_status(self, name: str) -> str:
         """获取任务状态"""
         task = self._tasks.get(name)

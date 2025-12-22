@@ -4,7 +4,6 @@ Implements Hybrid Scoring: Relative (industry-based) with Absolute fallback.
 """
 import logging
 
-from adapters.stock_data_provider import data_provider
 from config.settings import settings
 from domain.alpha.scoring_models import DimensionScore, FundamentalScore, ScoreDetail, ScoringMode
 from domain.models.financial_models import FinancialIndicators
@@ -18,37 +17,70 @@ class FundamentalScoringService:
     Supports both Relative (industry percentile) and Absolute (fixed threshold) modes.
     """
 
-    def __init__(self):
+    async def initialize(self):
+        """Async initialization"""
+        pass
+
+    async def close(self):
+        """Cleanup resources"""
+        pass
+
+    def __init__(self, data_provider=None):
+        self.data_provider = data_provider
         self.weights = {
             'profitability': settings.weight_profitability,
             'growth': settings.weight_growth,
             'quality': settings.weight_quality
         }
 
-    async def score_stock(self, code: str, industry_code: str | None = None) -> FundamentalScore | None:
+    async def score_stock(
+        self,
+        code: str,
+        financials: FinancialIndicators | None = None,
+        industry_stats: dict | None = None,
+        mode: ScoringMode = ScoringMode.ABSOLUTE
+    ) -> FundamentalScore | None:
         """
         Calculate fundamental score for a stock.
         
         Args:
             code: Stock code
-            industry_code: Industry code/name (optional, for relative scoring)
+            financials: Pre-fetched financial data (optional, fetches if None)
+            industry_stats: Pre-fetched industry stats (optional)
+            mode: Scoring mode (RELATIVE/ABSOLUTE) - acts as hint/override
             
         Returns:
             FundamentalScore or None if data unavailable
         """
-        # 1. Fetch Financial Data
-        financials = await data_provider.get_financial_indicators(code)
+        # 1. Fetch Financial Data if not provided
+        if not financials:
+            if not self.data_provider:
+                from adapters.stock_data_provider import data_provider as default_dp
+                self.data_provider = default_dp
+
+            financials = await self.data_provider.get_financial_indicators(code)
+
         if not financials:
             logger.warning(f"No financial data for {code}")
             return None
 
-        # 2. Attempt Relative Scoring (if industry provided)
-        industry_stats = None
-        if industry_code:
-            industry_stats = await data_provider.get_industry_stats(industry_code)
+        # 2. Determine Mode and Fetch Industry Stats if needed
+        # If financials provided but no industry_stats, we can try to fetch if we have industry info?
+        # But here we assume caller handles data fetching for optimization.
+        # If mode is RELATIVE and stats missing, downgrade to ABSOLUTE
 
-        # 3. Determine Mode
-        mode = ScoringMode.RELATIVE if industry_stats else ScoringMode.ABSOLUTE
+        final_mode = mode
+        if mode == ScoringMode.RELATIVE and not industry_stats:
+            # Try to fetch if provider available?
+            # Ideally caller provides it. Verify logic.
+             logger.debug(f"Relative mode requested but no industry stats for {code}, fallback to Absolute")
+             final_mode = ScoringMode.ABSOLUTE
+        elif industry_stats:
+             final_mode = ScoringMode.RELATIVE
+
+        mode = final_mode
+
+        # 3. Use determined mode (logic moved up)
 
         # 4. Calculate Dimension Scores
         profitability = self._score_profitability(financials, industry_stats, mode)
@@ -69,7 +101,7 @@ class FundamentalScoringService:
             growth=growth,
             quality=quality,
             scoring_mode=mode,
-            industry_code=industry_code
+            industry_code=None # Caller knows industry
         )
 
     def _score_profitability(

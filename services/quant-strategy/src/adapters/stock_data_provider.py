@@ -111,9 +111,10 @@ class StockDataProvider:
 
     async def get_realtime_quotes(self, codes: list[str]) -> pd.DataFrame:
         """
-        获取实时行情快照
+        获取实时行情快照 (Batch API)
         
-        使用 /api/v1/datasources/test/{symbol} 端点获取实时数据
+        使用 /api/v1/quotes/realtime 批量端点获取实时数据
+        提升效率，减少网络往返次数
         
         Args:
             codes: 股票代码列表，如 ['600519', '000001']
@@ -125,45 +126,73 @@ class StockDataProvider:
             logger.warning("Empty codes list provided")
             return pd.DataFrame()
 
-        logger.info(f"Fetching real-time quotes for {len(codes)} stocks")
+        logger.info(f"Fetching real-time quotes for {len(codes)} stocks (batch mode)")
 
         try:
-            # 使用 /api/v1/datasources/test/{symbol} 端点
-            # 这个端点测试数据源并返回实时数据
-            results = []
+            # Strategy: Check cache first for all codes, then batch fetch cache misses
+            cached_results = []
+            uncached_codes = []
 
+            # 1. Check cache for all codes
             for code in codes:
+                cache_key = CacheKeys.quote(code)
+                cached_data = await redis_client.get(cache_key)
+
+                if cached_data:
+                    try:
+                        cached_quote = json.loads(cached_data)
+                        cached_results.append(cached_quote)
+                    except json.JSONDecodeError:
+                        logger.warning(f"Invalid cached data for {code}, will fetch fresh")
+                        uncached_codes.append(code)
+                else:
+                    uncached_codes.append(code)
+
+            # 2. Batch fetch uncached quotes from API
+            fresh_results = []
+            if uncached_codes:
+                logger.debug(f"Cache miss for {len(uncached_codes)} stocks, fetching from API")
+
                 try:
-                    # 1. Check cache first (cache-aside pattern)
-                    cache_key = CacheKeys.quote(code)
-                    cached_data = await redis_client.get(cache_key)
+                    # Use batch API: GET /api/v1/quotes/realtime?codes=600519,000001
+                    codes_param = ','.join(uncached_codes)
+                    batch_data = await self._make_request(
+                        'GET',
+                        '/api/v1/quotes/realtime',
+                        params={'codes': codes_param}
+                    )
 
-                    if cached_data:
-                        # Cache hit - parse JSON and use cached data
-                        try:
-                            cached_quote = json.loads(cached_data)
-                            results.append(cached_quote)
+                    # Parse batch response
+                    if isinstance(batch_data, list):
+                        quotes_list = batch_data
+                    elif isinstance(batch_data, dict) and 'quotes' in batch_data:
+                        quotes_list = batch_data['quotes']
+                    else:
+                        logger.warning(f"Unexpected batch response format: {type(batch_data)}")
+                        quotes_list = []
+
+                    # 3. Build results and cache each quote
+                    for quote in quotes_list:
+                        if not isinstance(quote, dict):
                             continue
-                        except json.JSONDecodeError:
-                            logger.warning(f"Invalid cached data for {code}, fetching fresh")
 
-                    # 2. Cache miss - fetch from API
-                    data = await self._make_request('GET', f'/api/v1/datasources/test/{code}')
+                        code = quote.get('code', quote.get('stock_code', ''))
+                        if not code:
+                            continue
 
-                    # 3. Build result and cache it
-                    if data and isinstance(data, dict):
                         quote_data = {
                             'code': code,
-                            'name': data.get('name', ''),
-                            'price': data.get('price', data.get('current', 0.0)),
-                            'volume': data.get('volume', 0),
-                            'change_pct': data.get('change_percent', data.get('change_pct', 0.0)),
-                            'timestamp': datetime.now().isoformat()
+                            'name': quote.get('name', quote.get('stock_name', '')),
+                            'price': quote.get('price', quote.get('latest_price', quote.get('current', 0.0))),
+                            'volume': quote.get('volume', 0),
+                            'change_pct': quote.get('change_pct', quote.get('change_percent', 0.0)),
+                            'timestamp': quote.get('timestamp', datetime.now().isoformat())
                         }
-                        results.append(quote_data)
+                        fresh_results.append(quote_data)
 
-                        # Cache the result with TTL
+                        # Cache individual quote
                         try:
+                            cache_key = CacheKeys.quote(code)
                             await redis_client.set(
                                 cache_key,
                                 json.dumps(quote_data),
@@ -172,12 +201,30 @@ class StockDataProvider:
                         except Exception as cache_err:
                             logger.warning(f"Failed to cache quote for {code}: {cache_err}")
 
-                except Exception as e:
-                    logger.warning(f"Failed to fetch quote for {code}: {e}")
-                    continue
+                except Exception as api_err:
+                    logger.error(f"Batch API call failed: {api_err}. Falling back to single requests.")
+                    # Fallback: Single requests for uncached codes
+                    for code in uncached_codes:
+                        try:
+                            data = await self._make_request('GET', f'/api/v1/datasources/test/{code}')
+                            if data and isinstance(data, dict):
+                                quote_data = {
+                                    'code': code,
+                                    'name': data.get('name', ''),
+                                    'price': data.get('price', data.get('current', 0.0)),
+                                    'volume': data.get('volume', 0),
+                                    'change_pct': data.get('change_percent', data.get('change_pct', 0.0)),
+                                    'timestamp': datetime.now().isoformat()
+                                }
+                                fresh_results.append(quote_data)
+                        except Exception as e:
+                            logger.warning(f"Failed to fetch quote for {code}: {e}")
 
-            df = pd.DataFrame(results)
-            logger.info(f"Successfully fetched {len(df)} quotes")
+            # 4. Combine cached and fresh results
+            all_results = cached_results + fresh_results
+            df = pd.DataFrame(all_results)
+
+            logger.info(f"Successfully fetched {len(df)} quotes (cached: {len(cached_results)}, fresh: {len(fresh_results)})")
             return df
 
         except Exception as e:

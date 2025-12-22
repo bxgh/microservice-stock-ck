@@ -5,13 +5,14 @@
 """
 
 import logging
-from typing import List, Dict, Any
+from typing import Any
+
 from core.risk import RiskManager
 from strategies.rules_fundamental import (
+    CashflowQualityRule,
+    FinancialFraudRule,
     GoodwillRiskRule,
     PledgeRiskRule,
-    CashflowQualityRule,
-    FinancialFraudRule
 )
 from strategies.signal import Signal
 
@@ -20,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 class FundamentalFilter:
     """基本面过滤器 - 用于长线选股的财务风控"""
-    
+
     def __init__(
         self,
         goodwill_threshold: float = 0.3,
@@ -41,16 +42,16 @@ class FundamentalFilter:
         """
         self._risk_manager = RiskManager()
         self._risk_manager.clear_rules()
-        
+
         # 添加基本面风控规则
         self._risk_manager.add_rule(GoodwillRiskRule(goodwill_threshold))
         self._risk_manager.add_rule(PledgeRiskRule(pledge_threshold))
         self._risk_manager.add_rule(CashflowQualityRule(cashflow_threshold))
         self._risk_manager.add_rule(FinancialFraudRule(cash_threshold, debt_threshold))
-        
+
         logger.info("FundamentalFilter initialized with 4 risk rules")
-        
-    async def filter_stocks(self, stock_codes: List[str]) -> Dict[str, Any]:
+
+    async def filter_stocks(self, stock_codes: list[str]) -> dict[str, Any]:
         """
         批量过滤股票
         
@@ -67,7 +68,7 @@ class FundamentalFilter:
         passed = []
         rejected = []
         rejection_reasons = {}
-        
+
         for code in stock_codes:
             # 创建虚拟信号用于风控检查
             dummy_signal = Signal(
@@ -78,21 +79,21 @@ class FundamentalFilter:
                 reason="fundamental_filter",
                 strategy_id="fundamental_filter_service"
             )
-            
+
             is_valid = await self._risk_manager.validate(dummy_signal)
-            
+
             if is_valid:
                 passed.append(code)
             else:
                 rejected.append(code)
                 # TODO: 收集具体的拒绝原因
                 rejection_reasons[code] = ["Failed fundamental risk check"]
-                
+
         logger.info(
             f"Fundamental filter completed: {len(passed)} passed, {len(rejected)} rejected "
             f"out of {len(stock_codes)} stocks"
         )
-        
+
         return {
             'passed': passed,
             'rejected': rejected,

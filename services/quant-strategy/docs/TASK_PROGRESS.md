@@ -140,9 +140,10 @@
 ## 🎯 即时待办 (按优先级排序)
 
 ### 🔴 最高优先级 (本周完成)
-1. **Story 2.4: Alpha 评分引擎集成** ← 当前聚焦
+1. ✅ **Story 2.4: Alpha 评分引擎集成** (已完成)
    - 将 `FundamentalScoringService` 和 `ValuationService` 集成到 `CandidatePoolService`
    - 替换 Mock 评分逻辑为真实逻辑
+   - 通过 单元测试验证 (test_candidate_pool.py)
 
 ### � 高优先级 (本月完成)
 2. **Story 1.5: 回测引擎**

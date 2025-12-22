@@ -1,7 +1,6 @@
-import pytest
-from services.alpha.fundamental_scoring_service import FundamentalScoringService
-from domain.models.financial_models import FinancialIndicators
 from domain.alpha.scoring_models import ScoringMode
+from domain.models.financial_models import FinancialIndicators
+from services.alpha.fundamental_scoring_service import FundamentalScoringService
 
 
 class TestAbsoluteScoringLogic:
@@ -84,7 +83,7 @@ class TestDimensionScoring:
     def test_profitability_absolute_mode(self):
         fin = FinancialIndicators(stock_code="TEST", roe=0.12)
         dim_score = self.service._score_profitability(fin, None, ScoringMode.ABSOLUTE)
-        
+
         assert dim_score.dimension_name == "Profitability"
         assert dim_score.mode == ScoringMode.ABSOLUTE
         assert dim_score.weighted_score == 80.0  # ROE 12% => Good
@@ -96,7 +95,7 @@ class TestDimensionScoring:
             net_profit_growth_yoy=0.25
         )
         dim_score = self.service._score_growth(fin, None, ScoringMode.ABSOLUTE)
-        
+
         avg_growth = (0.15 + 0.25) / 2  # 20%
         assert dim_score.mode == ScoringMode.ABSOLUTE
         assert dim_score.weighted_score == 100.0  # 20% => Excellent
@@ -108,6 +107,6 @@ class TestDimensionScoring:
             net_profit=100.0
         )
         dim_score = self.service._score_quality(fin, None, ScoringMode.ABSOLUTE)
-        
+
         assert dim_score.mode == ScoringMode.ABSOLUTE
         assert dim_score.weighted_score == 80.0  # 0.9 ratio => Good

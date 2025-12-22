@@ -8,25 +8,25 @@
 
 import logging
 from datetime import datetime
-from typing import List, Dict, Any, Optional
+from typing import Any
 
 import pandas as pd
 
 from strategies.base import BaseStrategy
-from strategies.signal import Signal as StrategySignal
+
 # Note: SignalType is just "BUY"/"SELL" strings in Signal model, not a separate Enum class in new design
 # So we define it locally or use strings
 from strategies.registry import StrategyRegistry
-from .models import (
-    BacktestConfig, BacktestResult, TradeRecord
-)
+from strategies.signal import Signal as StrategySignal
+
 from .analyzer import PerformanceAnalyzer
+from .models import BacktestConfig, BacktestResult, TradeRecord
 
 logger = logging.getLogger(__name__)
 
 class BacktestEngine:
     """回测引擎"""
-    
+
     def __init__(self, data_provider=None):
         """
         初始化回测引擎
@@ -37,7 +37,7 @@ class BacktestEngine:
         """
         self.data_provider = data_provider
         self.registry = StrategyRegistry()
-        
+
     async def run(
         self,
         strategy_id: str,
@@ -45,7 +45,7 @@ class BacktestEngine:
         start_date: datetime,
         end_date: datetime,
         config: BacktestConfig = BacktestConfig(),
-        data: Optional[pd.DataFrame] = None
+        data: pd.DataFrame | None = None
     ) -> BacktestResult:
         """
         运行回测
@@ -63,12 +63,12 @@ class BacktestEngine:
         """
         logger.info(f"Starting backtest: strategy={strategy_id}, code={stock_code}, "
                    f"range={start_date.date()}~{end_date.date()}")
-                   
+
         # 1. 获取策略实例
         strategy = self.registry.get(strategy_id)
         if not strategy:
             raise ValueError(f"Strategy '{strategy_id}' not found")
-            
+
         # 2. 获取数据
         if data is None:
             if not self.data_provider:
@@ -76,25 +76,25 @@ class BacktestEngine:
             # TODO: 调用 data_provider.fetch_history_bars (需适配具体接口)
             # data = await self.data_provider.get_history_bars(...)
             raise NotImplementedError("Data provider integration not yet implemented")
-        
+
         if data.empty:
             raise ValueError("Data is empty")
-            
+
         # 3. 初始化策略
         if not strategy.is_initialized:
             await strategy.initialize()
-            
+
         # 4. 执行回测核心逻辑
         signals = await self._generate_signals(strategy, data)
-        
+
         # 5. 模拟交易
         trades, equity_curve = self._simulate_trading(signals, data, config)
-        
+
         # 6. 计算绩效
         metrics = PerformanceAnalyzer.calculate(
             equity_curve, trades, config.risk_free_rate
         )
-        
+
         return BacktestResult(
             strategy_id=strategy_id,
             stock_code=stock_code,
@@ -107,18 +107,18 @@ class BacktestEngine:
             trades=trades,
             config=config
         )
-        
+
     async def _generate_signals(
-        self, 
-        strategy: BaseStrategy, 
+        self,
+        strategy: BaseStrategy,
         data: pd.DataFrame
-    ) -> List[StrategySignal]:
+    ) -> list[StrategySignal]:
         """生成信号序列"""
-        signals: List[StrategySignal] = []
-        
+        signals: list[StrategySignal] = []
+
         # 模拟逐K线调用 (Loop)
         # TODO: 未来可优化为向量化调用 strategy.generate_signals_vectorized(data)
-        
+
         for idx, row in data.iterrows():
             # 构造Bar数据结构 (适配BaseStrategy.on_bar期望的格式)
             # 这里做简化的适配，假设Strategy能处理Dict或Series
@@ -131,72 +131,72 @@ class BacktestEngine:
                 'volume': row['volume'],
                 'datetime': idx if isinstance(idx, datetime) else row.get('date')
             }
-            
+
             # 调用策略
             try:
                 # 1. 更新策略状态
                 # 注意：BaseStrategy.on_bar 是 async 的
                 await strategy.on_bar(bar_data)
-                
+
                 # 2. 获取产生的信号
                 # 策略状态更新后，通过工厂方法获取决策
                 new_signal = strategy.generate_signal()
-                
+
                 if new_signal:
                     if strategy.validate_signal(new_signal):
                         signals.append(new_signal)
                     else:
                         logger.warning(f"Invalid signal generated at {idx}: {new_signal}")
-                
+
             except Exception as e:
                 logger.error(f"Error in strategy execution at {idx}: {e}")
-                
+
         return signals
 
     def _simulate_trading(
         self,
-        signals: List[StrategySignal],
+        signals: list[StrategySignal],
         data: pd.DataFrame,
         config: BacktestConfig
     ) -> Any:
         """模拟交易核心逻辑"""
-        
+
         capital = config.initial_capital
         position = 0  # 持仓数量 (股)
-        trades: List[TradeRecord] = []
-        equity_curve: List[Dict[str, Any]] = []
-        
+        trades: list[TradeRecord] = []
+        equity_curve: list[dict[str, Any]] = []
+
         # 将信号转换为以时间为索引的字典，方便查找
         signal_map = {
-            s.timestamp.date(): s 
-            for s in signals 
+            s.timestamp.date(): s
+            for s in signals
             if s.timestamp
         }
-        
+
         for date, row in data.iterrows():
             date_obj = date.date() if isinstance(date, datetime) else date
             price = row['close'] # 默认用收盘价计算净值
-            
+
             # 1. 处理交易信号 (假设当日收盘成交)
             # 如果配置为次日开盘，则需要复杂的订单队列逻辑
             # 这里简化为：信号日收盘成交
-            
+
             current_signal = signal_map.get(date_obj)
-            
+
             if current_signal:
                 if current_signal.direction == "BUY" and position == 0:
                     # 全仓买入 (简化)
                     cost = price * (1 + config.commission_rate)
                     volume = int(capital / cost / 100) * 100 # 向下取整到100股
-                    
+
                     if volume > 0:
                         amount = volume * price
                         commission = amount * config.commission_rate
                         cost_total = amount + commission
-                        
+
                         capital -= cost_total
                         position += volume
-                        
+
                         trades.append(TradeRecord(
                             stock_code=current_signal.stock_code,
                             direction="BUY",
@@ -209,14 +209,14 @@ class BacktestEngine:
                             strategy_id=current_signal.strategy_id,
                             reason=current_signal.reason
                         ))
-                        
+
                 elif current_signal.direction == "SELL" and position > 0:
                     # 全仓卖出
                     amount = position * price
                     commission = amount * config.commission_rate
                     tax = amount * config.stamp_duty
                     revenue = amount - commission - tax
-                    
+
                     # 计算这笔交易的盈亏
                     # 简化：假设FIFO或全仓进出，找到最近一次买入的成本
                     # 这里简化为全仓进出，可以直接计算
@@ -231,7 +231,7 @@ class BacktestEngine:
 
                     capital += revenue
                     position = 0
-                    
+
                     trades.append(TradeRecord(
                         stock_code=current_signal.stock_code,
                         direction="SELL",
@@ -249,10 +249,10 @@ class BacktestEngine:
             # 2. 结算当日净值
             market_value = position * price
             total_equity = capital + market_value
-            
+
             equity_curve.append({
                 'date': date,
                 'value': total_equity
             })
-            
+
         return trades, equity_curve

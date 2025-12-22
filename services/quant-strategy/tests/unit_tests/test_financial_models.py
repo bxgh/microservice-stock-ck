@@ -1,12 +1,11 @@
 """Unit tests for financial models"""
 
-import pytest
 from models.financial_models import FinancialIndicators
 
 
 class TestFinancialIndicators:
     """测试财务指标模型"""
-    
+
     def test_model_creation(self):
         """测试模型创建"""
         indicators = FinancialIndicators(
@@ -21,11 +20,11 @@ class TestFinancialIndicators:
             net_profit=12.0,
             major_shareholder_pledge_ratio=0.15
         )
-        
+
         assert indicators.stock_code == "600519"
         assert indicators.goodwill == 5.0
         assert indicators.net_assets == 150.0
-        
+
     def test_goodwill_ratio(self):
         """测试商誉比例计算"""
         indicators = FinancialIndicators(
@@ -40,9 +39,9 @@ class TestFinancialIndicators:
             net_profit=10.0,
             major_shareholder_pledge_ratio=0.1
         )
-        
+
         assert indicators.goodwill_ratio == 0.3
-        
+
     def test_goodwill_ratio_zero_net_assets(self):
         """测试净资产为零时的商誉比例"""
         indicators = FinancialIndicators(
@@ -57,9 +56,9 @@ class TestFinancialIndicators:
             net_profit=10.0,
             major_shareholder_pledge_ratio=0.1
         )
-        
+
         assert indicators.goodwill_ratio == 0.0
-        
+
     def test_cash_to_profit_ratio(self):
         """测试收现比计算"""
         indicators = FinancialIndicators(
@@ -74,9 +73,9 @@ class TestFinancialIndicators:
             net_profit=10.0,
             major_shareholder_pledge_ratio=0.1
         )
-        
+
         assert indicators.cash_to_profit_ratio == 0.8
-        
+
     def test_cash_to_profit_ratio_negative_profit(self):
         """测试净利润为负时的收现比"""
         indicators = FinancialIndicators(
@@ -91,9 +90,9 @@ class TestFinancialIndicators:
             net_profit=-5.0,
             major_shareholder_pledge_ratio=0.1
         )
-        
+
         assert indicators.cash_to_profit_ratio == 0.0
-        
+
     def test_cash_ratio(self):
         """测试货币资金比例计算"""
         indicators = FinancialIndicators(
@@ -108,9 +107,9 @@ class TestFinancialIndicators:
             net_profit=10.0,
             major_shareholder_pledge_ratio=0.1
         )
-        
+
         assert indicators.cash_ratio == 0.25
-        
+
     def test_debt_ratio(self):
         """测试有息负债比例计算"""
         indicators = FinancialIndicators(
@@ -125,9 +124,9 @@ class TestFinancialIndicators:
             net_profit=10.0,
             major_shareholder_pledge_ratio=0.1
         )
-        
+
         assert indicators.debt_ratio == 0.2
-        
+
     def test_dual_high_pattern(self):
         """测试存贷双高模式识别"""
         indicators = FinancialIndicators(
@@ -142,7 +141,7 @@ class TestFinancialIndicators:
             net_profit=10.0,
             major_shareholder_pledge_ratio=0.1
         )
-        
+
         # Both ratios > 20%, indicating dual-high pattern
         assert indicators.cash_ratio > 0.2
         assert indicators.debt_ratio > 0.2

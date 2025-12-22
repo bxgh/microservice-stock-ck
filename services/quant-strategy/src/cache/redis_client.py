@@ -4,8 +4,9 @@ Redis Client for Quant Strategy Service
 Provides connection pooling and helper methods for caching.
 """
 import logging
-from typing import Optional
+
 import redis.asyncio as redis
+
 from config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -15,13 +16,13 @@ class RedisClient:
     """
     Async Redis client with connection pooling
     """
-    
+
     def __init__(self):
         self.url = settings.redis_url
-        self._pool: Optional[redis.ConnectionPool] = None
-        self._client: Optional[redis.Redis] = None
+        self._pool: redis.ConnectionPool | None = None
+        self._client: redis.Redis | None = None
         logger.info(f"RedisClient initialized with URL: {self.url}")
-    
+
     async def initialize(self) -> None:
         """Initialize Redis connection pool"""
         if not self._pool:
@@ -32,7 +33,7 @@ class RedisClient:
             )
             self._client = redis.Redis(connection_pool=self._pool)
             logger.info("Redis connection pool created")
-            
+
             # Test connection
             try:
                 await self._client.ping()
@@ -40,7 +41,7 @@ class RedisClient:
             except Exception as e:
                 logger.error(f"❌ Redis connection failed: {e}")
                 raise
-    
+
     async def close(self) -> None:
         """Close Redis connection pool"""
         if self._client:
@@ -50,8 +51,8 @@ class RedisClient:
             await self._pool.disconnect()
             self._pool = None
         logger.info("Redis connection closed")
-    
-    async def get(self, key: str) -> Optional[str]:
+
+    async def get(self, key: str) -> str | None:
         """
         Get value by key
         
@@ -63,7 +64,7 @@ class RedisClient:
         """
         if not self._client:
             await self.initialize()
-        
+
         try:
             value = await self._client.get(key)
             if value:
@@ -74,12 +75,12 @@ class RedisClient:
         except Exception as e:
             logger.error(f"Redis GET error for key {key}: {e}")
             return None
-    
+
     async def set(
-        self, 
-        key: str, 
-        value: str, 
-        ttl: Optional[int] = None
+        self,
+        key: str,
+        value: str,
+        ttl: int | None = None
     ) -> bool:
         """
         Set key-value pair with optional TTL
@@ -94,7 +95,7 @@ class RedisClient:
         """
         if not self._client:
             await self.initialize()
-        
+
         try:
             if ttl:
                 await self._client.setex(key, ttl, value)
@@ -105,7 +106,7 @@ class RedisClient:
         except Exception as e:
             logger.error(f"Redis SET error for key {key}: {e}")
             return False
-    
+
     async def delete(self, key: str) -> bool:
         """
         Delete key from cache
@@ -118,7 +119,7 @@ class RedisClient:
         """
         if not self._client:
             await self.initialize()
-        
+
         try:
             result = await self._client.delete(key)
             logger.debug(f"Cache DELETE: {key}")
@@ -126,12 +127,12 @@ class RedisClient:
         except Exception as e:
             logger.error(f"Redis DELETE error for key {key}: {e}")
             return False
-    
+
     async def exists(self, key: str) -> bool:
         """Check if key exists"""
         if not self._client:
             await self.initialize()
-        
+
         try:
             return await self._client.exists(key) > 0
         except Exception as e:
@@ -142,17 +143,17 @@ class RedisClient:
 # Cache key schema design
 class CacheKeys:
     """Centralized cache key definitions"""
-    
+
     @staticmethod
     def quote(stock_code: str) -> str:
         """Real-time quote cache key"""
         return f"quant:quote:{stock_code}"
-    
+
     @staticmethod
     def stock_info(stock_code: str) -> str:
         """Stock basic info cache key"""
         return f"quant:stock_info:{stock_code}"
-    
+
     @staticmethod
     def history(stock_code: str, period: str, interval: str) -> str:
         """Historical K-line cache key"""

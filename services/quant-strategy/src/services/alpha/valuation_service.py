@@ -5,11 +5,11 @@ Implements PE/PB Band Valuation Scoring using real historical data.
 import logging
 from typing import Any
 
-from adapters.stock_data_provider import data_provider
 from config.settings import settings
 from domain.alpha.valuation_models import ValuationBandScore, ValuationScore
 
 logger = logging.getLogger(__name__)
+
 
 
 class ValuationService:
@@ -17,24 +17,51 @@ class ValuationService:
     Service for calculating valuation scores (PE/PB Band Method).
     """
 
-    async def score_stock_valuation(self, code: str) -> ValuationScore | None:
+    async def initialize(self):
+        """Async initialization"""
+        pass
+
+    async def close(self):
+        """Cleanup resources"""
+        pass
+
+    def __init__(self, data_provider=None):
+        self.data_provider = data_provider
+
+    async def score_stock(
+        self,
+        code: str,
+        current_valuation: dict | None = None
+    ) -> ValuationScore | None:
         """
         Calculate valuation score based on historical PE/PB bands.
         
         Args:
             code: Stock code
+            current_valuation: Pre-fetched valuation data (optional)
             
         Returns:
             ValuationScore object or None if insufficient data
         """
-        # 1. Fetch Current Valuation
-        current_data = await data_provider.get_valuation(code)
+        # 1. Fetch Current Valuation if not provided
+        if not current_valuation:
+            if not self.data_provider:
+                from adapters.stock_data_provider import data_provider as default_dp
+                self.data_provider = default_dp
+
+            current_valuation = await self.data_provider.get_valuation(code)
+
+        current_data = current_valuation
         if not current_data:
             logger.warning(f"No current valuation for {code} - skipping valuation score")
             return None
 
         # 2. Fetch Historical Valuation (for Band Analysis)
-        history_data = await data_provider.get_valuation_history(code, years=5)
+        if not self.data_provider:
+             from adapters.stock_data_provider import data_provider as default_dp
+             self.data_provider = default_dp
+
+        history_data = await self.data_provider.get_valuation_history(code, years=5)
         if not history_data or 'stats' not in history_data:
             logger.warning(f"No valuation history for {code} - skipping valuation score")
             return None

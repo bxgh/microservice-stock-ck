@@ -3,15 +3,15 @@
 
 基于pandas的轻量级回测引擎,用于快速验证策略逻辑
 """
-from typing import List
-import pandas as pd
-import numpy as np
-from datetime import datetime
 import logging
+from datetime import datetime
+
+import numpy as np
+import pandas as pd
 import pytz
 
-from models.signal import Signal
 from models.backtest import BacktestResult
+from models.signal import Signal
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ class VectorizedBacktester:
     
     使用pandas向量化计算,避免循环遍历
     """
-    
+
     def __init__(
         self,
         initial_capital: float = 100000.0,
@@ -40,10 +40,10 @@ class VectorizedBacktester:
         self.initial_capital = initial_capital
         self.commission_rate = commission_rate
         self.slippage = slippage
-        
+
     async def backtest_signals(
         self,
-        signals: List[Signal],
+        signals: list[Signal],
         strategy_name: str
     ) -> BacktestResult:
         """
@@ -72,7 +72,7 @@ class VectorizedBacktester:
                     sharpe_ratio=0.0,
                     total_signals=0
                 )
-            
+
             # 转换信号为DataFrame
             signals_df = pd.DataFrame([
                 {
@@ -84,40 +84,40 @@ class VectorizedBacktester:
                 }
                 for s in signals
             ])
-            
+
             # 排序
             signals_df = signals_df.sort_values('timestamp').reset_index(drop=True)
-            
+
             # 简化回测逻辑: 基于信号方向和score计算收益
             returns = []
             capital = self.initial_capital
-            
+
             for _, row in signals_df.iterrows():
                 signal_return = 0.0
-                
+
                 if row['signal_type'] == 'LONG':
                     # 做多: score越高收益越高
                     signal_return = (row['score'] / 100.0) * 0.02  # 2%基础收益
                 elif row['signal_type'] == 'SHORT':
                     # 做空: score越高收益越高(但方向相反)
                     signal_return = -(row['score'] / 100.0) * 0.01
-                
+
                 # 扣除手续费和滑点
                 costs = self.commission_rate + self.slippage
                 net_return = signal_return - costs
-                
+
                 capital *= (1 + net_return)
                 returns.append(net_return)
-            
+
             # 计算指标
             total_return = (capital - self.initial_capital) / self.initial_capital
-            
+
             # 计算最大回撤
             cumulative_returns = np.cumprod([1 + r for r in returns])
             running_max = np.maximum.accumulate(cumulative_returns)
             drawdowns = (cumulative_returns - running_max) / running_max
             max_drawdown = abs(drawdowns.min()) if len(drawdowns) > 0 else 0.0
-            
+
             # 计算夏普比率 (简化版)
             if len(returns) > 1:
                 mean_return = np.mean(returns)
@@ -125,11 +125,11 @@ class VectorizedBacktester:
                 sharpe_ratio = (mean_return / std_return) * np.sqrt(252) if std_return > 0 else 0.0
             else:
                 sharpe_ratio = 0.0
-            
+
             # 创建结果
             period_start = signals[0].timestamp
             period_end = signals[-1].timestamp
-            
+
             result = BacktestResult(
                 strategy_name=strategy_name,
                 period_start=period_start,
@@ -146,10 +146,10 @@ class VectorizedBacktester:
                     'signals_by_type': signals_df['signal_type'].value_counts().to_dict()
                 }
             )
-            
+
             logger.info(f"Backtest completed: {strategy_name}, return={total_return:.2%}")
             return result
-            
+
         except Exception as e:
             logger.exception(f"Backtest failed: {e}")
             raise

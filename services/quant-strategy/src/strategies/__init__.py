@@ -5,9 +5,9 @@
 提供策略基类、信号数据结构和策略注册表。
 """
 
-from .signal import Signal
 from .base import BaseStrategy, StrategyInitializationError
 from .registry import StrategyRegistry
+from .signal import Signal
 
 __all__ = [
     'Signal',

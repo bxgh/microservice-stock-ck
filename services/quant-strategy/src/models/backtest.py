@@ -3,10 +3,10 @@ Backtest结果模型
 
 用于存储策略回测结果和性能指标
 """
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Dict, Any, Optional
-import logging
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -27,10 +27,10 @@ class BacktestResult:
     max_drawdown: float             # 最大回撤 (0.08 = 8%)
     sharpe_ratio: float             # 夏普比率
     total_signals: int              # 总信号数
-    win_rate: Optional[float] = None           # 胜率 (可选)
-    total_trades: Optional[int] = None         # 总交易次数 (可选)
-    detailed_results: Optional[Dict[str, Any]] = field(default_factory=dict)  # 详细结果
-    
+    win_rate: float | None = None           # 胜率 (可选)
+    total_trades: int | None = None         # 总交易次数 (可选)
+    detailed_results: dict[str, Any] | None = field(default_factory=dict)  # 详细结果
+
     def __post_init__(self):
         """初始化后验证"""
         # 验证时区
@@ -38,22 +38,22 @@ class BacktestResult:
             raise ValueError("period_start必须包含时区信息")
         if self.period_end.tzinfo is None:
             raise ValueError("period_end必须包含时区信息")
-        
+
         # 验证时间顺序
         if self.period_start >= self.period_end:
             raise ValueError("period_start必须早于period_end")
-        
+
         # 验证资金
         if self.initial_capital <= 0:
             raise ValueError(f"initial_capital必须大于0: {self.initial_capital}")
-        
+
         # 验证数值范围
         if self.total_signals < 0:
             raise ValueError(f"total_signals不能为负: {self.total_signals}")
-        
+
         logger.info(f"BacktestResult created for {self.strategy_name}: "
                    f"return={self.total_return:.2%}, sharpe={self.sharpe_ratio:.2f}")
-    
+
     def get_profit(self) -> float:
         """
         获取盈利金额
@@ -62,7 +62,7 @@ class BacktestResult:
             盈利金额
         """
         return self.final_capital - self.initial_capital
-    
+
     def get_annual_return(self) -> float:
         """
         计算年化收益率
@@ -73,16 +73,16 @@ class BacktestResult:
         days = (self.period_end - self.period_start).days
         if days <= 0:
             return 0.0
-        
+
         years = days / 365.0
         if years <= 0:
             return self.total_return
-        
+
         # 年化收益率 = (1 + 总收益率)^(1/年数) - 1
         annual_return = (1 + self.total_return) ** (1 / years) - 1
         return annual_return
-    
-    def to_dict(self) -> Dict[str, Any]:
+
+    def to_dict(self) -> dict[str, Any]:
         """
         转换为字典
         
@@ -105,7 +105,7 @@ class BacktestResult:
             'total_trades': self.total_trades,
             'detailed_results': self.detailed_results
         }
-    
+
     def summary(self) -> str:
         """
         生成摘要字符串

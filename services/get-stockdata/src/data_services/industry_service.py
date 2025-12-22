@@ -138,7 +138,7 @@ class IndustryService:
                     list_date=result.get('listing_date'),
                     total_shares=int(result.get('total_shares', 0)) if result.get('total_shares') else 0
                 )
-                self._clickhouse_writer.write_industry_info([i_data])
+                await self._clickhouse_writer.write_industry_info([i_data])
             except Exception as e:
                 logger.error(f"Failed to write industry info to ClickHouse: {e}")
         

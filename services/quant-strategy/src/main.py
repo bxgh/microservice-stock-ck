@@ -21,25 +21,26 @@ import sys
 import traceback
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
 import uvicorn
+from fastapi import FastAPI
+
+from adapters.stock_data_provider import data_provider
+from api.blacklist_routes import router as blacklist_router
+from api.candidate_routes import router as candidate_router
+from api.health_routes import health_router
+from api.middleware import add_cors_headers, log_requests
+from api.position_pool_routes import router as position_pool_router
+from api.stock_pool_routes import router as stock_pool_router
+from api.strategy_routes import strategy_router
 
 # 导入核心组件
 from config.settings import settings
-from api.health_routes import health_router
-from api.strategy_routes import strategy_router
-from api.stock_pool_routes import router as stock_pool_router
-from api.position_pool_routes import router as position_pool_router
-from api.blacklist_routes import router as blacklist_router
-from api.candidate_routes import router as candidate_router
-from api.middleware import add_cors_headers, log_requests
-
-# 导入服务注册发现
-from registry.nacos_registry_simple import initialize_nacos, register_to_nacos, cleanup_nacos
 from core.looper import InternalLooper
 from core.manager import BackgroundTaskManager
-from adapters.stock_data_provider import data_provider
-from database import init_database, close_database
+from database import close_database, init_database
+
+# 导入服务注册发现
+from registry.nacos_registry_simple import cleanup_nacos, initialize_nacos, register_to_nacos
 
 # 配置日志
 logging.basicConfig(
@@ -74,17 +75,17 @@ async def lifespan(app: FastAPI):
 def validate_environment() -> None:
     """验证必要的环境变量 (lenient mode)"""
     import os
-    
+
     logger.info("Validating environment configuration...")
-    
+
     # Only warn about missing DB vars, don't fail (SQLite is default)
     db_vars = ['QS_DB_HOST', 'QS_DB_USER', 'QS_DB_PASSWORD']
     missing_db = [var for var in db_vars if not os.getenv(var)]
-    
+
     if missing_db and settings.database_type == 'mysql':
         logger.warning(f"MySQL mode but missing vars: {', '.join(missing_db)}")
         logger.warning("Falling back to SQLite mode")
-    
+
     logger.info("✅ Environment validation passed")
 
 
@@ -104,7 +105,7 @@ async def startup():
         validate_environment()
 
         logger.info("Starting up Quant Strategy Service...")
-        
+
         # 1. Initialize database
         logger.info("Initializing database...")
         await init_database()
@@ -114,11 +115,44 @@ async def startup():
         logger.info("Initializing data provider...")
         await data_provider.initialize()
         logger.info("✅ Data provider initialized")
-        
+
+        # 2.5 Initialize Alpha Scoring Services (EPIC-002 Story 2.4)
+        logger.info("Initializing Alpha scoring services...")
+        from services.alpha.fundamental_scoring_service import FundamentalScoringService
+        from services.alpha.valuation_service import ValuationService
+        from services.stock_pool.candidate_service import CandidatePoolService
+
+        fundamental_scoring = FundamentalScoringService(
+            data_provider=data_provider
+        )
+        await fundamental_scoring.initialize()
+        logger.info("  ✓ Fundamental scoring service initialized")
+
+        valuation_service = ValuationService(
+            data_provider=data_provider
+        )
+        await valuation_service.initialize()
+        logger.info("  ✓ Valuation service initialized")
+
+        # Initialize candidate pool service with real scoring
+        candidate_service = CandidatePoolService(
+            data_provider=data_provider,
+            fundamental_scoring=fundamental_scoring,
+            valuation_service=valuation_service
+        )
+        logger.info("  ✓ Candidate pool service initialized with real Alpha scoring")
+        logger.info("✅ Alpha scoring services ready")
+
+        # Store services in app state (for route access)
+        app.state.data_provider = data_provider
+        app.state.fundamental_scoring = fundamental_scoring
+        app.state.valuation_service = valuation_service
+        app.state.candidate_service = candidate_service
+
         # 3. Initialize Risk Manager
         from core.risk import RiskManager
-        from strategies.rules import StaticBlacklistRule, TradingHoursRule, PriceLimitRule
-        
+        from strategies.rules import PriceLimitRule, StaticBlacklistRule, TradingHoursRule
+
         risk_manager = RiskManager()
         # 添加默认规则
         risk_manager.add_rule(StaticBlacklistRule(blacklist=["000000"])) # 示例黑名单
@@ -165,7 +199,7 @@ async def startup():
 async def shutdown():
     """关闭任务"""
     logger.info("Shutting down Quant Strategy microservice...")
-    
+
     try:
         # 1. Stop internal looper
         logger.info("Stopping internal looper...")
@@ -176,21 +210,29 @@ async def shutdown():
         logger.info("Shutting down background tasks...")
         if manager:
             await manager.shutdown()
-        
+
         # 3. Cleanup Nacos registration
         logger.info("Deregistering from Nacos...")
         await cleanup_nacos()
-        
-        # 3. Close data provider
+
+        # 3. Close scoring services
+        logger.info("Closing scoring services...")
+        if hasattr(app, 'state'):
+            if hasattr(app.state, 'fundamental_scoring'):
+                await app.state.fundamental_scoring.close()
+            if hasattr(app.state, 'valuation_service'):
+                await app.state.valuation_service.close()
+
+        # 4. Close data provider
         logger.info("Closing data provider...")
         await data_provider.close()
-        
+
         # 4. Close database connections
         logger.info("Closing database...")
         await close_database()
-        
+
         logger.info("✅ Quant Strategy microservice shutdown complete")
-        
+
     except Exception as e:
         logger.error(f"❌ Shutdown error: {e}")
         logger.error(traceback.format_exc())

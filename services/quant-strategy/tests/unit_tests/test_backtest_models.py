@@ -1,8 +1,11 @@
 """Backtest Models Tests"""
 
-import pytest
 from datetime import datetime
-from backtest.models import BacktestResult, BacktestConfig, PerformanceMetrics
+
+import pytest
+
+from backtest.models import BacktestConfig, BacktestResult, PerformanceMetrics
+
 
 class TestBacktestConfig:
     def test_default_config(self):
@@ -14,7 +17,7 @@ class TestBacktestConfig:
     def test_invalid_config(self):
         with pytest.raises(ValueError):
             BacktestConfig(initial_capital=-100)
-            
+
         with pytest.raises(ValueError):
             BacktestConfig(commission_rate=0.2) # Too high
 
@@ -25,7 +28,7 @@ class TestBacktestResult:
             sharpe_ratio=1.5, volatility=0.1, win_rate=0.6,
             total_trades=10, winning_trades=6, losing_trades=4
         )
-        
+
         result = BacktestResult(
             strategy_id="test_strat",
             stock_code="600519",
@@ -38,7 +41,7 @@ class TestBacktestResult:
             trades=[],
             config=BacktestConfig()
         )
-        
+
         json_dict = result.model_dump()
         assert json_dict['strategy_id'] == "test_strat"
         assert json_dict['metrics']['total_return'] == 0.1

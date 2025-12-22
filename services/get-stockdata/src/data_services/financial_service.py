@@ -156,7 +156,10 @@ class FinancialService:
             # 初始化 HTTP session (EPIC-002)
             import aiohttp
             timeout = aiohttp.ClientTimeout(total=self._timeout)
-            self._session = aiohttp.ClientSession(timeout=timeout)
+            self._session = aiohttp.ClientSession(
+                timeout=timeout,
+                trust_env=True # Allow reading proxy from env
+            )
             logger.info(f"Cloud API endpoint: {self._akshare_api_url}")
             
             self._initialized = True
@@ -497,27 +500,29 @@ class FinancialService:
         # 写入 ClickHouse (Story 9.2)
         if self._clickhouse_writer and result:
             try:
-                report_date = datetime.strptime(result['report_date'], '%Y%m%d') if result.get('report_date') else datetime.now()
+                # 获取解析后的日期对象，使用后立即从字典中移除，避免序列化问题
+                report_date = result.pop('parsed_report_date', None) or datetime.now()
+                
                 fi_data = FinancialIndicatorData(
                     stock_code=code,
                     report_date=report_date,
                     report_type=result.get('report_type', 'Annual'),
-                    revenue=data.get('revenue', 0) / YUAN_TO_YI_YUAN,
-                    operating_cost=data.get('operating_cost', 0) / YUAN_TO_YI_YUAN,
-                    operating_profit=data.get('operating_profit', 0) / YUAN_TO_YI_YUAN,
-                    net_profit=data.get('net_profit', 0) / YUAN_TO_YI_YUAN,
-                    total_assets=data.get('total_assets', 0) / YUAN_TO_YI_YUAN,
-                    net_assets=data.get('net_assets', 0) / YUAN_TO_YI_YUAN,
-                    goodwill=data.get('goodwill', 0) / YUAN_TO_YI_YUAN,
-                    monetary_funds=data.get('monetary_funds', 0) / YUAN_TO_YI_YUAN,
-                    interest_bearing_debt=data.get('interest_bearing_debt', 0) / YUAN_TO_YI_YUAN,
-                    accounts_receivable=data.get('accounts_receivable', 0) / YUAN_TO_YI_YUAN,
-                    inventory=data.get('inventory', 0) / YUAN_TO_YI_YUAN,
-                    accounts_payable=data.get('accounts_payable', 0) / YUAN_TO_YI_YUAN,
-                    operating_cash_flow=data.get('operating_cash_flow', 0) / YUAN_TO_YI_YUAN,
-                    major_shareholder_pledge_ratio=0.0 # TODO: Get from source if available
+                    revenue=self._safe_div(data.get('revenue'), YUAN_TO_YI_YUAN),
+                    operating_cost=self._safe_div(data.get('operating_cost'), YUAN_TO_YI_YUAN),
+                    operating_profit=self._safe_div(data.get('operating_profit'), YUAN_TO_YI_YUAN),
+                    net_profit=self._safe_div(data.get('net_profit'), YUAN_TO_YI_YUAN),
+                    total_assets=self._safe_div(data.get('total_assets'), YUAN_TO_YI_YUAN),
+                    net_assets=self._safe_div(data.get('net_assets'), YUAN_TO_YI_YUAN),
+                    goodwill=self._safe_div(data.get('goodwill'), YUAN_TO_YI_YUAN),
+                    monetary_funds=self._safe_div(data.get('monetary_funds'), YUAN_TO_YI_YUAN),
+                    interest_bearing_debt=self._safe_div(data.get('interest_bearing_debt'), YUAN_TO_YI_YUAN),
+                    accounts_receivable=self._safe_div(data.get('accounts_receivable'), YUAN_TO_YI_YUAN),
+                    inventory=self._safe_div(data.get('inventory'), YUAN_TO_YI_YUAN),
+                    accounts_payable=self._safe_div(data.get('accounts_payable'), YUAN_TO_YI_YUAN),
+                    operating_cash_flow=self._safe_div(data.get('operating_cash_flow'), YUAN_TO_YI_YUAN),
+                    major_shareholder_pledge_ratio=0.0
                 )
-                self._clickhouse_writer.write_financial_indicators([fi_data])
+                await self._clickhouse_writer.write_financial_indicators([fi_data])
             except Exception as e:
                 logger.error(f"Failed to write financial indicators to ClickHouse: {e}")
 
@@ -527,18 +532,66 @@ class FinancialService:
         
         return result
 
+    def _safe_div(self, val: Any, divisor: float) -> float:
+        """安全除法"""
+        try:
+            if val is None:
+                return 0.0
+            if isinstance(val, str) and not val.strip():
+                return 0.0
+            return float(val) / divisor
+        except (ValueError, TypeError):
+            return 0.0
+
+
+    def _parse_report_date(self, date_str: str) -> Optional[datetime]:
+        """解析非标准日期字符串"""
+        if not date_str:
+            return None
+        
+        try:
+            # 1. 尝试标准格式
+            return datetime.strptime(str(date_str), '%Y%m%d')
+        except ValueError:
+            pass
+            
+        try:
+            # 2. 处理中文格式 "2024三季报"
+            import re
+            match = re.search(r'(\d{4})(.*)', str(date_str))
+            if match:
+                year = int(match.group(1))
+                suffix = match.group(2)
+                
+                if '一季' in suffix or 'Q1' in suffix:
+                    return datetime(year, 3, 31)
+                elif '二季' in suffix or 'Q2' in suffix or '中报' in suffix:
+                    return datetime(year, 6, 30)
+                elif '三季' in suffix or 'Q3' in suffix:
+                    return datetime(year, 9, 30)
+                elif '年报' in suffix or 'Annual' in suffix or '四季' in suffix:
+                    return datetime(year, 12, 31)
+                    
+            return None
+        except Exception:
+            return None
+
     def _transform_cloud_financial_data(self, data: Dict[str, Any], code: str) -> Dict[str, Any]:
         """转换云端 API 返回的财务数据
         
         将单位从元转换为亿元，并映射到标准的 Schema 字段
         """
+        # 解析日期
+        report_date_str = str(data.get('report_date', ''))
+        parsed_date = self._parse_report_date(report_date_str)
+        
         result = {
             'stock_code': code,
-            'report_date': data.get('report_date', ''),
+            'report_date': parsed_date.strftime('%Y%m%d') if parsed_date else datetime.now().strftime('%Y%m%d'),
+            'parsed_report_date': parsed_date # 供内部使用
         }
         
         # 1. 计算 report_type (从 report_date 推断)
-        report_date_str = str(data.get('report_date', ''))
         if '一季' in report_date_str or 'Q1' in report_date_str:
             result['report_type'] = 'Q1'
         elif '二季' in report_date_str or '中报' in report_date_str or 'Q2' in report_date_str:
@@ -548,7 +601,16 @@ class FinancialService:
         elif '年报' in report_date_str or 'Annual' in report_date_str or '四季' in report_date_str:
             result['report_type'] = 'Annual'
         else:
-            result['report_type'] = 'Q3'  # 默认值
+             # 如果是标准日期，尝试推断
+            if parsed_date:
+                m = parsed_date.month
+                if m == 3: result['report_type'] = 'Q1'
+                elif m == 6: result['report_type'] = 'Q2'
+                elif m == 9: result['report_type'] = 'Q3'
+                elif m == 12: result['report_type'] = 'Annual'
+                else: result['report_type'] = 'Q3'
+            else:
+                result['report_type'] = 'Q3'
         
         # 2. 需要转换单位的字段 (元 -> 亿元) 并映射 field names
         # Mapping: {cloud_field: schema_field}
@@ -567,30 +629,17 @@ class FinancialService:
         }
         
         for cloud_field, schema_field in field_mapping.items():
-            if cloud_field in data and data[cloud_field] is not None:
-                try:
-                    val = float(data[cloud_field])
-                    if not math.isnan(val):
-                        result[schema_field] = round(val / YUAN_TO_YI_YUAN, FINANCIAL_PRECISION)
-                    else:
-                        result[schema_field] = None
-                except (ValueError, TypeError):
-                    result[schema_field] = None
-            else:
-                result[schema_field] = None
+            result[schema_field] = self._safe_div(data.get(cloud_field), YUAN_TO_YI_YUAN)
         
         # 3. 计算有息负债 (利息负担债务)
         st_debt = float(data.get('short_term_loans') or 0)
         lt_debt = float(data.get('long_term_loans') or 0)
         bond = float(data.get('bond_payable') or 0)
-        if any([st_debt, lt_debt, bond]):
-            result['interest_bearing_debt'] = round((st_debt + lt_debt + bond) / YUAN_TO_YI_YUAN, FINANCIAL_PRECISION)
-        else:
-            result['interest_bearing_debt'] = None
+        result['interest_bearing_debt'] = self._safe_div(st_debt + lt_debt + bond, YUAN_TO_YI_YUAN)
             
         # 4. 其他字段
-        result['accounts_payable'] = None # 云端暂未提供
-        result['major_shareholder_pledge_ratio'] = None # 云端暂未提供
+        result['accounts_payable'] = 0.0
+        result['major_shareholder_pledge_ratio'] = 0.0
         
         return result
     

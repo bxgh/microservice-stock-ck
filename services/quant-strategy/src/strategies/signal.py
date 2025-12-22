@@ -4,9 +4,10 @@
 使用Pydantic进行数据验证和序列化。
 """
 
-from pydantic import BaseModel, Field, validator
-from typing import Dict, Any, Literal
 from datetime import datetime
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field, validator
 
 
 class Signal(BaseModel):
@@ -36,52 +37,52 @@ class Signal(BaseModel):
         ...     metadata={"stop_loss": 1750.0, "position_size": 0.1}
         ... )
     """
-    
+
     stock_code: str = Field(
         ...,
         description="股票代码，6位数字"
     )
-    
+
     direction: Literal["BUY", "SELL", "HOLD"] = Field(
         ...,
         description="交易方向: BUY-买入, SELL-卖出, HOLD-持有"
     )
-    
+
     strength: float = Field(
         ...,
         ge=0.0,
         le=1.0,
         description="信号强度，范围0-1，1表示最强"
     )
-    
+
     price: float = Field(
         ...,
         gt=0,
         description="目标价格，必须大于0"
     )
-    
+
     timestamp: datetime = Field(
         default_factory=datetime.now,
         description="信号生成时间"
     )
-    
+
     reason: str = Field(
         ...,
         min_length=1,
         description="信号生成原因，用于可解释性"
     )
-    
+
     strategy_id: str = Field(
         ...,
         min_length=1,
         description="策略标识符"
     )
-    
-    metadata: Dict[str, Any] = Field(
+
+    metadata: dict[str, Any] = Field(
         default_factory=dict,
         description="扩展字段，可存储止损价、止盈价、仓位等"
     )
-    
+
     @validator('stock_code')
     def validate_stock_code(cls, v: str) -> str:
         """验证股票代码格式
@@ -97,15 +98,15 @@ class Signal(BaseModel):
         """
         if not v:
             raise ValueError("股票代码不能为空")
-        
+
         if len(v) != 6:
             raise ValueError(f"股票代码必须是6位，当前长度: {len(v)}")
-        
+
         if not v.isdigit():
             raise ValueError(f"股票代码必须是纯数字，当前值: {v}")
-        
+
         return v
-    
+
     @validator('reason')
     def validate_reason(cls, v: str) -> str:
         """验证信号原因不为空
@@ -122,23 +123,23 @@ class Signal(BaseModel):
         if not v or not v.strip():
             raise ValueError("信号原因不能为空")
         return v.strip()
-    
+
     class Config:
         """Pydantic配置"""
         json_encoders = {
             datetime: lambda v: v.isoformat()
         }
-        
-    def to_dict(self) -> Dict[str, Any]:
+
+    def to_dict(self) -> dict[str, Any]:
         """转换为字典格式
         
         Returns:
             信号的字典表示
         """
         return self.dict()
-    
+
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'Signal':
+    def from_dict(cls, data: dict[str, Any]) -> 'Signal':
         """从字典创建Signal对象
         
         Args:

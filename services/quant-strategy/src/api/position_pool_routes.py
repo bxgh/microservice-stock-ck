@@ -4,7 +4,7 @@ Position Pool API Routes
 Provides endpoints for managing active positions and performing liquidity checks.
 """
 import logging
-from typing import List, Optional
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -21,7 +21,7 @@ class PositionCreateRequest(BaseModel):
     entry_price: float
     quantity: int
     strategy_type: str = "swing"  # 'long_term' or 'swing'
-    stop_loss: Optional[float] = None
+    stop_loss: float | None = None
 
 
 class PositionResponse(BaseModel):
@@ -33,7 +33,7 @@ class PositionResponse(BaseModel):
     current_value: float
     profit_loss_pct: float
     liquidity_impact: str
-    avg_daily_volume: Optional[float]
+    avg_daily_volume: float | None
 
 
 class LiquidityCheckRequest(BaseModel):
@@ -81,7 +81,7 @@ async def add_position(position: PositionCreateRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("", response_model=List[PositionResponse])
+@router.get("", response_model=list[PositionResponse])
 async def get_positions():
     """获取所有持仓"""
     try:

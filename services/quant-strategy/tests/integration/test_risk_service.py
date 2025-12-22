@@ -1,6 +1,7 @@
 import pytest
-from services.alpha.risk_service import risk_service
+
 from adapters.stock_data_provider import data_provider
+from services.alpha.risk_service import risk_service
 
 # Mock provider response for integration test simulation
 # In a real integration test, we might mock the HTTP calls or use a test env.
@@ -11,7 +12,7 @@ async def test_risk_service_flow(mocker):
     """
     Verify Risk Service correctly orchestrates data fetching and rule checking.
     """
-    
+
     # 1. Mock Data Provider returns
     # Stock A: Healthy
     mock_info_a = {'listing_status': 'L', 'market_cap': 100.0, 'amount': 50000000.0}
@@ -22,12 +23,12 @@ async def test_risk_service_flow(mocker):
         'net_profit': 10, 'operating_cash_flow': 10,
         'monetary_funds': 10, 'interest_bearing_debt': 10, 'total_assets': 100
     }
-    
+
     # Stock B: ST
     mock_info_b = {'listing_status': 'L', 'is_st': True}
     mock_fin_b = mocker.Mock()
     mock_fin_b.dict.return_value = {}
-    
+
     # Stock C: Goodwill Bomb
     mock_info_c = {'listing_status': 'L', 'market_cap': 100.0, 'amount': 50000000.0}
     mock_fin_c = mocker.Mock()
@@ -56,18 +57,18 @@ async def test_risk_service_flow(mocker):
 
     # 2. Run Checks
     results = await risk_service.check_stocks(['A', 'B', 'C'])
-    
+
     # 3. Assess Results
-    
+
     # Stock A -> Pass
     res_a = next(r for r in results if r.stock_code == 'A')
     assert not res_a.is_vetoed
-    
+
     # Stock B -> Fail (Status)
     res_b = next(r for r in results if r.stock_code == 'B')
     assert res_b.is_vetoed
     assert any("Status" in r for r in res_b.veto_reasons)
-    
+
     # Stock C -> Fail (Goodwill)
     res_c = next(r for r in results if r.stock_code == 'C')
     assert res_c.is_vetoed

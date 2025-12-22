@@ -1,9 +1,7 @@
 
 import asyncio
+
 import aiohttp
-import sys
-import os
-import json
 
 # Configuration
 BASE_URL = "http://127.0.0.1:8083/api/v1"
@@ -17,11 +15,11 @@ async def test_endpoint(session, name, url):
         async with session.get(url) as response:
             status = response.status
             print(f"Status: {status}")
-            
+
             if status == 200:
                 try:
                     data = await response.json()
-                    print(f"Response: Success")
+                    print("Response: Success")
                     # Preview data safely
                     if isinstance(data, dict):
                         keys = list(data.keys())
@@ -47,22 +45,22 @@ async def test_endpoint(session, name, url):
 async def main():
     print(f"Target Service: {BASE_URL}")
     print("Verifying EPIC-005 Endpoints...")
-    
+
     # trust_env=False is critical to bypass container proxy settings
     async with aiohttp.ClientSession(trust_env=False) as session:
-        
+
         # 1. Batch Real-time Quotes
         await test_endpoint(session, "Batch Real-time Quotes", f"{BASE_URL}/quotes/realtime?codes={TEST_BATCH_STOCKS}")
-        
+
         # 2. Stock Liquidity Metrics
         await test_endpoint(session, "Stock Liquidity Metrics", f"{BASE_URL}/stocks/{TEST_STOCK}/liquidity")
-        
+
         # 3. Stock Status Check
         await test_endpoint(session, "Stock Status Check", f"{BASE_URL}/stocks/{TEST_STOCK}/status")
-        
+
         # 4. Fundamentals Facade
         await test_endpoint(session, "Fundamentals Facade", f"{BASE_URL}/stocks/{TEST_STOCK}/fundamentals")
-        
+
         # 5. Enhanced Stock List (Checking first 5)
         await test_endpoint(session, "Enhanced Stock List", f"{BASE_URL}/stocks?limit=5")
 

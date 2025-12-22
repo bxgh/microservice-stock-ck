@@ -1,5 +1,5 @@
 """Models package"""
-from .signal import Signal, SignalType, Priority
 from .backtest import BacktestResult
+from .signal import Priority, Signal, SignalType
 
 __all__ = ['Signal', 'SignalType', 'Priority', 'BacktestResult']

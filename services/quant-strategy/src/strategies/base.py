@@ -4,14 +4,13 @@
 提供策略生命周期管理、数据处理接口和信号验证功能。
 """
 
-from abc import ABC, abstractmethod
-from typing import Optional, Dict, Any
 import asyncio
 import logging
+from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING, Any
 
 from .signal import Signal
 
-from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from adapters.stock_data_provider import StockDataProvider
 
@@ -52,12 +51,12 @@ class BaseStrategy(ABC):
         ...         # 生成信号
         ...         return Signal(...)
     """
-    
+
     def __init__(
         self,
         strategy_id: str,
-        config: Dict[str, Any],
-        data_provider: 'StockDataProvider' 
+        config: dict[str, Any],
+        data_provider: 'StockDataProvider'
     ):
         """初始化策略实例
         
@@ -71,9 +70,9 @@ class BaseStrategy(ABC):
         self.data_provider = data_provider
         self._initialized = False
         self._lock = asyncio.Lock()
-        
+
         logger.info(f"Strategy {strategy_id} instance created")
-    
+
     async def initialize(self) -> None:
         """初始化策略资源（幂等操作）
         
@@ -93,7 +92,7 @@ class BaseStrategy(ABC):
             if self._initialized:
                 logger.debug(f"Strategy {self.strategy_id} already initialized")
                 return
-            
+
             try:
                 logger.info(f"Initializing strategy {self.strategy_id}...")
                 await self._do_initialize()
@@ -104,7 +103,7 @@ class BaseStrategy(ABC):
                 raise StrategyInitializationError(
                     f"Failed to initialize strategy {self.strategy_id}: {e}"
                 ) from e
-    
+
     @abstractmethod
     async def _do_initialize(self) -> None:
         """子类实现具体初始化逻辑
@@ -118,9 +117,9 @@ class BaseStrategy(ABC):
             Exception: 初始化过程中的任何异常
         """
         pass
-    
+
     @abstractmethod
-    async def on_bar(self, bar_data: Dict[str, Any]) -> None:
+    async def on_bar(self, bar_data: dict[str, Any]) -> None:
         """处理K线数据
         
         当新的K线数据到达时调用此方法。
@@ -141,9 +140,9 @@ class BaseStrategy(ABC):
                 - timestamp (datetime): 时间戳
         """
         pass
-    
+
     @abstractmethod
-    async def on_tick(self, tick_data: Dict[str, Any]) -> None:
+    async def on_tick(self, tick_data: dict[str, Any]) -> None:
         """处理Tick数据
         
         当新的Tick数据到达时调用此方法。
@@ -162,9 +161,9 @@ class BaseStrategy(ABC):
                 - timestamp (datetime): 时间戳
         """
         pass
-    
+
     @abstractmethod
-    def generate_signal(self) -> Optional[Signal]:
+    def generate_signal(self) -> Signal | None:
         """生成交易信号
         
         基于当前策略状态生成交易信号。
@@ -177,7 +176,7 @@ class BaseStrategy(ABC):
             Signal对象，如果无信号则返回None
         """
         pass
-    
+
     def validate_signal(self, signal: Signal) -> bool:
         """验证信号有效性
         
@@ -192,29 +191,29 @@ class BaseStrategy(ABC):
         """
         if not signal:
             return False
-        
+
         # 验证必需字段
         if not signal.stock_code or not signal.direction:
             logger.warning(f"Signal missing required fields: {signal}")
             return False
-        
+
         # 验证信号强度范围
         if signal.strength < 0 or signal.strength > 1:
             logger.warning(f"Signal strength out of range [0,1]: {signal.strength}")
             return False
-        
+
         # 验证交易方向
         if signal.direction not in ["BUY", "SELL", "HOLD"]:
             logger.warning(f"Invalid signal direction: {signal.direction}")
             return False
-        
+
         # 验证目标价格
         if signal.price <= 0:
             logger.warning(f"Invalid signal price: {signal.price}")
             return False
-        
+
         return True
-    
+
     async def close(self) -> None:
         """清理策略资源（幂等操作）
         
@@ -231,7 +230,7 @@ class BaseStrategy(ABC):
             if not self._initialized:
                 logger.debug(f"Strategy {self.strategy_id} not initialized, skip close")
                 return
-            
+
             try:
                 logger.info(f"Closing strategy {self.strategy_id}...")
                 await self._do_close()
@@ -241,7 +240,7 @@ class BaseStrategy(ABC):
                 # 不抛出异常，确保状态被更新
             finally:
                 self._initialized = False
-    
+
     @abstractmethod
     async def _do_close(self) -> None:
         """子类实现具体清理逻辑
@@ -255,7 +254,7 @@ class BaseStrategy(ABC):
             Exception: 清理过程中的任何异常
         """
         pass
-    
+
     @property
     def is_initialized(self) -> bool:
         """检查策略是否已初始化

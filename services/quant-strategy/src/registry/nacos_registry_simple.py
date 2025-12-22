@@ -9,7 +9,6 @@ import json
 import logging
 import os
 import socket
-from typing import Dict, Optional
 
 import aiohttp
 
@@ -177,7 +176,7 @@ async def heartbeat_task_func(heartbeat_interval: int = 10):
 
 async def register_to_nacos(service_name: str, service_port: int,
                            framework: str, description: str,
-                           additional_metadata: Optional[Dict] = None,
+                           additional_metadata: dict | None = None,
                            max_retries: int = 3, retry_delay: int = 5,
                            heartbeat_interval: int = 10) -> bool:
     """
@@ -252,7 +251,7 @@ async def register_to_nacos(service_name: str, service_port: int,
     return False
 
 
-async def initialize_nacos(nacos_url: Optional[str] = None) -> bool:
+async def initialize_nacos(nacos_url: str | None = None) -> bool:
     """
     初始化 Nacos 注册器
 

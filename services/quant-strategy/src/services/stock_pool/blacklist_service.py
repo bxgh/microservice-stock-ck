@@ -6,12 +6,12 @@ and cleaning up expired entries.
 """
 import logging
 from datetime import date
-from dateutil.relativedelta import relativedelta
-from typing import List, Optional, Tuple, Dict
-from sqlalchemy import select, delete, or_
 
-from database.session import get_session
+from dateutil.relativedelta import relativedelta
+from sqlalchemy import delete, or_, select
+
 from database.blacklist_models import BlacklistStock
+from database.session import get_session
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ class BlacklistService:
         code: str,
         reason: str,
         reason_type: str,
-        loss_amount: Optional[float] = None
+        loss_amount: float | None = None
     ) -> BlacklistStock:
         """
         添加到黑名单
@@ -44,9 +44,9 @@ class BlacklistService:
         is_permanent = (reason_type == 'permanent')
         release_date = None
         period_months = 0
-        
+
         today = date.today()
-        
+
         if not is_permanent:
             if reason_type == 'tech_stop':
                 period_months = 3
@@ -54,14 +54,14 @@ class BlacklistService:
                 period_months = 12
             else:
                 period_months = 6 # Default
-            
+
             release_date = today + relativedelta(months=period_months)
-            
+
         async for session in get_session():
             # Check if exists, update if so
             result = await session.execute(select(BlacklistStock).where(BlacklistStock.code == code))
             existing = result.scalar_one_or_none()
-            
+
             if existing:
                 existing.reason = reason
                 existing.reason_type = reason_type
@@ -91,7 +91,7 @@ class BlacklistService:
                 logger.info(f"Added specific blacklist {code}: {reason_type}")
                 return new_entry
 
-    async def is_blacklisted(self, code: str) -> Tuple[bool, Optional[str], Optional[date]]:
+    async def is_blacklisted(self, code: str) -> tuple[bool, str | None, date | None]:
         """
         检查是否在黑名单中
         
@@ -109,12 +109,12 @@ class BlacklistService:
             )
             result = await session.execute(stmt)
             entry = result.scalar_one_or_none()
-            
+
             if entry:
                 return True, entry.reason, entry.release_date
             return False, None, None
 
-    async def batch_check(self, codes: List[str]) -> Dict[str, Dict]:
+    async def batch_check(self, codes: list[str]) -> dict[str, dict]:
         """批量检查黑名单"""
         results = {}
         async for session in get_session():
@@ -126,9 +126,9 @@ class BlacklistService:
                 )
             )
             db_results = (await session.execute(stmt)).scalars().all()
-            
+
             blocked_map = {item.code: item for item in db_results}
-            
+
             for code in codes:
                 if code in blocked_map:
                     item = blocked_map[code]

@@ -581,9 +581,9 @@ async def run_acquisition_loop():
                                             data_source='mootdx',
                                             pool_level='L1'
                                         )
-                                        writer.write_snapshot(snapshot)
+                                        await writer.write_snapshot(snapshot)
                                     
-                                    writer.flush()
+                                    await writer.flush()
                                     logger.info(f"💾 [数据入库] 成功写入 {len(quotes)} 条快照数据")
                                 except Exception as e:
                                     logger.error(f"❌ [数据入库] 写入失败: {e}")
@@ -647,7 +647,7 @@ async def lifespan(app: FastAPI):
             database=os.getenv('CLICKHOUSE_DB', 'stock_data'),
             user=os.getenv('CLICKHOUSE_USER', 'default'),
             password=os.getenv('CLICKHOUSE_PASSWORD', ''),
-            batch_size=10 # Use small batch for interactive/API requests to avoid delay
+            batch_size=1 # Use small batch for interactive/API requests to avoid delay
         )
         app.state.clickhouse_writer = clickhouse_writer
         logger.info("✅ Global ClickHouse Writer initialized")
