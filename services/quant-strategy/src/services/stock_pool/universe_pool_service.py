@@ -273,8 +273,8 @@ class UniversePoolService:
         min_list_date = today - relativedelta(months=config.min_list_months)
 
         for stock in stocks:
-            code = stock.get('code', '')
-            name = stock.get('name', '')
+            code = stock.get('stock_code', '')  # Fixed: use 'stock_code' from API
+            name = stock.get('stock_name', '')  # Fixed: use 'stock_name' from API
 
             # 准备筛选数据
             stock_data = {
