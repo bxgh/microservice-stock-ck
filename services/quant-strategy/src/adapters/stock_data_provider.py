@@ -36,8 +36,12 @@ class StockDataProvider:
 
         async with self._lock:
             if not self._session:
-                self._session = aiohttp.ClientSession(timeout=self.timeout)
-                logger.info("HTTP session created")
+                # Disable trust_env to bypass environment proxies for local service calls
+                self._session = aiohttp.ClientSession(
+                    timeout=self.timeout,
+                    trust_env=False
+                )
+                logger.info("HTTP session created (proxy-disabled)")
 
         # Initialize Redis cache
         try:
@@ -542,7 +546,9 @@ class StockDataProvider:
             return None
 
         except Exception as e:
-            logger.error(f"Failed to fetch real financial indicators for {code}: {e}")
+            logger.error(f"Failed to fetch real financial indicators for {code}: {repr(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
             return None
 
     async def get_valuation(self, code: str) -> dict[str, Any] | None:
@@ -559,9 +565,16 @@ class StockDataProvider:
             # Call the Verified Real API
             data = await self._make_request("GET", f"/api/v1/market/valuation/{code}")
             if data and isinstance(data, dict):
-                # Ensure code is string and mapped correctly if needed
+                # Ensure code is string and mapped correctly
                 if 'code' in data:
                     data['stock_code'] = str(data['code']).zfill(6)
+                
+                # Map pe/pb to pe_ttm/pb_ratio expected by ValuationService
+                if 'pe' in data:
+                    data['pe_ttm'] = data['pe']
+                if 'pb' in data:
+                    data['pb_ratio'] = data['pb']
+                    
                 return data
             return None
         except Exception as e:
@@ -579,8 +592,8 @@ class StockDataProvider:
             行业统计数据字典 (包含 PE/PB/ROE/Growth 分布)
         """
         try:
-            # Call Industry Stats API
-            data = await self._make_request("GET", f"/api/v1/finance/industry/{industry_code}/stats")
+            # Call Industry Stats API (corrected path)
+            data = await self._make_request("GET", f"/api/v1/market/industry/{industry_code}/stats")
             return data
         except Exception as e:
             logger.warning(f"Failed to fetch industry stats for {industry_code}: {e}. Falling back to absolute scoring.")
@@ -601,10 +614,41 @@ class StockDataProvider:
             # Call Real History API
             endpoint = f"/api/v1/market/valuation/{code}/history?years={years}&frequency=D"
             data = await self._make_request("GET", endpoint)
+            
+            # get-stockdata history response is {"code": "...", "data": [...], "count": ...}
+            # ValuationService expects {"stats": {"pe_ttm": {...}, "pb_ratio": {...}}, ...}
+            if data and isinstance(data, dict) and 'data' in data:
+                history_list = data['data']
+                stats = self._calculate_valuation_stats(history_list)
+                data['stats'] = stats
+                
             return data
         except Exception as e:
             logger.warning(f"Failed to fetch valuation history for {code}: {e}")
             return None
+
+    def _calculate_valuation_stats(self, history_list: list[dict]) -> dict:
+        """从历史记录计算统计信息 (min, max, median)"""
+        import numpy as np
+        
+        pe_vals = [item.get('pe', item.get('pe_ttm')) for item in history_list if item.get('pe', item.get('pe_ttm')) is not None]
+        pb_vals = [item.get('pb', item.get('pb_ratio')) for item in history_list if item.get('pb', item.get('pb_ratio')) is not None]
+        
+        def get_stats(vals):
+            if not vals:
+                return {}
+            return {
+                "min": float(np.min(vals)),
+                "max": float(np.max(vals)),
+                "median": float(np.median(vals)),
+                "p25": float(np.percentile(vals, 25)),
+                "p75": float(np.percentile(vals, 75))
+            }
+            
+        return {
+            "pe_ttm": get_stats(pe_vals),
+            "pb_ratio": get_stats(pb_vals)
+        }
 
 # 全局单例
 data_provider = StockDataProvider()
