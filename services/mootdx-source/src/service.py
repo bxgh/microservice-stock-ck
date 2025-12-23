@@ -134,10 +134,11 @@ class MooTDXService(data_source_pb2_grpc.DataSourceServiceServicer):
             fallback_handler="_fetch_industry_akshare",
             fallback_source_name=DataSource.AKSHARE_API
         ),
-        # 龙虎榜数据 (使用 META 类型)
         data_source_pb2.DATA_TYPE_META: RouteConfig(
-            handler="_fetch_dragon_tiger_akshare",
-            source_name=DataSource.AKSHARE_API
+            handler="_fetch_meta_mootdx",
+            source_name=DataSource.MOOTDX,
+            fallback_handler="_fetch_dragon_tiger_akshare",
+            fallback_source_name=DataSource.AKSHARE_API
         ),
     }
     
@@ -447,6 +448,31 @@ class MooTDXService(data_source_pb2_grpc.DataSourceServiceServicer):
             logger.warning("Mootdx client not initialized")
             return pd.DataFrame()
         return await self.mootdx_client.get_history(codes, params)
+
+    async def _fetch_meta_mootdx(
+        self,
+        codes: List[str],
+        params: Dict[str, Any]
+    ) -> pd.DataFrame:
+        """mootdx: 股票元数据/个股信息"""
+        if not self.mootdx_client:
+            logger.warning("Mootdx client not initialized")
+            return pd.DataFrame()
+            
+        # 如果 codes 为 ["all"] 或为空，则获取全量列表
+        if not codes or codes == ["all"]:
+            return await self.mootdx_client.get_stocks([], params)
+            
+        # 否则获取特定代码信息并过滤
+        df = await self.mootdx_client.get_stocks([], params)
+        if not df.empty and 'code' in df.columns:
+            # 确保代码列是字符串并补全
+            df['code'] = df['code'].astype(str).str.zfill(6)
+            # 过滤 (gRPC RepeatedScalarContainer 转为 list)
+            code_list = list(codes)
+            df = df[df['code'].isin(code_list)]
+            
+        return df
     
     # === 云端 API 方法 ===
     
@@ -642,7 +668,8 @@ class MooTDXService(data_source_pb2_grpc.DataSourceServiceServicer):
         
         # 如果有股票代码过滤，在本地再次过滤确保准确性
         if codes and not df.empty and 'code' in df.columns:
-            df = df[df['code'].isin(codes)]
+            code_list = list(codes)
+            df = df[df['code'].isin(code_list)]
         
         return df
     

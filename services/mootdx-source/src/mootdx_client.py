@@ -97,7 +97,11 @@ class MootdxAPIClient:
         if not codes:
             return pd.DataFrame()
         
-        data = await self._fetch(f"/api/v1/tick/{codes[0]}")
+        api_params = {}
+        if params.get("date"):
+            api_params["date"] = params["date"]
+            
+        data = await self._fetch(f"/api/v1/tick/{codes[0]}", params=api_params)
         return pd.DataFrame(data) if data else pd.DataFrame()
     
     async def get_history(self, codes: List[str], params: Dict[str, Any]) -> pd.DataFrame:
@@ -109,6 +113,10 @@ class MootdxAPIClient:
             "frequency": params.get("frequency", "d"),
             "offset": params.get("offset", 500)
         }
+        if params.get("start_date"): api_params["start_date"] = params["start_date"]
+        if params.get("end_date"): api_params["end_date"] = params["end_date"]
+        if params.get("adjust"): api_params["adjust"] = params["adjust"]
+        
         data = await self._fetch(f"/api/v1/history/{codes[0]}", api_params)
         return pd.DataFrame(data) if data else pd.DataFrame()
     

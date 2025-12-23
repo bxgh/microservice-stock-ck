@@ -48,18 +48,19 @@ async def check_universe_pool():
         print(f"\n📈 行业信息填充情况")
         print(f"有行业信息的股票: {has_industry} ({has_industry/total_count*100:.1f}%)")
         
-        # 查看前5条记录
+        # 查看前10条记录
         result = await session.execute(
-            select(UniverseStock).limit(5)
+            select(UniverseStock).limit(10)
         )
         stocks = result.scalars().all()
         
-        print(f"\n📋 前5条记录样本:")
-        print(f"{'-' * 80}")
-        for stock in stocks:
+        print(f"\n📋 前10条记录样本:")
+        print(f"{'-' * 100}")
+        for stock in stocks[:10]:
             print(f"代码: {stock.code:8s} | 名称: {stock.name:10s} | "
                   f"行业: {stock.industry or 'N/A':15s} | "
-                  f"合格: {'✓' if stock.is_qualified else '✗'}")
+                  f"合格: {'✓' if stock.is_qualified else '✗'} | "
+                  f"理由: {stock.disqualify_reason or 'N/A'}")
         
         # 行业分布
         if has_industry > 0:

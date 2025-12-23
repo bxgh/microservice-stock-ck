@@ -1,5 +1,6 @@
 import json
 import logging
+import asyncio
 from datetime import datetime
 from typing import Any, Optional
 
@@ -25,13 +26,18 @@ class StockDataProvider:
         self.base_url = settings.stockdata_service_url.rstrip('/')
         self.timeout = aiohttp.ClientTimeout(total=30)
         self._session: aiohttp.ClientSession | None = None
+        self._lock = asyncio.Lock()
         logger.info(f"StockDataProvider initialized with base URL: {self.base_url}")
 
     async def initialize(self) -> None:
         """初始化HTTP会话和Redis连接"""
-        if not self._session:
-            self._session = aiohttp.ClientSession(timeout=self.timeout)
-            logger.info("HTTP session created")
+        if self._session:
+            return
+
+        async with self._lock:
+            if not self._session:
+                self._session = aiohttp.ClientSession(timeout=self.timeout)
+                logger.info("HTTP session created")
 
         # Initialize Redis cache
         try:
@@ -234,19 +240,20 @@ class StockDataProvider:
     async def get_history_bar(
         self,
         code: str,
-        period: str = "1mo",
-        interval: str = "1d"
+        start_date: str | None = None,
+        end_date: str | None = None,
+        frequency: str = "d",
+        adjust: str = "2"
     ) -> pd.DataFrame:
         """
         获取历史K线数据
         
-        注意: 当前 get-stockdata 可能没有直接的 K线 API
-        这里先返回空 DataFrame，待后续实现
-        
         Args:
             code: 股票代码
-            period: 时间周期 (1d, 5d, 1mo, 3mo, 6mo, 1y, etc.)
-            interval: 数据间隔 (1m, 5m, 15m, 1h, 1d, etc.)
+            start_date: 开始日期 (YYYY-MM-DD)
+            end_date: 结束日期 (YYYY-MM-DD)
+            frequency: 频率: d=日, w=周, m=月, 1m, 5m, 15m, 30m, 60m
+            adjust: 复权: 0=不复权, 1=前复权, 2=后复权
             
         Returns:
             包含K线数据的DataFrame
@@ -255,12 +262,126 @@ class StockDataProvider:
             logger.warning("Empty stock code provided")
             return pd.DataFrame()
 
-        logger.warning(f"Historical K-line API not yet implemented in get-stockdata for {code}")
+        params = {
+            "start_date": start_date,
+            "end_date": end_date,
+            "frequency": frequency,
+            "adjust": adjust
+        }
+        # Remove None values
+        params = {k: v for k, v in params.items() if v is not None}
 
-        # TODO: 当 get-stockdata 实现 K线 API 后，更新此方法
-        # 可能的端点: /api/v1/kline/{code} 或使用 fenbi 分笔数据聚合
+        try:
+            data = await self._make_request('GET', f'/api/v1/quotes/history/{code}', params=params)
+            
+            if isinstance(data, dict) and 'data' in data:
+                df = pd.DataFrame(data['data'])
+            elif isinstance(data, list):
+                df = pd.DataFrame(data)
+            else:
+                df = pd.DataFrame()
 
-        return pd.DataFrame()
+            if not df.empty and 'code' in df.columns:
+                df['code'] = df['code'].astype(str).str.zfill(6)
+                
+            return df
+        except Exception as e:
+            logger.error(f"Failed to fetch history bar for {code}: {e}")
+            return pd.DataFrame()
+
+    async def get_tick_data(self, code: str, date: str | None = None) -> pd.DataFrame:
+        """
+        获取分笔数据 (Tick Data)
+        
+        Args:
+            code: 股票代码
+            date: 日期 (YYYYMMDD)
+            
+        Returns:
+            包含分笔数据的DataFrame
+        """
+        params = {"date": date} if date else {}
+        try:
+            data = await self._make_request('GET', f'/api/v1/quotes/tick/{code}', params=params)
+            
+            if isinstance(data, dict) and 'data' in data:
+                df = pd.DataFrame(data['data'])
+            elif isinstance(data, list):
+                df = pd.DataFrame(data)
+            else:
+                df = pd.DataFrame()
+                
+            return df
+        except Exception as e:
+            logger.error(f"Failed to fetch tick data for {code}: {e}")
+            return pd.DataFrame()
+
+    async def get_market_ranking(self, ranking_type: str = "limit_up") -> pd.DataFrame:
+        """
+        获取市场榜单
+        
+        Args:
+            ranking_type: limit_up, hot, up, volume
+        """
+        try:
+            data = await self._make_request('GET', '/api/v1/market/ranking', params={"ranking_type": ranking_type})
+            
+            if isinstance(data, dict) and 'data' in data:
+                df = pd.DataFrame(data['data'])
+            elif isinstance(data, list):
+                df = pd.DataFrame(data)
+            else:
+                df = pd.DataFrame()
+                
+            return df
+        except Exception as e:
+            logger.error(f"Failed to fetch market ranking {ranking_type}: {e}")
+            return pd.DataFrame()
+
+    async def get_sector_list(self) -> list[dict[str, Any]]:
+        """获取板块列表"""
+        try:
+            data = await self._make_request('GET', '/api/v1/market/sector/list')
+            if isinstance(data, dict) and 'data' in data:
+                return data['data']
+            return data if isinstance(data, list) else []
+        except Exception as e:
+            logger.error(f"Failed to fetch sector list: {e}")
+            return []
+
+    async def get_sector_stocks(self, sector_code: str) -> list[dict[str, Any]]:
+        """获取板块成分股"""
+        try:
+            data = await self._make_request('GET', f'/api/v1/market/sector/{sector_code}/stocks')
+            if isinstance(data, dict) and 'data' in data:
+                return data['data']
+            return data if isinstance(data, list) else []
+        except Exception as e:
+            logger.error(f"Failed to fetch sector stocks for {sector_code}: {e}")
+            return []
+
+    async def get_dragon_tiger_list(self, date: str | None = None) -> list[dict[str, Any]]:
+        """获取龙虎榜数据"""
+        params = {"date": date} if date else {}
+        try:
+            data = await self._make_request('GET', '/api/v1/market/dragon_tiger', params=params)
+            if isinstance(data, dict) and 'data' in data:
+                return data['data']
+            return data if isinstance(data, list) else []
+        except Exception as e:
+            logger.error(f"Failed to fetch dragon tiger list: {e}")
+            return []
+
+    async def get_capital_flow(self, code: str) -> dict[str, Any]:
+        """获取个股资金流向"""
+        try:
+            data = await self._make_request('GET', f'/api/v1/market/capital_flow/{code}')
+            if isinstance(data, dict) and 'data' in data:
+                return data['data']
+            return data if isinstance(data, dict) else {}
+        except Exception as e:
+            logger.error(f"Failed to fetch capital flow for {code}: {e}")
+            return {}
 
     async def get_stock_info(self, code: str) -> dict[str, Any] | None:
         """
@@ -286,7 +407,7 @@ class StockDataProvider:
 
         # 2. Fetch from API
         try:
-            data = await self._make_request('GET', f'/api/v1/stocks/{code}/detail')
+            data = await self._make_request('GET', f'/api/v1/stocks/{code}/info')
 
             # 3. Cache the result
             if data:
@@ -403,7 +524,21 @@ class StockDataProvider:
             data = await self._make_request("GET", f"/api/v1/finance/indicators/{code}")
 
             if data:
-                return FinancialIndicators(**data)
+                # Map fields to match FinancialIndicators model
+                mapped_data = {
+                    "stock_code": str(data.get("code", code)).zfill(6),
+                    "report_date": data.get("report_date"),
+                    "revenue": data.get("total_revenue", data.get("revenue")),
+                    "net_profit": data.get("net_profit"),
+                    "roe": data.get("roe"),
+                    "net_assets": data.get("net_assets"),
+                    "total_assets": data.get("total_assets"),
+                    "goodwill": data.get("goodwill"),
+                    "monetary_funds": data.get("monetary_funds"),
+                    "interest_bearing_debt": data.get("interest_bearing_debt"),
+                    "operating_cash_flow": data.get("operating_cash_flow") or data.get("net_cash_flow_from_operating_activities"),
+                }
+                return FinancialIndicators(**mapped_data)
             return None
 
         except Exception as e:
@@ -423,7 +558,12 @@ class StockDataProvider:
         try:
             # Call the Verified Real API
             data = await self._make_request("GET", f"/api/v1/market/valuation/{code}")
-            return data
+            if data and isinstance(data, dict):
+                # Ensure code is string and mapped correctly if needed
+                if 'code' in data:
+                    data['stock_code'] = str(data['code']).zfill(6)
+                return data
+            return None
         except Exception as e:
             logger.error(f"Failed to fetch valuation for {code}: {e}")
             return None

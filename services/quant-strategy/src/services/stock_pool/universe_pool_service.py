@@ -273,8 +273,8 @@ class UniversePoolService:
         min_list_date = today - relativedelta(months=config.min_list_months)
 
         for stock in stocks:
-            code = stock.get('stock_code', '')  # Fixed: use 'stock_code' from API
-            name = stock.get('stock_name', '')  # Fixed: use 'stock_name' from API
+            code = stock.get('stock_code', '')
+            name = stock.get('stock_name', '')
 
             # 准备筛选数据
             stock_data = {
@@ -282,11 +282,11 @@ class UniversePoolService:
                 'name': name,
                 'list_date': stock.get('list_date'),
                 'exchange': stock.get('exchange', self._get_exchange(code)),
-                'industry': stock.get('industry'),  # 新增：行业信息
-                'industry_code': stock.get('industry_code'),  # 新增：行业代码
-                'avg_turnover_20d': stock.get('avg_turnover_20d', stock.get('turnover', 0)),
-                'market_cap': stock.get('market_cap', stock.get('total_mv', 0)),
-                'turnover_ratio_20d': stock.get('turnover_ratio_20d', stock.get('turnover_ratio', 0)),
+                'industry': stock.get('industry'),
+                'industry_code': stock.get('industry_code'),
+                'avg_turnover_20d': stock.get('avg_turnover_20d'),
+                'market_cap': stock.get('market_cap'),
+                'turnover_ratio_20d': stock.get('turnover_ratio_20d'),
             }
 
             # 应用筛选规则
@@ -316,7 +316,6 @@ class UniversePoolService:
         Returns:
             None 表示合格，否则返回不合格原因
         """
-        stock.get('code', '')  # Used for logging context if needed
         name = stock.get('name', '')
 
         # 规则1: ST/*ST 过滤
@@ -339,18 +338,18 @@ class UniversePoolService:
                 return f"上市不足{config.min_list_months}个月"
 
         # 规则3: 成交额检查
-        avg_turnover = stock.get('avg_turnover_20d', 0) or 0
-        if avg_turnover < config.min_avg_turnover:
+        avg_turnover = stock.get('avg_turnover_20d')
+        if avg_turnover is not None and avg_turnover < config.min_avg_turnover:
             return f"日均成交额{avg_turnover:.0f}万 < {config.min_avg_turnover}万"
 
         # 规则4: 市值检查
-        market_cap = stock.get('market_cap', 0) or 0
-        if market_cap < config.min_market_cap:
+        market_cap = stock.get('market_cap')
+        if market_cap is not None and market_cap < config.min_market_cap:
             return f"市值{market_cap:.1f}亿 < {config.min_market_cap}亿"
 
         # 规则5: 换手率检查
-        turnover_ratio = stock.get('turnover_ratio_20d', 0) or 0
-        if turnover_ratio < config.min_turnover_ratio:
+        turnover_ratio = stock.get('turnover_ratio_20d')
+        if turnover_ratio is not None and turnover_ratio < config.min_turnover_ratio:
             return f"换手率{turnover_ratio:.2f}% < {config.min_turnover_ratio}%"
 
         return None  # 合格
