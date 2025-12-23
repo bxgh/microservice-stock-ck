@@ -1,0 +1,275 @@
+{
+    "name": "get-stockdata - 后端专用工作区",
+    "color": "#8B4513",
+    "icon": "server-process",
+    "folders": [
+        {
+            "path": "../.."
+        }
+    ],
+    "settings": {
+        "files.exclude": {
+            "**/apps/**": true,
+            "**/frontend-web/**": true,
+            "**/mobile/**": true,
+            "**/desktop/**": true,
+            "**/ui/**": true,
+            "**/web/**": true,
+            "**/client/**": true,
+            "**/vue/**": true,
+            "**/react/**": true,
+            "**/angular/**": true,
+            "**/services/api-gateway/**": true,
+            "**/services/data-collector/**": true,
+            "**/services/data-processor/**": true,
+            "**/services/data-storage/**": true,
+            "**/services/monitor/**": true,
+            "**/services/notification/**": true,
+            "**/services/stock-data/**": true,
+            "**/services/task-scheduler/**": true,
+            "**/node_modules/**": true,
+            "**/dist/**": true,
+            "**/build/**": true,
+            "**/coverage/**": true,
+            "**/.nyc_output/**": true,
+            "**/.pytest_cache/**": true,
+            "**/__pycache__/**": true,
+            "**/*.pyc": true,
+            "**/*.log": true,
+            "**/.env": true,
+            "**/.env.local": true,
+            "**/.env.production": true,
+            "**/logs/**": true
+        },
+        "search.exclude": {
+            "**/apps/**": true,
+            "**/frontend-web/**": true,
+            "**/mobile/**": true,
+            "**/desktop/**": true,
+            "**/ui/**": true,
+            "**/web/**": true,
+            "**/client/**": true,
+            "**/vue/**": true,
+            "**/react/**": true,
+            "**/angular/**": true,
+            "**/services/api-gateway/**": true,
+            "**/services/data-collector/**": true,
+            "**/services/data-processor/**": true,
+            "**/services/data-storage/**": true,
+            "**/services/monitor/**": true,
+            "**/services/notification/**": true,
+            "**/services/stock-data/**": true,
+            "**/services/task-scheduler/**": true,
+            "**/node_modules/**": true,
+            "**/dist/**": true,
+            "**/build/**": true,
+            "**/coverage/**": true,
+            "**/.nyc_output/**": true,
+            "**/.pytest_cache/**": true,
+            "**/__pycache__/**": true
+        },
+        "files.watcherExclude": {
+            "**/apps/**": true,
+            "**/frontend-web/**": true,
+            "**/mobile/**": true,
+            "**/desktop/**": true,
+            "**/ui/**": true,
+            "**/web/**": true,
+            "**/client/**": true,
+            "**/vue/**": true,
+            "**/react/**": true,
+            "**/angular/**": true,
+            "**/services/api-gateway/**": true,
+            "**/services/data-collector/**": true,
+            "**/services/data-processor/**": true,
+            "**/services/data-storage/**": true,
+            "**/services/monitor/**": true,
+            "**/services/notification/**": true,
+            "**/services/stock-data/**": true,
+            "**/services/task-scheduler/**": true,
+            "**/node_modules/**": true,
+            "**/dist/**": true,
+            "**/build/**": true,
+            "**/coverage/**": true,
+            "**/.nyc_output/**": true,
+            "**/.pytest_cache/**": true,
+            "**/__pycache__/**": true
+        },
+        "python.defaultInterpreterPath": "./services/get-stockdata/.venv/bin/python",
+        "python.linting.enabled": true,
+        "python.linting.pylintEnabled": false,
+        "python.linting.flake8Enabled": true,
+        "python.formatting.provider": "black",
+        "python.testing.pytestEnabled": true,
+        "python.testing.pytestArgs": [
+            "services/get-stockdata"
+        ],
+        "python.analysis.autoImportCompletions": true,
+        "python.analysis.typeCheckingMode": "basic",
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit"
+        },
+        "files.associations": {
+            "*.py": "python",
+            "requirements.txt": "pip-requirements",
+            "Dockerfile": "dockerfile",
+            "docker-compose.yml": "yaml",
+            "docker-compose.yaml": "yaml"
+        },
+        "workbench.colorCustomizations": {
+            "titleBar.activeBackground": "#f3843b",
+            "titleBar.activeForeground": "#ffffff",
+            "titleBar.inactiveBackground": "#f3843b",
+            "titleBar.inactiveForeground": "#ffffff",
+            "statusBar.background": "#f3843b",
+            "statusBar.foreground": "#ffffff",
+            "statusBar.noFolderBackground": "#1B4332",
+            "statusBar.debuggingBackground": "#081C15",
+            "activityBar.background": "#081C15",
+            "activityBar.foreground": "#ffffff",
+            "activityBar.inactiveForeground": "#74C69D"
+        }
+    },
+    "extensions": {
+        "recommendations": [
+            "ms-python.python",
+            "ms-python.vscode-pylance",
+            "ms-python.debugpy",
+            "ms-python.flake8",
+            "ms-python.black-formatter",
+            "ms-python.isort",
+            "ms-vscode.vscode-docker",
+            "ms-vscode-remote.remote-containers",
+            "redhat.vscode-yaml",
+            "ms-vscode.vscode-json",
+            "GitHub.copilot",
+            "ms-python.python-docstring-generator",
+            "njpwerner.autodocstring",
+            "kevinrose.vsc-python-indent",
+            "donjayamanne.githistory",
+            "eamodio.gitlens",
+            "streetsidesoftware.code-spell-checker",
+            "ms-vscode.test-adapter-converter",
+            "littlefoxteam.vscode-python-test-adapter",
+            "ms-vscode.makefile-tools",
+            "ms-vscode-remote.remote-ssh",
+            "ms-vscode-remote.remote-wsl",
+            "yzhang.markdown-all-in-one",
+            "shd101wyy.markdown-preview-enhanced",
+            "humao.rest-client"
+        ]
+    },
+    "launch": {
+        "version": "0.2.0",
+        "configurations": [
+            {
+                "name": "Debug Get Stock Data API",
+                "type": "python",
+                "request": "launch",
+                "program": "${workspaceFolder}/services/get-stockdata/src/main.py",
+                "console": "integratedTerminal",
+                "cwd": "${workspaceFolder}/services/get-stockdata",
+                "env": {
+                    "PYTHONPATH": "${workspaceFolder}/services/get-stockdata/src"
+                },
+                "args": []
+            },
+            {
+                "name": "Test Get Stock Data",
+                "type": "python",
+                "request": "launch",
+                "module": "pytest",
+                "args": [
+                    "services/get-stockdata/tests",
+                    "-v"
+                ],
+                "console": "integratedTerminal",
+                "cwd": "${workspaceFolder}"
+            }
+        ]
+    },
+    "tasks": {
+        "version": "2.0.0",
+        "tasks": [
+            {
+                "label": "Start Get Stock Data Service",
+                "type": "shell",
+                "command": "python",
+                "args": [
+                    "services/get-stockdata/src/main.py"
+                ],
+                "group": "build",
+                "presentation": {
+                    "echo": true,
+                    "reveal": "always",
+                    "focus": false,
+                    "panel": "new"
+                },
+                "options": {
+                    "cwd": "${workspaceFolder}"
+                }
+            },
+            {
+                "label": "Run Get Stock Data Tests",
+                "type": "shell",
+                "command": "python",
+                "args": [
+                    "-m",
+                    "pytest",
+                    "services/get-stockdata/tests",
+                    "-v"
+                ],
+                "group": "test",
+                "presentation": {
+                    "echo": true,
+                    "reveal": "always",
+                    "focus": false,
+                    "panel": "new"
+                },
+                "options": {
+                    "cwd": "${workspaceFolder}"
+                }
+            },
+            {
+                "label": "Format Get Stock Data Code",
+                "type": "shell",
+                "command": "black",
+                "args": [
+                    "services/get-stockdata/src"
+                ],
+                "group": "build",
+                "presentation": {
+                    "echo": true,
+                    "reveal": "silent",
+                    "focus": false,
+                    "panel": "shared"
+                },
+                "options": {
+                    "cwd": "${workspaceFolder}"
+                }
+            },
+            {
+                "label": "Build Get Stock Data Docker",
+                "type": "shell",
+                "command": "docker",
+                "args": [
+                    "build",
+                    "-t",
+                    "get-stockdata:latest",
+                    "./services/get-stockdata"
+                ],
+                "group": "build",
+                "presentation": {
+                    "echo": true,
+                    "reveal": "always",
+                    "focus": false,
+                    "panel": "new"
+                },
+                "options": {
+                    "cwd": "${workspaceFolder}"
+                }
+            }
+        ]
+    }
+}

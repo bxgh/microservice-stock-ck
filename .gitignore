@@ -94,8 +94,8 @@ openspec/
 # /docs/
 
 # VSCode工作区配置 - 分支特定配置
-.vscode/workspaces/feature-*.code-workspace
-.vscode/workspaces/cross-*.code-workspace
+# .vscode/workspaces/feature-*.code-workspace
+# .vscode/workspaces/cross-*.code-workspace
 
 # 保留通用工作区配置，忽略分支特定配置
 !.vscode/workspaces/task-scheduler.code-workspace
