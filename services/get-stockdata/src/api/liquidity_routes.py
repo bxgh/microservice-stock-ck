@@ -1,47 +1,60 @@
 # -*- coding: utf-8 -*-
-from fastapi import APIRouter, HTTPException, Request, Path
-from pydantic import BaseModel
-from typing import Dict, Any, List, Optional
+"""
+流动性数据 API Routes - 通过 gRPC 调用 mootdx-source
+"""
+from fastapi import APIRouter, HTTPException, Depends, Path
 
-from data_services.liquidity_service import LiquidityService
+from grpc_client import get_datasource_client, DataSourceClient
 
-router = APIRouter(prefix="/api/v1/stocks", tags=["流动性数据"])
+router = APIRouter(prefix="/api/v1/stocks", tags=["流动性"])
 
-class OrderBookLevel(BaseModel):
-    price: float
-    volume: int
 
-class OrderBook(BaseModel):
-    bids: List[OrderBookLevel]
-    asks: List[OrderBookLevel]
-    timestamp: str
-    simulated: bool = False
+async def get_client() -> DataSourceClient:
+    """Dependency to get DataSourceClient"""
+    return await get_datasource_client()
 
-class LiquidityResponse(BaseModel):
-    success: bool
-    data: Dict[str, Any] # Flexible dict for now to match flexible service return
 
-def get_liquidity_service(request: Request) -> LiquidityService:
-    service = getattr(request.app.state, "liquidity_service", None)
-    if not service:
-        raise HTTPException(status_code=503, detail="Liquidity Service not initialized")
-    return service
-
-@router.get("/{stock_code}/liquidity", response_model=LiquidityResponse)
-async def get_stock_liquidity(
+@router.get("/{stock_code}/liquidity")
+async def get_liquidity_metrics(
     stock_code: str = Path(..., description="股票代码"),
-    request: Request = None
+    client: DataSourceClient = Depends(get_client)
 ):
     """
-    获取股票流动性数据 (API 3)
-    包括:
-    - 20日日均成交额
-    - 买卖价差
-    - 5档盘口(模拟/实时)
+    获取流动性指标
+    
+    包括：买卖盘口、成交量、换手率等
+    
+    通过实时行情数据计算流动性指标
     """
-    service = get_liquidity_service(request)
     try:
-        metrics = await service.get_liquidity_metrics(stock_code)
-        return LiquidityResponse(success=True, data=metrics)
+        # 获取实时行情数据
+        df = await client.fetch_quotes([stock_code])
+        
+        if df.empty:
+            raise HTTPException(
+                status_code=404,
+                detail=f"未找到股票 {stock_code} 的数据"
+            )
+        
+        quote = df.to_dict(orient='records')[0]
+        
+        # 提取流动性相关指标
+        liquidity_metrics = {
+            "code": stock_code,
+            "volume": quote.get("volume", 0),
+            "turnover": quote.get("turnover", 0),
+            "turnover_ratio": quote.get("turnover_ratio", 0),
+            "bid_ask_spread": None,  # 需要5档数据
+            "market_depth": None,    # 需要5档数据
+            "timestamp": quote.get("timestamp")
+        }
+        
+        return liquidity_metrics
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=f"获取流动性指标失败: {str(e)}"
+        )

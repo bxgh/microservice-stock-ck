@@ -1,49 +1,93 @@
 # -*- coding: utf-8 -*-
-from fastapi import APIRouter, HTTPException, Request, Query
-from typing import Dict, Any, Optional
+"""
+估值数据 API Routes - 通过 gRPC 调用 mootdx-source
+"""
+from fastapi import APIRouter, HTTPException, Depends, Path
+from typing import Dict, Any, List
+import pandas as pd
 
-from data_services.schemas import ValuationResponse, ValuationHistoryResponse
-from data_services.valuation_service import ValuationService
+from grpc_client import get_datasource_client, DataSourceClient
 
 router = APIRouter(prefix="/api/v1/market/valuation", tags=["市场估值"])
 
-def get_valuation_service(request: Request) -> ValuationService:
-    """Dependency to get ValuationService from app state"""
-    service = getattr(request.app.state, "valuation_service", None)
-    if not service:
-        raise HTTPException(status_code=503, detail="Valuation Service not initialized")
-    return service
 
-@router.get("/{stock_code}", response_model=ValuationResponse)
+async def get_client() -> DataSourceClient:
+    """Dependency to get DataSourceClient"""
+    return await get_datasource_client()
+
+
+@router.get("/{stock_code}")
 async def get_current_valuation(
-    stock_code: str,
-    request: Request
+    stock_code: str = Path(..., description="股票代码"),
+    client: DataSourceClient = Depends(get_client)
 ):
     """
-    获取实时估值指标 (PE/PB/市值)
+    获取实时估值指标 (PE/PB/市值) - 通过 gRPC
     """
-    service = get_valuation_service(request)
-    data = await service.get_current_valuation(stock_code)
-    
-    if not data:
-        raise HTTPException(status_code=404, detail=f"No valuation data found for {stock_code}")
+    try:
+        df = await client.fetch_valuation(stock_code)
         
-    return data
+        if df.empty:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"No valuation data found for {stock_code}"
+            )
+        
+        # 处理 NaN 为 None (JSON 兼容)
+        # Using a more robust replacement for various types of nulls
+        df = df.replace({float('nan'): None, pd.NA: None})
+        data_list = df.where(pd.notnull(df), None).to_dict(orient='records')
+        if not data_list:
+            raise HTTPException(status_code=404, detail=f"No valuation data found for {stock_code}")
+            
+        data = data_list[0]
+        if 'code' in data:
+            data['code'] = str(data['code']).zfill(6)
+            
+        return data
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"获取估值数据失败: {str(e)}"
+        )
 
-@router.get("/{stock_code}/history", response_model=ValuationHistoryResponse)
+
+@router.get("/{stock_code}/history")
 async def get_valuation_history(
-    stock_code: str,
-    years: int = Query(5, ge=1, le=10, description="历史年数"),
-    frequency: str = Query("D", regex="^(D|W|M)$", description="频率 (D=日, W=周, M=月)"),
-    request: Request = None
+    stock_code: str = Path(..., description="股票代码"),
+    client: DataSourceClient = Depends(get_client)
 ):
     """
     获取历史估值走势与统计
     """
-    service = get_valuation_service(request)
-    data = await service.get_valuation_history(stock_code, years=years, frequency=frequency)
-    
-    if not data or not data.get("stats"):
-        raise HTTPException(status_code=404, detail=f"No valuation history found for {stock_code}")
+    try:
+        df = await client.fetch_valuation(stock_code)
         
-    return data
+        if df.empty:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No valuation history found for {stock_code}"
+            )
+        
+        # 处理 NaN 为 None (JSON 兼容)
+        data_list = df.where(pd.notnull(df), None).to_dict(orient='records')
+        for item in data_list:
+            if 'code' in item:
+                item['code'] = str(item['code']).zfill(6)
+                
+        return {
+            "code": stock_code,
+            "data": data_list,
+            "count": len(data_list)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"获取估值历史数据失败: {str(e)}"
+        )

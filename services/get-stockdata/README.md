@@ -1,5 +1,20 @@
-# Get Stock Data 微服务
+# Get Stock Data Service
 
+**版本**: v2.0 | **架构**: ADR-002 混合架构 | **状态**: 生产环境
+
+## ⚠️ 开发规范
+
+**在开始开发前，请务必阅读**:
+- 📖 **[编程规范](docs/CODING_STANDARDS.md)** - 完整规范文档
+- 📋 **[规范速查表](docs/CODING_STANDARDS_QUICK_REF.md)** - 快速参考
+
+**关键要求**:
+- ❌ **禁止使用 8118 代理** → 使用 `192.168.151.18:3128`
+- ❌ **禁止本地调用 akshare/baostock/pywencai** → 使用云端 API
+- ❌ **禁止 fallback 降级** → 云端 API 失败直接报错
+- ✅ **仅允许本地 Mootdx** (TCP 直连实时行情)
+
+---
 ## 📋 概述
 
 Get Stock Data 是一个专门用于获取股票数据的微服务，提供实时股票价格查询、历史数据获取和股票搜索等功能。基于 FastAPI 框架构建，集成 Nacos 服务注册发现，支持容器化部署。

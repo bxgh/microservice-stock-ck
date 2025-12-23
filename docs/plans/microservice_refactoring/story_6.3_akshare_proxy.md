@@ -30,7 +30,7 @@
 ### 4. 部署配置
 - [ ] 更新 `docker-compose.yml`
     - 添加 `akshare-source`
-    - **关键**: 配置 `environment` -> `HTTP_PROXY=http://127.0.0.1:8118` (针对 host 模式)
+    - **关键**: 配置 `environment` -> `HTTP_PROXY=http://192.168.151.18:3128` (产线 Squid 代理)
 
 ### 5. 验证
 - [ ] 验证代理连通性 (`curl -x ...`)

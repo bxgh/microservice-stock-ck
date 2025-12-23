@@ -1,6 +1,8 @@
-# Get Stock Data 微服务 - 应用镜像
-# 基于预构建的基础镜像，只包含应用代码
+# Get Stock Data Service - Application Image
 FROM get-stockdata-base:latest
+
+# 设置工作目录
+WORKDIR /app
 
 # 设置PYTHONPATH
 ENV PYTHONPATH=/app/src
@@ -10,21 +12,18 @@ COPY src/ ./src/
 COPY config/ ./config/
 COPY entrypoint.sh /app/entrypoint.sh
 COPY tests/ ./tests/
-# 安装开发依赖 (如果需要，通常在生产镜像中不包含)
-RUN pip install --no-cache-dir pytest pytest-asyncio httpx
 
-# 设置权限
+# 设置权限 (base image already has 'app' user)
+USER root
 RUN chmod +x /app/entrypoint.sh && \
-    chown -R app:app /app/src /app/config /app/entrypoint.sh
+    chown -R app:app /app/src /app/config /app/entrypoint.sh /app/tests
 
 # 切换到非root用户
 USER app
 
-# 暴露端口
-EXPOSE 8086
+# 暴露端口 (内部端口 8083)
+EXPOSE 8083
 
-# 使用entrypoint配置运行时代理
+# 🚀 启动命令
 ENTRYPOINT ["/app/entrypoint.sh"]
-
-# 启动命令
 CMD ["python", "src/main.py"]

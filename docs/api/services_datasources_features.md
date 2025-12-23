@@ -350,7 +350,7 @@ AnomalyType.LARGE_BUY          # 大笔买入
 | Provider | 协议 | 代理 | 特点 |
 |----------|------|------|------|
 | Mootdx | TCP | 不使用 | 低延迟(40-60ms) |
-| Akshare | HTTPS | 8118 | 接口丰富 |
+| Akshare | HTTPS | 3128 | 接口丰富 |
 | Easyquotation | HTTP | NO_PROXY | 全市场数据 |
 | Pywencai | HTTPS | NO_PROXY | 自然语言查询 |
 | Baostock | HTTP | proxychains4 | 历史数据完整 |

@@ -33,7 +33,7 @@ requests.Session.request = patched_request
 
 def test_akshare_debug():
     # Set proxy env vars
-    proxy_url = "http://127.0.0.1:8118"
+    proxy_url = "http://192.168.151.18:3128"
     os.environ["HTTP_PROXY"] = proxy_url
     os.environ["HTTPS_PROXY"] = proxy_url
     

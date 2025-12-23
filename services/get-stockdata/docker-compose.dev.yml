@@ -21,9 +21,10 @@ services:
       - ENVIRONMENT=development
       - PYTHONUNBUFFERED=1
       - TZ=Asia/Shanghai
-      - PROXY_URL=http://192.168.151.18:3128  # 唯一正确的云代理
+      - PROXY_URL=http://192.168.151.18:3128  # 使用云端专用 Squid 代理
       - AKSHARE_API_URL=http://124.221.80.250:8003 # 腾讯云远程 AkShare API (8003)
       - STOCK_DICT_API_URL=http://124.221.80.250:8000 # 腾讯云股票字典 (8000)
+      - BAOSTOCK_API_URL=http://124.221.80.250:8001  # 腾讯云 Baostock API (8001)
       - ENABLE_PROXY_CHAINS=false # 禁用代理链，使用 aiohttp 原生代理处理 HTTP 请求
       # 代理由 entrypoint.sh 配置
       - CLICKHOUSE_HOST=${CLICKHOUSE_HOST:-microservice-stock-clickhouse}
