@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  data-collector:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: microservice-stock-data-collector
+    restart: unless-stopped
+    ports:
+      - "8089:8089"
+    environment:
+      - DC_DEBUG=true
+      - DC_CLICKHOUSE_HOST=microservice-stock-clickhouse
+      - DC_REDIS_HOST=microservice-stock-redis
+      - DC_NACOS_SERVER=microservice-stock-nacos:8848
+      - DC_DATASOURCE_URL=mootdx-source:50051
+      # 腾讯云 MySQL (从 .env 读取)
+      - DC_MYSQL_HOST=${TENCENT_MYSQL_HOST}
+      - DC_MYSQL_USER=${TENCENT_MYSQL_USER}
+      - DC_MYSQL_PASSWORD=${TENCENT_MYSQL_PASSWORD}
+      - DC_MYSQL_DATABASE=${TENCENT_MYSQL_DATABASE}
+    volumes:
+      - ./src:/app/src:ro
+      - ./data:/app/data
+      - ./logs:/app/logs
+    networks:
+      - microservice-stock
+    depends_on:
+      - clickhouse
+      - redis
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8089/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  microservice-stock:
+    external: true

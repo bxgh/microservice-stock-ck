@@ -1,0 +1,43 @@
+# Data Collector 依赖
+
+# Web 框架
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# 调度器
+apscheduler>=3.10.0
+
+# 数据源 (移除直接库依赖, 改用 gRPC)
+grpcio>=1.59.0
+protobuf>=4.25.0
+
+# 数据库客户端
+clickhouse-driver>=0.2.6
+aiomysql>=0.2.0
+redis>=5.0.0
+aioredis>=2.0.1
+
+# Nacos
+nacos-sdk-python>=0.1.13
+
+# 数据处理
+pandas>=2.1.0
+numpy>=1.26.0
+
+# HTTP 客户端
+httpx>=0.25.0
+aiohttp>=3.9.0
+
+# 重试机制
+tenacity>=8.2.0
+
+# 日志
+loguru>=0.7.0
+
+# 开发工具
+ruff>=0.1.0
+mypy>=1.7.0
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
