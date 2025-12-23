@@ -13,7 +13,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from strategies.signal import Signal
+    from models.signal import Signal
 
 logger = logging.getLogger(__name__)
 

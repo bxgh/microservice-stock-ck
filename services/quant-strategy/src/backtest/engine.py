@@ -12,12 +12,12 @@ from typing import Any
 
 import pandas as pd
 
-from strategies.base import BaseStrategy
+from strategies.base_strategy import BaseStrategy
 
 # Note: SignalType is just "BUY"/"SELL" strings in Signal model, not a separate Enum class in new design
 # So we define it locally or use strings
 from strategies.registry import StrategyRegistry
-from strategies.signal import Signal as StrategySignal
+from models.signal import Signal as StrategySignal
 
 from .analyzer import PerformanceAnalyzer
 from .models import BacktestConfig, BacktestResult, TradeRecord

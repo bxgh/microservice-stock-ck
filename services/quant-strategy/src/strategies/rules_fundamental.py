@@ -9,7 +9,7 @@ from typing import Any
 
 from adapters.stock_data_provider import data_provider
 from core.risk import RiskRule
-from strategies.signal import Signal
+from models.signal import Signal
 
 logger = logging.getLogger(__name__)
 

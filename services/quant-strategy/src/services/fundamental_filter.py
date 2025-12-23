@@ -14,7 +14,7 @@ from strategies.rules_fundamental import (
     GoodwillRiskRule,
     PledgeRiskRule,
 )
-from strategies.signal import Signal
+from models.signal import Signal
 
 logger = logging.getLogger(__name__)
 

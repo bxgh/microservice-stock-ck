@@ -8,7 +8,7 @@ import asyncio
 import logging
 from typing import Optional
 
-from .base import BaseStrategy
+from .base_strategy import BaseStrategy
 
 logger = logging.getLogger(__name__)
 

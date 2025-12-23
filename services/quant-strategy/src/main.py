@@ -30,6 +30,7 @@ from api.candidate_routes import router as candidate_router
 from api.health_routes import health_router
 from api.middleware import add_cors_headers, log_requests
 from api.position_pool_routes import router as position_pool_router
+from api.scan_routes import router as scan_router
 from api.stock_pool_routes import router as stock_pool_router
 from api.strategy_routes import strategy_router
 
@@ -149,6 +150,22 @@ async def startup():
         app.state.valuation_service = valuation_service
         app.state.candidate_service = candidate_service
 
+        # 2.6 Register Strategies (Phase 1 - Multi-Strategy Scanner)
+        logger.info("Registering strategies...")
+        from strategies.registry import StrategyRegistry
+        from strategies.value_strategy import ValueStrategy
+        
+        registry = StrategyRegistry()
+        
+        # Register ValueStrategy
+        value_strategy = ValueStrategy()
+        await registry.register(value_strategy.strategy_id, value_strategy)
+        logger.info(f"  ✓ Registered strategy: {value_strategy.strategy_id}")
+        
+        # Store registry in app state
+        app.state.strategy_registry = registry
+        logger.info(f"✅ Strategies registered ({registry.count()} total)")
+
         # 3. Initialize Risk Manager
         from core.risk import RiskManager
         from strategies.rules import PriceLimitRule, StaticBlacklistRule, TradingHoursRule
@@ -260,6 +277,7 @@ def create_app() -> FastAPI:
     app.include_router(position_pool_router)
     app.include_router(blacklist_router)
     app.include_router(candidate_router)
+    app.include_router(scan_router)
 
     return app
 

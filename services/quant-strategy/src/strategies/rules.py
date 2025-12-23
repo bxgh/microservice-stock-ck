@@ -7,7 +7,7 @@ from datetime import datetime, time
 from typing import Any
 
 from core.risk import RiskRule
-from strategies.signal import Signal
+from models.signal import Signal
 
 logger = logging.getLogger(__name__)
 
