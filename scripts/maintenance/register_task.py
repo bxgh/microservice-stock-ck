@@ -16,7 +16,8 @@ payload = {
     "url": "http://172.17.0.1:8083/api/v1/sync/kline",
     "method": "POST",
     "data": json.dumps({
-       "mode": "smart"
+       "mode": "smart",
+       "sync_factors": True
     })
   }
 }

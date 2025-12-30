@@ -13,6 +13,7 @@ class SyncRequest(BaseModel):
     days: int = 7
     hours: int = 48
     batch_size: int = 10000
+    sync_factors: bool = True
 
 @router.get("/kline/status")
 async def get_sync_status():
@@ -36,6 +37,7 @@ async def _run_sync_task(request: SyncRequest):
     try:
         await service.initialize()
         
+        # 1. K-Line Sync
         if request.mode == 'full':
             await service.sync_full(batch_size=request.batch_size)
         elif request.mode == 'smart':
@@ -44,6 +46,11 @@ async def _run_sync_task(request: SyncRequest):
             await service.sync_by_created_at(lookback_hours=request.hours, batch_size=request.batch_size)
         else:
             await service.sync_incremental(days=request.days)
+            
+        # 2. Sequential Factor Sync
+        if request.sync_factors:
+            logger.info("Starting sequential adjustment factor sync...")
+            await service.sync_adjust_factors()
             
     except Exception as e:
         logger.error(f"Background sync task failed: {e}", exc_info=True)

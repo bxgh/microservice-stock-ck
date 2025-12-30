@@ -79,7 +79,7 @@ def create_new_task():
       "config": {
         "url": "http://172.17.0.1:8083/api/v1/sync/kline",
         "method": "POST",
-        "data": json.dumps({"mode": "smart"})
+        "data": json.dumps({"mode": "smart", "sync_factors": True})
       }
     }
     resp = requests.post(BASE_URL, json=payload)
