@@ -61,6 +61,14 @@
 ### 2.1 触发 K 线同步
 启动后台任务，将远程数据源的 K 线数据同步到本地仓库。
 
+### 2.2 触发复权因子同步
+将腾讯云 MySQL 中的 `stock_adjust_factor` 表同步到本地 ClickHouse。此数据用于支持 K 线的前/后复权。
+
+- **Docker CLI 方式**:
+  ```bash
+  docker exec -it get-stockdata-api-dev python scripts/sync_factors_to_clickhouse.py
+  ```
+
 ### 2.1 Docker CLI 方式
 除了通过 API，也可以在宿主机直接使用 Docker 命令触发同步脚本：
 

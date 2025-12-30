@@ -331,10 +331,85 @@ class KLineSyncService:
             await self._update_status("failed", f"同步出错: {str(e)}", 0.0)
             raise e
     
-    async def sync_incremental(self, days: int = 7):
-        """增量同步：同步最近N天的K线数据"""
-        # 简单实现，暂不加详细状态更新，以免代码过于冗长，主要使用 smart mode
-        await self.sync_smart_incremental() # Redirect to smart for now or keep simple
+    async def sync_adjust_factors(self, batch_size: int = 5000):
+        """
+        同步复权因子数据
+        """
+        start_time = datetime.now()
+        logger.info("开始同步复权因子...")
+        await self._update_status("running", "开始同步复权因子...", 0.0)
+        
+        try:
+            async with self.mysql_pool.acquire() as mysql_conn:
+                async with mysql_conn.cursor(aiomysql.DictCursor) as cursor:
+                    # 1. 获取总数
+                    await cursor.execute("SELECT COUNT(*) as cnt FROM stock_adjust_factor")
+                    total = (await cursor.fetchone())['cnt']
+                    logger.info(f"MySQL 复权因子总数: {total:,}")
+                    
+                    if total == 0:
+                        await self._update_status("success", "MySQL无复权因子数据", 100.0)
+                        return
+
+                    # 2. 分批同步
+                    offset = 0
+                    synced = 0
+                    while offset < total:
+                        query = f"""
+                            SELECT code, adjust_date, fore_adjust_factor, back_adjust_factor
+                            FROM stock_adjust_factor
+                            ORDER BY adjust_date, code
+                            LIMIT {batch_size} OFFSET {offset}
+                        """
+                        await cursor.execute(query)
+                        rows = await cursor.fetchall()
+                        
+                        if not rows:
+                            break
+                        
+                        await self._insert_factors_to_clickhouse(rows)
+                        
+                        synced += len(rows)
+                        offset += batch_size
+                        progress = min(99.9, (synced / total) * 100)
+                        logger.info(f"复权因子进度: {synced:,}/{total:,} ({progress:.1f}%)")
+                        await self._update_status("running", f"同步中: {synced:,}/{total:,}", progress)
+
+            duration = (datetime.now() - start_time).total_seconds()
+            msg = f"复权因子同步完成，共 {synced:,} 条"
+            logger.info(f"✓ {msg}")
+            await self._update_status("success", msg, 100.0, {"total_synced": synced})
+            await self._log_to_db("SUCCESS", synced, msg, duration)
+
+        except Exception as e:
+            duration = (datetime.now() - start_time).total_seconds()
+            await self._update_status("failed", f"同步出错: {str(e)}", 0.0)
+            await self._log_to_db("FAILED", 0, str(e), duration)
+            raise e
+
+    async def _insert_factors_to_clickhouse(self, rows: list):
+        """批量插入复权因子到 ClickHouse"""
+        if not rows:
+            return
+        
+        async with self.clickhouse_pool.acquire() as ch_conn:
+            async with ch_conn.cursor() as cursor:
+                insert_query = """
+                    INSERT INTO stock_adjust_factor 
+                    (stock_code, ex_date, fore_factor, back_factor)
+                    VALUES
+                """
+                
+                values = []
+                for row in rows:
+                    values.append((
+                        row['code'],
+                        row['adjust_date'],
+                        float(row['fore_adjust_factor']) if row['fore_adjust_factor'] is not None else 1.0,
+                        float(row['back_adjust_factor']) if row['back_adjust_factor'] is not None else 1.0
+                    ))
+                
+                await cursor.execute(insert_query, values)
 
     async def _insert_to_clickhouse(self, rows: list):
         """批量插入数据到ClickHouse"""
