@@ -126,7 +126,8 @@ async def get_historical_kline(
                 stock_code=stock_code,
                 start_date=start_date,
                 end_date=end_date,
-                frequency=frequency
+                frequency=frequency,
+                adjust=adjust
             )
             
             if not df.empty:
@@ -148,7 +149,8 @@ async def get_historical_kline(
                     stock_code=stock_code,
                     start_date=start_date,
                     end_date=end_date,
-                    frequency=frequency
+                    frequency=frequency,
+                    adjust=adjust
                 )
                 
                 if not df.empty:
@@ -186,4 +188,3 @@ async def get_historical_kline(
     except Exception as e:
         logger.error(f"Error fetching historical data: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error fetching historical data: {str(e)}")
-

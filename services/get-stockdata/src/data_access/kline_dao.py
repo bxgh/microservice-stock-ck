@@ -19,7 +19,8 @@ class KLineDAO:
         stock_code: str,
         start_date: str,
         end_date: str,
-        frequency: str = "d"
+        frequency: str = "d",
+        adjust: str = "0"
     ) -> pd.DataFrame:
         """
         从MySQL获取K线数据
@@ -29,20 +30,21 @@ class KLineDAO:
             stock_code: 股票代码（6位数字）
             start_date: 开始日期 YYYY-MM-DD
             end_date: 结束日期 YYYY-MM-DD
-            frequency: 频率 (d=日线, w=周线, m=月线) - 目前只支持日线
+            frequency: 频率 (d=日线)
+            adjust: 复权方式 (0=不复权, 1=前复权, 2=后复权)
             
         Returns:
-            DataFrame with columns: date, open, high, low, close, volume, amount, etc.
+            DataFrame with K-line data
         """
         if frequency != "d":
             logger.warning(f"目前只支持日线数据，频率参数 {frequency} 将被忽略")
         
-        # 确保股票代码为6位
         stock_code = stock_code.zfill(6)
         
         try:
             async with pool.acquire() as conn:
                 async with conn.cursor(aiomysql.DictCursor) as cursor:
+                    # 1. 获取基础K线数据
                     query = """
                         SELECT 
                             code,
@@ -69,7 +71,45 @@ class KLineDAO:
                         return pd.DataFrame()
                     
                     df = pd.DataFrame(rows)
-                    logger.info(f"成功获取股票 {stock_code} 的 {len(df)} 条K线数据")
+                    
+                    # 2. 如果需要复权，获取因子并合并
+                    if adjust != "0":
+                        factor_query = """
+                            SELECT adjust_date, fore_adjust_factor, back_adjust_factor
+                            FROM stock_adjust_factor
+                            WHERE code = %s
+                            ORDER BY adjust_date ASC
+                        """
+                        await cursor.execute(factor_query, (stock_code,))
+                        factor_rows = await cursor.fetchall()
+                        
+                        if factor_rows:
+                            df_factors = pd.DataFrame(factor_rows)
+                            # 转换为 datetime 以便 merge_asof
+                            df['date'] = pd.to_datetime(df['date'])
+                            df_factors['adjust_date'] = pd.to_datetime(df_factors['adjust_date'])
+                            
+                            # 合并因子
+                            df = pd.merge_asof(
+                                df.sort_values('date'),
+                                df_factors.sort_values('adjust_date'),
+                                left_on='date',
+                                right_on='adjust_date',
+                                direction='backward'
+                            )
+                            
+                            # 执行复权计算
+                            factor_col = 'fore_adjust_factor' if adjust == "1" else 'back_adjust_factor'
+                            for col in ['open', 'high', 'low', 'close']:
+                                df[col] = df[col] * df[factor_col]
+                                
+                            # 还原日期，以便统一 API 响应格式
+                            df['date'] = df['date'].dt.strftime('%Y-%m-%d')
+                            
+                        else:
+                            logger.warning(f"股票 {stock_code} 未找到复权因子，返回原始数据")
+
+                    logger.info(f"成功获取股票 {stock_code} 的 {len(df)} 条K线数据 (复权:{adjust})")
                     return df
                     
         except Exception as e:
