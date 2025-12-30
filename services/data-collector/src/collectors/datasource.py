@@ -67,6 +67,49 @@ class DataSourceCollector:
         # No need to close the client here
         logger.info("DataSourceCollector closed")
 
+    def _validate_data_integrity(self, df: pd.DataFrame, stock_code: str) -> pd.DataFrame:
+        """
+        内部方法：校验数据完整性与逻辑正确性 (向量化处理)
+        
+        校验项：
+        1. 价格不能为负数 (OHLC)
+        2. 成交量与成交额不能为负数
+        3. 价格逻辑关系：High >= Low, High >= Open/Close, Low <= Open/Close
+        """
+        if df.empty:
+            return df
+
+        initial_count = len(df)
+        
+        # 1. 价格非负校验
+        price_cols = ['open', 'high', 'low', 'close']
+        valid_mask = (df[price_cols] >= 0).all(axis=1)
+        
+        # 2. 成交量/额非负校验
+        vol_cols = ['volume', 'amount']
+        if all(col in df.columns for col in vol_cols):
+            valid_mask &= (df[vol_cols] >= 0).all(axis=1)
+            
+        # 3. 价格逻辑关系校验
+        # High 必须是最高，Low 必须是最低
+        logic_mask = (df['high'] >= df['low']) & \
+                     (df['high'] >= df['open']) & \
+                     (df['high'] >= df['close']) & \
+                     (df['low'] <= df['open']) & \
+                     (df['low'] <= df['close'])
+        
+        valid_mask &= logic_mask
+        
+        # 过滤无效数据
+        df_cleaned = df[valid_mask].copy()
+        
+        removed_count = initial_count - len(df_cleaned)
+        if removed_count > 0:
+            logger.warning(f"⚠️ {stock_code} 发现逻辑异常数据，已剔除 {removed_count}/{initial_count} 条记录")
+            
+        return df_cleaned
+
+
 
     @retry(
         stop=stop_after_attempt(3),
@@ -121,6 +164,12 @@ class DataSourceCollector:
                 if df[critical_cols].isnull().any().any():
                     logger.error(f"Invalid OHLC data (NaN detected) for {stock_code}")
                     return []
+            
+            # P2.2: 深度逻辑校验 (非负、OHLC 关系)
+            df = self._validate_data_integrity(df, stock_code)
+            if df.empty:
+                logger.warning(f"No valid data left after integrity check for {stock_code}")
+                return []
             
             # Ensure columns match what ClickHouseWriter/MySQLCloudWriter expect
             # Expected columns: date, code, open, high, low, close, volume, amount, turn, pctChg, peTTM, psTTM, pbMRQ, adj_factor
