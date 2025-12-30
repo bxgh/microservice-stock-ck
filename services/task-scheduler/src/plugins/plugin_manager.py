@@ -56,11 +56,18 @@ class HttpPlugin(BasePlugin):
 
     async def execute(self, task_data: Dict[str, Any]) -> Any:
         import aiohttp
+        import json
 
         url = task_data.get("url")
         method = task_data.get("method", "GET")
         headers = task_data.get("headers", {})
         data = task_data.get("data")
+        
+        if isinstance(data, str):
+            try:
+                data = json.loads(data)
+            except Exception:
+                pass # keep as string if parse fails
 
         async with aiohttp.ClientSession() as session:
             async with session.request(method, url, headers=headers, json=data) as response:

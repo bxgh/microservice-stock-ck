@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   task-scheduler:
-    image: task-scheduler:enterprise
+    image: task-scheduler:latest
     container_name: task-scheduler
     restart: unless-stopped
     ports:

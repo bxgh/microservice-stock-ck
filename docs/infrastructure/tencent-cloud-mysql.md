@@ -2,7 +2,7 @@
 
 ## Connection Details
 
-**Database Type**: MySQL 5.7+ (Tencent Cloud CDB)
+**Database Type**: MySQL 5.7 (Tencent Cloud CDB)
 
 ### Connection Parameters
 

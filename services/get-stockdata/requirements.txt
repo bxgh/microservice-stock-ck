@@ -20,10 +20,14 @@ numpy==1.26.2
 redis==5.0.1
 hiredis==2.2.3
 
-# MySQL (optional)
+# MySQL
 pymysql==1.1.0
 aiomysql==0.2.0
 SQLAlchemy==2.0.23
+
+# ClickHouse
+clickhouse-driver==0.2.6
+asynch==0.2.3
 
 # Utilities
 python-dotenv==1.0.0

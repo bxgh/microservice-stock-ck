@@ -12,12 +12,19 @@ import sys
 import os
 from contextlib import asynccontextmanager
 
+# FORCE OVERRIDE for Docker Host Mode + Tunnel
+# Since we cannot update container env vars easily without recreation
+os.environ["GSD_DB_HOST"] = "127.0.0.1"
+os.environ["GSD_DB_PORT"] = "36301"
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 # Add src to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Add user site-packages where asynch is installed
+sys.path.append("/home/app/.local/lib/python3.12/site-packages")
 
 # Import gRPC client
 from grpc_client import get_datasource_client, close_datasource_client
@@ -30,6 +37,7 @@ from api.market_routes import router as market_router
 from api.liquidity_routes import router as liquidity_router
 from api.stocks_routes import router as stocks_router
 from api.health_routes import health_router
+from api.sync_routes import router as sync_router
 
 # Logging setup
 logging.basicConfig(
@@ -93,6 +101,7 @@ app.include_router(valuation_router)
 app.include_router(market_router)
 app.include_router(liquidity_router)
 app.include_router(stocks_router)
+app.include_router(sync_router)
 
 logger.info(f"Registered {len(app.routes)} routes")
 

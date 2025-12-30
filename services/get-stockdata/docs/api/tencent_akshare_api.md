@@ -50,15 +50,9 @@
 - **Method**: `GET`
 - **描述**: 全市场实时行情快照 (含动态PE/PB/市值)。
 
-#### 历史K线
-- **URL**: `/api/v1/stock/hist/{symbol}`
-- **Method**: `GET`
-- **Path Params**:
-  - `symbol`: 股票代码 (如 600519)
-- **Params**:
-  - `start_date`: 开始日期 (YYYYMMDD)
-  - `end_date`: 结束日期 (YYYYMMDD)
-  - `adjust`: 复权方式 (qfq/hfq/None, 默认 qfq)
+#### 历史K线 (Historical K-Line)
+> [!NOTE]
+> 历史K线相关的接口（包括查询和同步）已整合至独立文档：[stock_kline_api.md](file:///home/bxgh/microservice-stock/services/get-stockdata/docs/api/stock_kline_api.md)
 
 ### 4. 财务数据 (Financials) - EPIC-002
 

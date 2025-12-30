@@ -1,11 +1,9 @@
-# Task Scheduler 微服务 Dockerfile (正确配置版本)
+# Task Scheduler 微服务 - Dockerfile
 FROM python:3.12-slim
 
-# 设置代理环境变量
-ENV http_proxy=http://192.168.151.18:3128 \
-    https_proxy=http://192.168.151.18:3128 \
-    HTTP_PROXY=http://192.168.151.18:3128 \
-    HTTPS_PROXY=http://192.168.151.18:3128
+# 构建参数
+ARG ENABLE_PROXY=true
+ARG PROXY_URL=http://192.168.151.18:3128
 
 # 设置工作目录
 WORKDIR /app
@@ -13,36 +11,50 @@ WORKDIR /app
 # 设置环境变量
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app/src
+    PYTHONPATH=/app/src \
+    TZ=Asia/Shanghai
 
-# 配置apt使用国内源和代理
-RUN echo 'Acquire::http::Proxy "http://192.168.151.18:3128";' > /etc/apt/apt.conf.d/00proxy && \
-    echo 'Acquire::https::Proxy "http://192.168.151.18:3128";' >> /etc/apt/apt.conf.d/00proxy && \
-    sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources
+# 设置时区
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+# 配置apt代理和源
+RUN if [ "$ENABLE_PROXY" = "true" ]; then \
+        echo 'Acquire::http::Proxy "'$PROXY_URL'";' > /etc/apt/apt.conf.d/00proxy && \
+        echo 'Acquire::https::Proxy "'$PROXY_URL'";' >> /etc/apt/apt.conf.d/00proxy && \
+        sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources; \
+    else \
+        rm -f /etc/apt/apt.conf.d/00proxy; \
+    fi
 
 # 安装系统依赖
-RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y \
+    gcc \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
 
-# 配置pip使用国内源和代理
+# 配置pip国内镜像源 (使用Aliyun HTTP源，避免HTTPS代理隧道问题)
 RUN mkdir -p ~/.pip && \
     echo '[global]' > ~/.pip/pip.conf && \
-    echo 'index-url = https://pypi.tuna.tsinghua.edu.cn/simple/' >> ~/.pip/pip.conf && \
-    echo 'trusted-host = pypi.tuna.tsinghua.edu.cn' >> ~/.pip/pip.conf && \
+    echo 'index-url = http://mirrors.aliyun.com/pypi/simple/' >> ~/.pip/pip.conf && \
+    echo 'trusted-host = mirrors.aliyun.com' >> ~/.pip/pip.conf && \
     echo 'timeout = 120' >> ~/.pip/pip.conf
 
-# 升级pip (使用国内源)
-RUN pip install --no-cache-dir --upgrade pip -i https://pypi.tuna.tsinghua.edu.cn/simple
+# 升级pip (通过代理)
+RUN if [ "$ENABLE_PROXY" = "true" ]; then \
+        http_proxy=$PROXY_URL https_proxy=$PROXY_URL pip install --no-cache-dir --upgrade pip; \
+    else \
+        pip install --no-cache-dir --upgrade pip; \
+    fi
 
-# 复制完整依赖文件
+# 复制并安装Python依赖 (通过代理)
 COPY requirements.txt .
+RUN if [ "$ENABLE_PROXY" = "true" ]; then \
+        http_proxy=$PROXY_URL https_proxy=$PROXY_URL pip install --no-cache-dir -r requirements.txt; \
+    else \
+        pip install --no-cache-dir -r requirements.txt; \
+    fi
 
-# 安装Python依赖 (优先使用国内源)
-RUN pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple || \
-    pip install --no-cache-dir -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple || \
-    pip install --no-cache-dir -r requirements.txt -i https://pypi.douban.com/simple/ || \
-    pip install --no-cache-dir -r requirements.txt
-
-# 复制FastAPI应用代码
+# 复制应用代码
 COPY src/ ./src/
 COPY config/ ./config/
 

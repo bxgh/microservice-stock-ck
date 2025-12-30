@@ -212,242 +212,22 @@ graph TB
 
 ### 3.3 核心组件架构
 
-#### 3.3.1 100%成功策略引擎 (GuaranteedSuccessStrategy)
+#### 3.3.1 100%成功策略引擎
+详见 [Strategy & Batch Architecture](./domain-strategy.md#21-100-success-strategy-engine-guaranteedsuccessstrategy)
 
-```mermaid
-graph TB
-    subgraph "GuaranteedSuccessStrategy"
-        subgraph "智能搜索矩阵"
-            SM[搜索矩阵管理器]
-            VP[验证引擎]
-            QM[质量监控]
-        end
+#### 3.3.2 分笔数据获取器
+详见 [Tick Data Architecture](./domain-tick.md#21-tick-data-fetcher-tickdatafetcher)
 
-        subgraph "多源切换策略"
-            PPM[优先级管理器]
-            FOM[故障转移管理器]
-            HCM[健康检查管理器]
-        end
-
-        subgraph "执行引擎"
-            TPE[线程池执行器]
-            CM[并发管理器]
-            RM[结果管理器]
-        end
-    end
-
-    SM --> VP
-    VP --> QM
-    PPM --> FOM
-    FOM --> HCM
-    TPE --> CM
-    CM --> RM
-```
-
-**核心特性：**
-- 基于验证成功的搜索矩阵（万科A验证区域）
-- 智能多源切换和故障转移
-- 严格的数据验证和质量保证
-- 高并发执行和结果聚合
-
-#### 3.3.2 分笔数据获取器 (TickDataFetcher)
-
-```mermaid
-graph TB
-    subgraph "TickDataFetcher"
-        subgraph "数据获取核心"
-            TDC[TongDaXin客户端]
-            MTC[MooTDX客户端]
-            PTC[PyTDX客户端]
-        end
-
-        subgraph "数据处理引擎"
-            DP[数据解析器]
-            DV[数据验证器]
-            DF[数据格式化器]
-        end
-
-        subgraph "优化策略"
-            CO[连接优化]
-            TO[超时管理]
-            RO[重试机制]
-        end
-    end
-
-    TDC --> DP
-    MTC --> DP
-    PTC --> DP
-    DP --> DV
-    DV --> DF
-
-    CO --> TDC
-    TO --> MTC
-    RO --> PTC
-```
-
-**专业能力：**
-- 支持通达信、MooTDX、PyTDX三个专业分笔数据源
-- 智能连接优化和超时管理
-- 严格的分笔数据验证和格式化
-- 支持大规模批量分笔数据获取
-
-#### 3.3.3 批量任务调度器 (BatchTaskScheduler)
-
-```mermaid
-graph TB
-    subgraph "BatchTaskScheduler"
-        subgraph "队列管理"
-            UQ[紧急队列]
-            HQ[高优先级队列]
-            NQ[普通队列]
-            LQ[低优先级队列]
-        end
-
-        subgraph "并发控制"
-            TC[任务控制器]
-            CC[并发管理器]
-            SC[调度控制器]
-        end
-
-        subgraph "监控统计"
-            ES[执行统计]
-            PM[性能监控]
-            RM[资源监控]
-        end
-    end
-
-    UQ --> TC
-    HQ --> TC
-    NQ --> TC
-    LQ --> TC
-    TC --> CC
-    CC --> SC
-    SC --> ES
-    ES --> PM
-    PM --> RM
-```
-
-**调度策略：**
-- 四级优先级队列管理（紧急、高、普通、低）
-- 智能并发控制和资源管理
-- 实时执行统计和性能监控
-- 动态负载均衡和任务重分配
+#### 3.3.3 批量任务调度器
+详见 [Strategy & Batch Architecture](./domain-strategy.md#22-batch-task-scheduler-batchtaskscheduler)
 
 ### 3.4 数据模型
 
-#### 3.4.1 ClickHouse分笔数据模型 (已实施)
+#### 3.4.1 分笔数据模型
+详见 [Tick Data Architecture](./domain-tick.md#31-clickhouse-tick-data-model)
 
-基于已建立的ClickHouse表结构，分笔数据模型采用优化的存储设计：
-
-**主表 - tick_data (核心交易数据)**
-
-设计概要：
-- 主键字段：股票代码、名称、交易所、交易日期
-- 时间维度：精确时间戳、时间字符串
-- 分笔数据核心字段：成交价格、成交量、成交额
-- 数据质量字段：数据源、质量评分、重复记录标识
-- 元数据字段：创建时间、更新时间
-- 存储引擎：MergeTree，按月分区，复合排序键
-
-**优化表 - tick_data_optimized (生产级高性能表)**
-
-设计概要：
-- 主键和标识字段：股票代码、交易日期、完整时间戳
-- 核心交易数据：价格、成交量、成交额、买卖方向
-- 数据质量字段：数据源类型、集合竞价标识
-- 存储引擎：MergeTree，按月分区，聚簇键排序
-
-**辅助数据表**
-
-包含以下支持表：
-- 股票基础信息表：股票代码、名称、交易所、行业、板块信息，多格式代码映射
-- 数据质量监控表：质量指标、时间覆盖、执行信息
-- 任务执行记录表：任务参数、执行结果、性能指标
-
-#### 3.4.2 数据模型架构设计
-
-**面向对象数据模型设计原则：**
-
-1. **分层模型架构**:
-   - **领域模型**: 封装业务逻辑和实体关系
-   - **数据模型**: 映射数据库表结构
-   - **视图模型**: API接口数据传输对象
-   - **命令模型**: 用户操作和数据修改
-
-2. **核心实体设计**:
-   - **TickData**: 分笔数据实体，包含完整的交易信息和数据质量指标
-   - **StockInfo**: 股票基础信息实体，支持多市场和多格式代码映射
-   - **BatchTask**: 批量任务实体，管理任务生命周期和执行状态
-   - **DataSource**: 数据源实体，封装外部数据源配置和连接管理
-
-3. **数据关系设计**:
-   - **一对一**: TickData与DataQualityLog的质量监控关系
-   - **一对多**: StockInfo与TickData的交易数据关系
-   - **聚合关系**: BatchTask与TickData的批量处理关系
-
-4. **模型验证策略**:
-   - **输入验证**: 数据验证和类型检查
-   - **业务规则验证**: 价格合理性、时间连续性检查
-   - **数据完整性**: 主外键约束和引用完整性
-   - **质量评分**: 自动化数据质量评估和异常检测
-
-5. **性能优化设计**:
-   - **延迟加载**: 按需加载关联数据
-   - **批量操作**: 批量插入和更新优化
-   - **缓存策略**: 热点数据内存缓存
-   - **索引策略**: 基于查询模式的复合索引设计
-
-#### 3.4.3 数据存储性能优化
-
-**ClickHouse存储优化策略：**
-
-1. **分区策略**: 按月分区 `toYYYYMM(trade_date)`，支持高效数据管理
-2. **排序键**: `(symbol, trade_date, timestamp)` 优化查询性能
-3. **数据压缩**: LZ4压缩，存储空间节省60-80%
-4. **索引粒度**: `index_granularity = 8192` 平衡查询和存储效率
-
-**存储空间估算 (基于1000万条记录/日)**:
-- 压缩前: 约370MB/日
-- ClickHouse LZ4压缩后: 约50-100MB/日
-- 年存储成本: 约18-36GB
-- 对比原设计节省约60%存储空间
-
-**物化视图优化**:
-
-包括以下优化视图：
-- 日度汇总统计：每日开盘价、收盘价、最高价、最低价、成交量汇总
-- 小时级统计：按小时统计分笔数据数量、平均价格、成交量
-
-#### 3.4.2 数据流架构
-
-```mermaid
-sequenceDiagram
-    participant Client
-    participant API as API网关
-    participant GSS as 成功策略引擎
-    participant TDF as 分笔数据获取器
-    participant BTS as 批量任务调度器
-    participant DSS as 数据存储服务
-    participant CH as ClickHouse
-    participant RD as Redis
-
-    Client->>API: 请求股票数据
-    API->>GSS: 执行100%成功策略
-    GSS->>TDF: 获取分笔数据
-    TDF->>BTS: 提交批量任务
-    BTS->>DSS: 存储处理结果
-    DSS->>CH: 写入时序数据
-    DSS->>RD: 更新缓存
-    CH-->>DSS: 确认写入
-    RD-->>DSS: 确认缓存
-    DSS-->>BTS: 返回存储结果
-    BTS-->>TDF: 返回执行结果
-    TDF-->>GSS: 返回数据结果
-    GSS-->>API: 返回成功结果
-    API-->>Client: 返回最终数据
-```
-
----
+#### 3.4.2 K线数据仓库
+详见 [K-Line Data Architecture](./domain-kline.md#2-k-line-data-warehouse-architecture-epic-010)
 
 ## 4. 技术选型
 
@@ -524,49 +304,7 @@ sequenceDiagram
 5. **重试和恢复**: 指数退避重试和备用策略
 
 #### 4.2.3 混合代理架构 (Hybrid Proxy Architecture)
-
-为解决内网环境下不同数据源协议（HTTP/HTTPS vs TCP）的代理兼容性问题，系统采用了混合代理架构：
-
-```mermaid
-graph TD
-    subgraph "Get Stock Data Container"
-        A[Akshare Provider]
-        M[Mootdx Provider]
-        P[Proxychains4]
-        
-        A -- "HTTP GET (Direct)" --> PROXY
-        M -- "TCP Connect" --> P
-        P -- "Socks/HTTP Tunnel" --> PROXY
-    end
-    
-    subgraph "Infrastructure"
-        PROXY[Squid Proxy (192.168.151.18:3128)]
-    end
-    
-    subgraph "External"
-        Internet[Internet Resources]
-        RemoteAPI[Remote Akshare API]
-    end
-    
-    PROXY --> Internet
-    PROXY --> RemoteAPI
-```
-
-1. **显式代理 (Explicit Proxy)**: 
-   - 适用组件：**AkshareProvider** (基于 `aiohttp`)
-   - 机制：直接配置 `HTTP_PROXY` 环境变量
-   - 路径：`aiohttp` -> `192.168.151.18:3128` (直连) -> `Remote API`
-   - **关键配置**: 在 `proxychains.conf` 中配置 `localnet` 排除代理服务器IP，防止死循环。
-
-2. **透明代理 (Transparent Chain)**:
-   - 适用组件：**MootdxProvider** (基于 TCP Socket)
-   - 机制：通过 `proxychains4` 拦截 TCP 调用
-   - 路径：`Socket` -> `proxychains` -> `192.168.151.18:3128` -> `Internet`
-
-3. **Remote Akshare API**:
-   - 部署了 **v2.5.0** 远程服务，提供 `Baidu` 估值接口和 `Meta` 信息接口，替代不稳定的本地计算。
-
----
+详见 [Finance & Valuation Architecture](./domain-finance.md#2-hybrid-proxy-architecture)
 
 ## 5. API接口设计
 
@@ -580,71 +318,20 @@ graph TD
 
 ### 5.2 核心API接口
 
-#### 5.2.1 基础行情接口 (Quotes & Info)
-
-**接口定义：**
-- `GET /api/v1/quotes/realtime?codes=...` - 批量获取实时行情 (Mootdx)
-- `GET /api/v1/stock/info/{code}` - 获取个股元数据 (Akshare/Remote)
-- `GET /api/v1/stock/search/{query}` - 搜索股票
+#### 5.2.1 基础行情接口
+详见 [K-Line Data Architecture](./domain-kline.md#31-basic-quotes-api-quotes--info)
 
 #### 5.2.2 分笔数据专业接口
+详见 [Tick Data Architecture](./domain-tick.md#41-tick-data-professional-api)
 
-**接口定义：**
-- `GET /api/v1/ticks/{symbol}` - 获取分笔数据
-- `POST /api/v1/ticks/batch` - 批量获取分笔数据
-- `GET /api/v1/ticks/{symbol}/analysis` - 分笔数据统计分析
+#### 5.2.3 策略与批量接口
+详见 [Strategy & Batch Architecture](./domain-strategy.md#3-api-interface)
 
-#### 5.2.3 100%成功策略接口
-
-**接口定义：**
-- `POST /api/v1/strategy/execute` - 执行保证成功策略
-- `GET /api/v1/strategy/status` - 获取策略状态
-- `POST /api/v1/strategy/config` - 策略配置管理
-
-#### 5.2.4 批量处理接口
-
-**接口定义：**
-- `POST /api/v1/batch/submit` - 提交批量任务
-- `GET /api/v1/batch/status/{task_id}` - 查询任务状态
-- `GET /api/v1/batch/result/{task_id}` - 获取任务结果
-
-#### 5.2.5 估值与财务接口 (Valuation & Finance) (EPIC-002)
-
-**接口定义：**
-- `GET /api/v1/market/valuation/{symbol}` - 获取实时估值 (PE/PB/市值) (Remote Akshare)
-- `GET /api/v1/market/valuation/{symbol}/history` - 获取历史估值走势
-- `GET /api/v1/finance/indicators/{symbol}` - 获取增强财务指标
-- `GET /api/v1/finance/industry/{code}/stats` - 获取行业统计数据
+#### 5.2.5 估值与财务接口
+详见 [Finance & Valuation Architecture](./domain-finance.md#31-valuation--finance-api-epic-002)
 
 ### 5.3 数据模型定义
-
-#### 5.3.1 通用响应模型
-
-**API统一响应模型设计：**
-- 响应代码和消息
-- 数据载荷（可选）
-- 时间戳和请求ID
-- 分页信息（针对列表接口）
-
-**分页响应模型设计：**
-- 数据项列表
-- 总数和分页信息
-- 导航状态（是否有下一页/上一页）
-
-#### 5.3.2 股票数据模型
-
-**股票数据模型设计：**
-- 基本信息：代码、名称、价格、涨跌额、涨跌幅
-- 交易信息：成交量、市值、市盈率
-- 时间戳：数据更新时间
-
-**分笔数据模型设计：**
-- 标识信息：股票代码、交易时间
-- 交易信息：价格、成交量、成交额
-- 交易类型：买卖方向（买盘/卖盘/中性）
-- 业务属性：交易类型分类
-
----
+详见各领域文档的数据模型部分。
 
 ## 6. 部署架构
 

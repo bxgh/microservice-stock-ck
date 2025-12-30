@@ -3,10 +3,17 @@ from fastapi import APIRouter, HTTPException, Query, Depends, Path
 from typing import List, Dict, Any, Optional
 import pandas as pd
 from datetime import datetime
+import logging
+import os
 
 from grpc_client import get_datasource_client, DataSourceClient
+from data_access import MySQLPoolManager, KLineDAO
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/quotes", tags=["行情数据"])
+
+
 
 async def get_client() -> DataSourceClient:
     """Dependency to get DataSourceClient"""
@@ -90,11 +97,12 @@ async def get_historical_kline(
     start_date: str = Query(None, description="开始日期 (YYYY-MM-DD)"),
     end_date: str = Query(None, description="结束日期 (YYYY-MM-DD)"),
     frequency: str = Query("d", description="频率: d=日, w=周, m=月, 1m, 5m, 15m, 30m, 60m"),
-    adjust: str = Query("2", description="复权: 0=不复权, 1=前复权, 2=后复权"),
-    client: DataSourceClient = Depends(get_client)
+    adjust: str = Query("2", description="复权: 0=不复权, 1=前复权, 2=后复权")
 ):
     """
-    获取历史 K 线数据 - 用于回测和 VWAP 计算
+    获取历史 K 线数据 - 优先从ClickHouse查询，失败时降级到MySQL
+    
+    注意: 目前只支持日线数据（frequency=d），其他频率参数将被忽略
     """
     try:
         if not start_date:
@@ -102,15 +110,56 @@ async def get_historical_kline(
             start_date = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
         if not end_date:
             end_date = datetime.now().strftime("%Y-%m-%d")
-            
-        df = await client.fetch_history(
-            stock_code, 
-            start_date=start_date, 
-            end_date=end_date,
-            frequency=frequency,
-            adjust=adjust
-        )
         
+        df = pd.DataFrame()
+        data_source = "Unknown"
+        
+        # 尝试1: 从ClickHouse查询（本地快速查询）
+        try:
+            from data_access import ClickHousePoolManager, ClickHouseKLineDAO
+            
+            pool = await ClickHousePoolManager.get_pool()
+            ch_dao = ClickHouseKLineDAO()
+            
+            df = await ch_dao.get_kline_data(
+                pool=pool,
+                stock_code=stock_code,
+                start_date=start_date,
+                end_date=end_date,
+                frequency=frequency
+            )
+            
+            if not df.empty:
+                data_source = "ClickHouse (Local)"
+                logger.info(f"✓ 从ClickHouse获取K线数据: {stock_code}")
+            else:
+                logger.info(f"ClickHouse无数据，尝试MySQL fallback: {stock_code}")
+                
+        except Exception as e:
+            logger.warning(f"ClickHouse查询失败，降级到MySQL: {e}")
+        
+        # 尝试2: 从MySQL查询（云端备份）
+        if df.empty:
+            try:
+                pool = await MySQLPoolManager.get_pool()
+                mysql_dao = KLineDAO()
+                df = await mysql_dao.get_kline_data(
+                    pool=pool,
+                    stock_code=stock_code,
+                    start_date=start_date,
+                    end_date=end_date,
+                    frequency=frequency
+                )
+                
+                if not df.empty:
+                    data_source = "Tencent Cloud MySQL (Fallback)"
+                    logger.info(f"✓ 从MySQL获取K线数据: {stock_code}")
+                    
+            except Exception as e:
+                logger.error(f"MySQL查询也失败: {e}")
+                raise HTTPException(status_code=500, detail=f"Failed to fetch data from both ClickHouse and MySQL: {str(e)}")
+        
+        # 数据验证
         if df.empty:
             raise HTTPException(status_code=404, detail=f"No historical data found for {stock_code}")
             
@@ -118,9 +167,10 @@ async def get_historical_kline(
         
         # 统一代码格式
         for item in data:
-            if 'code' in item:
-                item['code'] = str(item['code']).zfill(6)
-            else:
+            if 'stock_code' in item:
+                item['code'] = str(item['stock_code']).zfill(6)
+                del item['stock_code']
+            elif 'code' not in item:
                 item['code'] = stock_code.zfill(6)
                 
         return {
@@ -128,8 +178,12 @@ async def get_historical_kline(
             "code": stock_code.zfill(6),
             "frequency": frequency,
             "data": data,
-            "count": len(data)
+            "count": len(data),
+            "source": data_source
         }
+    except HTTPException:
+        raise
     except Exception as e:
-        if isinstance(e, HTTPException): raise e
+        logger.error(f"Error fetching historical data: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error fetching historical data: {str(e)}")
+

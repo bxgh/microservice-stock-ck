@@ -3,7 +3,10 @@
 This document outlines the API endpoints provided by the `get-stockdata` service for use by the `quant-strategy` microservice.
 
 ## Base URL
-Default: `http://get-stockdata:8083` (Internal) or `http://localhost:8086` (Mapped)
+Default: `http://get-stockdata:8083` (Internal / Host Mode)
+
+> [!TIP]
+> 详细的分模块接口文档请参考：[API 文档索引表](api/README.md)
 
 ---
 
@@ -21,11 +24,8 @@ Default: `http://get-stockdata:8083` (Internal) or `http://localhost:8086` (Mapp
 
 ### 1.3 Historical K-Line Data
 **Endpoint:** `GET /api/v1/quotes/history/{stock_code}`
-**Parameters:** 
-- `start_date`, `end_date` (YYYY-MM-DD)
-- `frequency`: `d` (day), `w`, `m`, `1m`, `5m`, `15m`, `30m`, `60m`
-- `adjust`: `0` (none), `1` (forward), `2` (backward)
-**Description:** Used for backtesting and calculating **VWAP (Volume Weighted Average Price)**.
+**Description:** Used for backtesting and calculating **VWAP**. 
+**Details:** See [Detailed K-Line API Documentation](file:///home/bxgh/microservice-stock/services/get-stockdata/docs/api/stock_kline_api.md#1-data-retrieval-api).
 
 ---
 
@@ -72,6 +72,20 @@ Default: `http://get-stockdata:8083` (Internal) or `http://localhost:8086` (Mapp
 - `GET /api/v1/stocks/{stock_code}/info`
 - `GET /api/v1/stocks/list`
 **Description:** Basic info like listing date and full stock universe metadata.
+
+---
+
+## 5. Data Synchronization
+
+### 5.1 Trigger K-Line Sync
+**Endpoint:** `POST /api/v1/sync/kline`
+**Description:** Triggers background sync task to update local K-line warehouse.
+
+### 5.2 Check Sync Status
+**Endpoint:** `GET /api/v1/sync/kline/status`
+**Description:** Monitor the progress of current sync tasks.
+
+**Full Synchronization Details:** See [K-Line Sync & Monitoring API](file:///home/bxgh/microservice-stock/services/get-stockdata/docs/api/stock_kline_api.md#2-synchronization-api).
 
 ---
 
