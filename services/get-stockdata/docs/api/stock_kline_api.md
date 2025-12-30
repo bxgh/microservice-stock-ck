@@ -94,13 +94,15 @@
     "mode": "smart",        // full, incremental, smart, created_at
     "days": 7,              // 用于 incremental 模式
     "hours": 48,            // 用于 created_at 模式
-    "batch_size": 10000     // 每批次记录数
+    "batch_size": 10000,    // 每批次记录数
+    "sync_factors": true    // 是否同步复权因子 (K线同步完成后串行执行)
   }
   ```
 - **参数说明**:
   - `full`: 全量同步所有历史数据。
   - `smart`: 智能增量同步，仅同步 ClickHouse 中最新日期之后的数据。
   - `created_at`: 根据数据源中的 `created_at` 时间戳进行增量同步。
+  - `sync_factors`: 建议开启，确保复权行情计算所需的因子同步更新。
 - **响应示例**:
   ```json
   {
@@ -158,6 +160,28 @@
 
 > [!NOTE]
 > 之前的文档中误将 AkShare 代理 (`8003`) 列为 K 线来源。经核查，AkShare 代理主要负责 **财务、估值、行业和实时人气榜单** 数据，而 **历史 K 线** 的原始查询请统一使用 Baostock 代理 (`8001`)。
+
+---
+
+---
+
+## 5. 数据规格 (Data Specification)
+
+### 5.1 复权因子 (Adjustment Factors)
+复权因子存储在本地 ClickHouse 的 `stock_adjust_factor` 表中，通过 `(stock_code, ex_date)` 唯一标识。
+
+- **表结构**:
+  | 字段名 | 类型 | 说明 |
+  | :--- | :--- | :--- |
+  | `stock_code` | `String` | 股票代码 |
+  | `ex_date` | `Date` | 除权日期 |
+  | `fore_factor` | `Decimal` | 前复权因子 |
+  | `back_factor` | `Decimal` | 后复权因子 |
+  | `update_time` | `DateTime` | 最后更新时间 |
+
+- **用途**: 
+  - **后复权价格** = 原始价格 * 该日期的 `back_factor`
+  - **前复权价格** = 原始价格 * 该日期的 `fore_factor`
 
 ---
 
