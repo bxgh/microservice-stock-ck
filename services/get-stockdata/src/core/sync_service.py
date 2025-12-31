@@ -6,8 +6,16 @@ import aiomysql
 import asynch
 import os
 import logging
+from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Optional
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type,
+    before_sleep_log
+)
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +134,28 @@ class KLineSyncService:
         except Exception as e:
             logger.error(f"写入执行日志失败: {e}")
 
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type((aiomysql.OperationalError, aiomysql.InterfaceError, ConnectionError)),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        reraise=True
+    )
+    async def _fetch_from_mysql_with_retry(self, query: str, params: tuple = None):
+        """
+        带重试的 MySQL 查询
+        
+        P1 改进: 应对网络抖动，使用指数退避重试
+        - 最多重试 3 次
+        - 等待时间: 2s, 4s, 8s (指数增长)
+        - 仅重试网络相关错误
+        """
+        async with self.mysql_pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cursor:
+                await cursor.execute(query, params)
+                return await cursor.fetchall()
+
+
     async def sync_full(self, batch_size: int = 10000):
         """
         全量同步：从MySQL同步所有K线数据到ClickHouse
@@ -204,25 +234,23 @@ class KLineSyncService:
                 await self.sync_full()
                 return
             
-            # 第2步：从MySQL查询大于此日期的数据
-            async with self.mysql_pool.acquire() as mysql_conn:
-                async with mysql_conn.cursor(aiomysql.DictCursor) as cursor:
-                    query = """
-                        SELECT 
-                            code, trade_date, open, high, low, close,
-                            volume, amount, turnover, pct_chg
-                        FROM stock_kline_daily
-                        WHERE trade_date > %s
-                        ORDER BY trade_date, code
-                    """
-                    
-                    await cursor.execute(query, (ch_max_date,))
-                    rows = await cursor.fetchall()
+            # 第2步：从MySQL查询大于此日期的数据 (带重试保护)
+            query = """
+                SELECT 
+                    code, trade_date, open, high, low, close,
+                    volume, amount, turnover, pct_chg
+                FROM stock_kline_daily
+                WHERE trade_date > %s
+                ORDER BY trade_date, code
+            """
             
-            # 第3步：同步新数据
+            rows = await self._fetch_from_mysql_with_retry(query, (ch_max_date,))
+
+            
+            # 第3步：同步新数据 (使用增强验证)
             duration = (datetime.now() - start_time).total_seconds()
             if rows:
-                await self._insert_to_clickhouse(rows)
+                await self._insert_to_clickhouse_enhanced(rows)
                 min_date = min(row['trade_date'] for row in rows)
                 max_date = max(row['trade_date'] for row in rows)
                 msg = f"智能增量同步完成：{len(rows):,} 条记录 ({min_date} ~ {max_date})"
@@ -241,6 +269,62 @@ class KLineSyncService:
         except Exception as e:
             duration = (datetime.now() - start_time).total_seconds()
             await self._update_status("failed", f"智能同步失败: {str(e)}", 0.0)
+            await self._log_to_db("FAILED", 0, str(e), duration)
+            raise e
+    
+    async def sync_by_stock_codes(self, stock_codes: list[str]):
+        """
+        按股票代码同步：从MySQL同步指定股票的全部历史数据到ClickHouse
+        
+        用途: 个股数据重建后的同步
+        
+        Args:
+            stock_codes: 股票代码列表，如 ['sh.600519', 'sz.000001']
+        """
+        start_time = datetime.now()
+        logger.info(f"开始按股票代码同步: {stock_codes}")
+        await self._update_status("running", f"正在同步 {len(stock_codes)} 只股票...", 0.0)
+        
+        try:
+            # 构建 SQL 查询
+            placeholders = ','.join(['%s'] * len(stock_codes))
+            query = f"""
+                SELECT 
+                    code, trade_date, open, high, low, close,
+                    volume, amount, turnover, pct_chg
+                FROM stock_kline_daily
+                WHERE code IN ({placeholders})
+                ORDER BY code, trade_date
+            """
+            
+            rows = await self._fetch_from_mysql_with_retry(query, tuple(stock_codes))
+            
+            duration = (datetime.now() - start_time).total_seconds()
+            if rows:
+                await self._insert_to_clickhouse_enhanced(rows)
+                
+                # 统计每只股票的记录数
+                from collections import Counter
+                stock_counts = Counter(row['code'] for row in rows)
+                
+                msg = f"按股票代码同步完成：{len(rows):,} 条记录，{len(stock_counts)} 只股票"
+                logger.info(f"✓ {msg}")
+                logger.info(f"详情: {dict(stock_counts)}")
+                
+                await self._update_status("success", msg, 100.0, {
+                    "total_records": len(rows),
+                    "stock_counts": dict(stock_counts)
+                })
+                await self._log_to_db("SUCCESS", len(rows), msg, duration)
+            else:
+                msg = f"指定股票无数据: {stock_codes}"
+                logger.warning(msg)
+                await self._update_status("success", msg, 100.0, {"total_records": 0})
+                await self._log_to_db("SUCCESS", 0, msg, duration)
+                
+        except Exception as e:
+            duration = (datetime.now() - start_time).total_seconds()
+            await self._update_status("failed", f"按股票代码同步失败: {str(e)}", 0.0)
             await self._log_to_db("FAILED", 0, str(e), duration)
             raise e
     
@@ -411,11 +495,80 @@ class KLineSyncService:
                 
                 await cursor.execute(insert_query, values)
 
+    def _validate_kline_row(self, row: dict) -> tuple[bool, str]:
+        """
+        校验单条 K 线数据有效性
+        
+        P1 改进: 防止错误数据覆盖 ClickHouse
+        """
+        # 必填字段检查
+        required = ['code', 'trade_date', 'open', 'close', 'volume']
+        for field in required:
+            if field not in row or row[field] is None:
+                return False, f"缺少必填字段: {field}"
+        
+        # 价格合理性检查 (0 < price < 100000)
+        for price_field in ['open', 'high', 'low', 'close']:
+            val = row.get(price_field)
+            if val is not None:
+                try:
+                    price = float(val)
+                    if price < 0 or price > 100000:
+                        return False, f"价格异常 ({price_field}={price})"
+                except (ValueError, TypeError):
+                    return False, f"价格格式错误 ({price_field}={val})"
+        
+        # OHLC 逻辑检查
+        try:
+            if row.get('high') and row.get('low'):
+                high = float(row['high'])
+                low = float(row['low'])
+                if high < low:
+                    return False, f"最高价({high}) < 最低价({low})"
+        except (ValueError, TypeError):
+            pass  # 如果转换失败，跳过逻辑检查
+        
+        # 成交量合理性检查
+        try:
+            volume = float(row['volume'])
+            if volume < 0:
+                return False, f"成交量为负数 ({volume})"
+        except (ValueError, TypeError):
+            return False, f"成交量格式错误 ({row['volume']})"
+        
+        return True, ""
+
     async def _insert_to_clickhouse(self, rows: list):
-        """批量插入数据到ClickHouse"""
+        """
+        批量插入数据到 ClickHouse
+        
+        P1 改进: 插入前进行数据校验
+        """
         if not rows:
             return
         
+        # 数据校验
+        valid_rows = []
+        invalid_count = 0
+        
+        for row in rows:
+            is_valid, error = self._validate_kline_row(row)
+            if is_valid:
+                valid_rows.append(row)
+            else:
+                invalid_count += 1
+                logger.warning(
+                    f"数据校验失败: {row.get('code')} {row.get('trade_date')} - {error}"
+                )
+        
+        if invalid_count > 0:
+            logger.warning(f"本批次 {invalid_count}/{len(rows)} 条数据未通过校验")
+        
+        if not valid_rows:
+            logger.warning("批次中无有效数据，跳过插入")
+            return
+        
+        # 执行插入
         async with self.clickhouse_pool.acquire() as ch_conn:
             async with ch_conn.cursor() as cursor:
                 insert_query = """
@@ -426,7 +579,7 @@ class KLineSyncService:
                 """
                 
                 values = []
-                for row in rows:
+                for row in valid_rows:
                     values.append((
                         row['code'],
                         row['trade_date'],
@@ -442,4 +595,217 @@ class KLineSyncService:
                 
                 await cursor.execute("SET max_partitions_per_insert_block = 10000")
                 await cursor.execute(insert_query, values)
-                logger.debug(f"插入 {len(rows)} 条记录到ClickHouse")
+                logger.debug(f"插入 {len(valid_rows)} 条记录到ClickHouse (校验通过率: {len(valid_rows)}/{len(rows)})")
+
+    # ========== 增强验证层 (L2, L5, L7) ==========
+    
+    def _validate_price_continuity(self, current_row: dict, prev_row: dict) -> tuple[bool, str]:
+        """
+        L2: 历史一致性检查 - 检测价格异常跳变
+        
+        验证规则:
+        - 单日涨跌幅不超过 ±30% (允许涨跌停、停牌复牌等特殊情况)
+        """
+        if not prev_row:
+            return True, ""  # 第一条数据无法对比
+        
+        try:
+            prev_close = float(prev_row['close'])
+            curr_open = float(current_row['open'])
+            curr_close = float(current_row['close'])
+            
+            if prev_close <= 0:
+                return True, ""  # 前收盘价无效，跳过
+            
+            # 计算开盘价相对于前收盘价的变化
+            open_change_pct = abs((curr_open - prev_close) / prev_close) * 100
+            if open_change_pct > 30:
+                return False, f"L2-开盘价异常跳变 {open_change_pct:.1f}% (前收:{prev_close}, 今开:{curr_open})"
+            
+            # 计算收盘价相对于前收盘价的变化
+            close_change_pct = abs((curr_close - prev_close) / prev_close) * 100
+            if close_change_pct > 30:
+                return False, f"L2-收盘价异常跳变 {close_change_pct:.1f}% (前收:{prev_close}, 今收:{curr_close})"
+            
+            return True, ""
+        except (ValueError, ZeroDivisionError, KeyError, TypeError):
+            return True, ""  # 数据不足，跳过检查
+
+    def _validate_cross_field_correlation(self, row: dict) -> tuple[bool, str]:
+        """
+        L5: 跨字段关联验证 - 检测字段间的数学关系
+        
+        验证规则:
+        1. OHLC 增强: open/close 应在 [low, high] 范围内
+        2. 成交额验证: amount ≈ 均价 × volume (允许 50% 误差)
+        3. 换手率合理性: 0 <= turnover_rate <= 100
+        """
+        try:
+            # 规则 1: OHLC 完整性
+            open_price = float(row['open'])
+            high = float(row['high'])
+            low = float(row['low'])
+            close = float(row['close'])
+            
+            if not (low <= open_price <= high):
+                return False, f"L5-开盘价({open_price})不在[{low}, {high}]范围内"
+            
+            if not (low <= close <= high):
+                return False, f"L5-收盘价({close})不在[{low}, {high}]范围内"
+            
+            # 规则 2: 成交额与价量关系 (放宽到 50% 误差)
+            if row.get('amount') and row.get('volume'):
+                amount = float(row['amount'])
+                volume = float(row['volume'])
+                
+                if volume > 0 and amount > 0:
+                    avg_price = (open_price + close) / 2
+                    expected_amount = avg_price * volume
+                    
+                    if expected_amount > 0:
+                        deviation = abs(amount - expected_amount) / expected_amount
+                        if deviation > 0.5:  # 50% 误差阈值
+                            return False, f"L5-成交额异常 (实际={amount:.0f}, 预期={expected_amount:.0f}, 偏差={deviation*100:.1f}%)"
+            
+            # 规则 3: 换手率合理性
+            if row.get('turnover'):
+                turnover_rate = float(row['turnover'])
+                if turnover_rate < 0 or turnover_rate > 100:
+                    return False, f"L5-换手率异常 ({turnover_rate}%)"
+            
+            return True, ""
+        except (ValueError, ZeroDivisionError, KeyError, TypeError):
+            return True, ""  # 数据不足或格式错误，跳过
+
+    def _validate_batch_integrity(self, rows: list) -> tuple[bool, list]:
+        """
+        L7: 批次完整性验证 - 检查批次级别的数据质量
+        
+        验证规则:
+        1. 批次内不应有重复的 (股票代码, 交易日期)
+        2. 返回去重后的数据
+        
+        Returns:
+            (is_valid, deduplicated_rows or error_messages)
+        """
+        if not rows:
+            return True, []
+        
+        # 检查重复并去重
+        seen = set()
+        unique_rows = []
+        duplicate_count = 0
+        
+        for row in rows:
+            key = (row.get('code'), str(row.get('trade_date')))
+            if key in seen:
+                duplicate_count += 1
+                logger.warning(f"L7-发现重复数据: {key}")
+            else:
+                seen.add(key)
+                unique_rows.append(row)
+        
+        if duplicate_count > 0:
+            logger.warning(f"L7-批次内发现 {duplicate_count} 条重复数据，已自动去重")
+        
+        return True, unique_rows
+
+    async def _insert_to_clickhouse_enhanced(self, rows: list):
+        """
+        增强版批量插入（包含 L2, L5, L7 验证）
+        
+        验证流程:
+        1. L7: 批次完整性（去重）
+        2. L1: 基础合法性
+        3. L5: 跨字段关联
+        4. L2: 历史一致性（同股票连续数据）
+        """
+        if not rows:
+            return
+        
+        validation_stats = {
+            "total": len(rows),
+            "L1_failed": 0,
+            "L2_failed": 0,
+            "L5_failed": 0,
+            "L7_duplicates": 0,
+        }
+        
+        # L7: 批次完整性（去重）
+        _, unique_rows = self._validate_batch_integrity(rows)
+        validation_stats["L7_duplicates"] = len(rows) - len(unique_rows)
+        
+        # 按股票代码分组，便于 L2 验证
+        stock_groups = defaultdict(list)
+        for row in unique_rows:
+            stock_groups[row.get('code')].append(row)
+        
+        # 对每组按日期排序
+        for code in stock_groups:
+            stock_groups[code].sort(key=lambda x: str(x.get('trade_date', '')))
+        
+        valid_rows = []
+        
+        for code, group_rows in stock_groups.items():
+            prev_row = None
+            for row in group_rows:
+                # L1: 基础验证
+                is_valid, error = self._validate_kline_row(row)
+                if not is_valid:
+                    validation_stats["L1_failed"] += 1
+                    logger.warning(f"L1验证失败: {code} {row.get('trade_date')} - {error}")
+                    continue
+                
+                # L5: 跨字段关联
+                is_valid, error = self._validate_cross_field_correlation(row)
+                if not is_valid:
+                    validation_stats["L5_failed"] += 1
+                    logger.warning(f"L5验证失败: {code} {row.get('trade_date')} - {error}")
+                    continue
+                
+                # L2: 历史一致性
+                is_valid, error = self._validate_price_continuity(row, prev_row)
+                if not is_valid:
+                    validation_stats["L2_failed"] += 1
+                    logger.warning(f"L2验证失败: {code} {row.get('trade_date')} - {error}")
+                    # L2 失败不跳过，只记录警告（因为可能是正常的停牌复牌）
+                
+                valid_rows.append(row)
+                prev_row = row
+        
+        # 统计日志
+        pass_rate = (len(valid_rows) / len(rows) * 100) if rows else 0
+        logger.info(f"增强验证统计: {validation_stats}, 通过率: {pass_rate:.1f}%")
+        
+        if not valid_rows:
+            logger.warning("增强验证后无有效数据，跳过插入")
+            return
+        
+        # 执行插入
+        async with self.clickhouse_pool.acquire() as ch_conn:
+            async with ch_conn.cursor() as cursor:
+                insert_query = """
+                    INSERT INTO stock_kline_daily 
+                    (stock_code, trade_date, open_price, high_price, low_price, 
+                     close_price, volume, amount, turnover_rate, change_pct)
+                    VALUES
+                """
+                
+                values = []
+                for row in valid_rows:
+                    values.append((
+                        row['code'],
+                        row['trade_date'],
+                        float(row['open']) if row['open'] is not None else 0.0,
+                        float(row['high']) if row['high'] is not None else 0.0,
+                        float(row['low']) if row['low'] is not None else 0.0,
+                        float(row['close']) if row['close'] is not None else 0.0,
+                        int(float(row['volume'])) if row['volume'] is not None else 0,
+                        float(row['amount']) if row['amount'] is not None else 0.0,
+                        float(row.get('turnover')) if row.get('turnover') is not None else None,
+                        float(row.get('pct_chg')) if row.get('pct_chg') is not None else None
+                    ))
+                
+                await cursor.execute("SET max_partitions_per_insert_block = 10000")
+                await cursor.execute(insert_query, values)
+                logger.info(f"✓ 插入 {len(valid_rows)} 条记录到ClickHouse (增强验证通过率: {pass_rate:.1f}%)")

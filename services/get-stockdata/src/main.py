@@ -38,6 +38,8 @@ from api.liquidity_routes import router as liquidity_router
 from api.stocks_routes import router as stocks_router
 from api.health_routes import health_router
 from api.sync_routes import router as sync_router
+from api.quality_routes import router as quality_router
+from api.repair_routes import router as repair_router
 
 # Logging setup
 logging.basicConfig(
@@ -102,6 +104,8 @@ app.include_router(market_router)
 app.include_router(liquidity_router)
 app.include_router(stocks_router)
 app.include_router(sync_router)
+app.include_router(quality_router)
+app.include_router(repair_router)
 
 logger.info(f"Registered {len(app.routes)} routes")
 
