@@ -36,8 +36,8 @@ class ClickHouseWriter:
             return 0
             
         sql = """
-        INSERT INTO stock_data.kline_daily 
-        (stock_code, trade_date, open, high, low, close, volume, amount, turnover_rate, adj_factor) 
+        INSERT INTO stock_data.stock_kline_daily 
+        (stock_code, trade_date, open_price, high_price, low_price, close_price, volume, amount, turnover_rate, change_pct) 
         VALUES
         """
         
@@ -53,8 +53,8 @@ class ClickHouseWriter:
                     row['close'],
                     row['volume'],
                     row['amount'],
-                    row['turnover_rate'],
-                    row['adj_factor']
+                    row.get('turnover_rate'),
+                    row.get('pctChg')
                 )
                 for row in data
             ]

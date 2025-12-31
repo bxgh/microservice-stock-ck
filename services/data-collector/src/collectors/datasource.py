@@ -122,22 +122,20 @@ class DataSourceCollector:
         stock_code: str, 
         start_date: str, 
         end_date: str,
-        adjustflag: str = "2"  # 1:后复权, 2:前复权, 3:不复权
+        adjustflag: str = "3"  # 1:后复权, 2:前复权, 3:不复权
     ) -> List[Dict]:
         """采集单只股票日K线数据"""
         await self.initialize()
         
         # adjust mapping for fetch_history
-        # fetch_history doc: adjust type (0=none, 1=forward, 2=backward)
-        # baostock mapping: 1=backward, 2=forward, 3=none
-        # We need to map baostock's adjustflag to fetch_history's adjust
-        # For now, let's assume we use forward adjustment if adjustflag="2"
+        # mootdx-source (baostock): 1=backward, 2=forward, 3=none
+        # data-collector input: 1:后复权, 2:前复权, 3:不复权
         adj_map = {
-            "1": "2", # backward
-            "2": "1", # forward
-            "3": "0"  # none
+            "1": "1", # backward
+            "2": "2", # forward
+            "3": "3"  # none
         }
-        grpc_adjust = adj_map.get(adjustflag, "1")
+        grpc_adjust = adj_map.get(adjustflag, "3")
 
         try:
             async with self._semaphore:
