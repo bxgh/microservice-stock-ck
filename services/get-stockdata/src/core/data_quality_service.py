@@ -7,8 +7,11 @@
 """
 import asyncio
 import logging
+import json
 from datetime import datetime, timedelta
 from typing import Optional, Dict, List, Any
+
+from data_access.mysql_pool import MySQLPoolManager
 
 logger = logging.getLogger(__name__)
 
@@ -459,7 +462,47 @@ class DataQualityService:
             "check_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
     
-    # ========== 综合报告 ==========
+    # ========== 综合报告与持久化 ==========
+    
+    async def _persist_report(self, report_dict: Dict[str, Any]):
+        """
+        将报告存入 MySQL 数据库
+        """
+        try:
+            pool = await MySQLPoolManager.get_pool()
+            async with pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    # 1. 确保表存在
+                    create_table_sql = """
+                    CREATE TABLE IF NOT EXISTS data_quality_reports (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        report_type VARCHAR(20) NOT NULL,
+                        overall_status VARCHAR(20) NOT NULL,
+                        check_time DATETIME NOT NULL,
+                        report_content JSON NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        INDEX idx_report_type (report_type),
+                        INDEX idx_check_time (check_time)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                    """
+                    await cursor.execute(create_table_sql)
+                    
+                    # 2. 插入数据
+                    insert_sql = """
+                    INSERT INTO data_quality_reports 
+                    (report_type, overall_status, check_time, report_content)
+                    VALUES (%s, %s, %s, %s)
+                    """
+                    await cursor.execute(insert_sql, (
+                        report_dict["report_type"],
+                        report_dict["overall_status"],
+                        report_dict["check_time"],
+                        json.dumps(report_dict, ensure_ascii=False)
+                    ))
+                    
+            logger.info(f"✓ {report_dict['report_type']} 质量报告已存入 MySQL")
+        except Exception as e:
+            logger.error(f"❌ 质量报告存入 MySQL 失败: {e}")
     
     async def run_daily_check(self) -> Dict[str, Any]:
         """
@@ -491,6 +534,9 @@ class DataQualityService:
             }
         }
         
+        # 持久化到 MySQL
+        await self._persist_report(report)
+        
         logger.info(f"每日质量检查完成: 整体状态 {overall_status}")
         return report
     
@@ -510,6 +556,9 @@ class DataQualityService:
         if trend["status"] != "OK":
             if daily_report["overall_status"] == "OK":
                 daily_report["overall_status"] = "WARNING"
+        
+        # 持久化到 MySQL (覆盖 daily 的持久化，因为这是更全的报告)
+        await self._persist_report(daily_report)
         
         logger.info(f"每周质量检查完成: 整体状态 {daily_report['overall_status']}")
         return daily_report
