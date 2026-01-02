@@ -12,8 +12,12 @@ services:
   # ---------------------------------------------------------------------------
   gsd-api:
     build:
-      context: ./services/gsd-api
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/gsd-api/Dockerfile
+      args:
+        ENABLE_PROXY: "true"
+        PROXY_URL: "http://192.168.151.18:3128"
+    image: gsd-api:latest
     container_name: gsd-api
     hostname: gsd-api
     
