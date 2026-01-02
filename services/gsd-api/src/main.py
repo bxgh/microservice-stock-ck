@@ -41,13 +41,13 @@ from api import (
     liquidity_routes
 )
 
-app.include_router(quotes_routes.router, prefix="/api/v1", tags=["quotes"])
-app.include_router(market_routes.router, prefix="/api/v1", tags=["market"])
-app.include_router(stocks_routes.router, prefix="/api/v1", tags=["stocks"])
-app.include_router(health_routes.router, prefix="/api/v1", tags=["health"])
-app.include_router(valuation_routes.router, prefix="/api/v1", tags=["valuation"])
-app.include_router(finance_routes.router, prefix="/api/v1", tags=["finance"])
-app.include_router(liquidity_routes.router, prefix="/api/v1", tags=["liquidity"])
+app.include_router(quotes_routes.router)
+app.include_router(market_routes.router)
+app.include_router(stocks_routes.router)
+app.include_router(health_routes.router)
+app.include_router(valuation_routes.router)
+app.include_router(finance_routes.router)
+app.include_router(liquidity_routes.router)
 
 @app.get("/")
 async def root():
