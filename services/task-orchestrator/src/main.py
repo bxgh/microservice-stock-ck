@@ -23,6 +23,45 @@ mysql_pool = None
 task_logger = None
 task_config: TaskConfig = None
 
+async def auto_migrate():
+    """启动时自动执行数据库迁移"""
+    logger.info("🔧 Checking database schema...")
+    
+    try:
+        async with mysql_pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                # 检查表是否存在
+                await cursor.execute(
+                    "SELECT COUNT(*) FROM information_schema.tables "
+                    "WHERE table_schema = %s AND table_name = 'task_execution_logs'",
+                    (settings.MYSQL_DATABASE,)
+                )
+                result = await cursor.fetchone()
+                
+                if result[0] == 0:
+                    logger.info("📝 Creating task_execution_logs table...")
+                    
+                    # 读取迁移SQL文件
+                    migration_file = Path(__file__).parent.parent / "migrations" / "001_task_logs.sql"
+                    with open(migration_file, 'r', encoding='utf-8') as f:
+                        sql_content = f.read()
+                    
+                    # 分割并执行SQL语句
+                    statements = [s.strip() for s in sql_content.split(';') if s.strip() and not s.strip().startswith('--')]
+                    
+                    for stmt in statements:
+                        if stmt:
+                            await cursor.execute(stmt)
+                    
+                    await conn.commit()
+                    logger.info("✓ Database migration completed")
+                else:
+                    logger.info("✓ Database schema up to date")
+    
+    except Exception as e:
+        logger.error(f"❌ Migration failed: {e}")
+        raise
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
@@ -41,6 +80,9 @@ async def lifespan(app: FastAPI):
             maxsize=settings.MYSQL_POOL_SIZE
         )
         logger.info(f"✓ MySQL pool created ({settings.MYSQL_HOST}:{settings.MYSQL_PORT})")
+        
+        # 自动执行数据库迁移
+        await auto_migrate()
         
         # Initialize Task Logger
         task_logger = TaskLogger(mysql_pool)
