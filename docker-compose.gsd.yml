@@ -92,6 +92,38 @@ services:
       - "com.microservice.version=1.0.0"
 
   # ---------------------------------------------------------------------------
+  # task-orchestrator: 任务编排服务
+  # ---------------------------------------------------------------------------
+  task-orchestrator:
+    build:
+      context: .
+      dockerfile: services/task-orchestrator/Dockerfile
+      args:
+        ENABLE_PROXY: "true"
+        PROXY_URL: "http://192.168.151.18:3128"
+    image: task-orchestrator:latest
+    container_name: task-orchestrator
+    network_mode: host
+    environment:
+      - ORCHESTRATOR_DEBUG=true
+      - ORCHESTRATOR_DOCKER_HOST=unix:///var/run/docker.sock
+      - ORCHESTRATOR_WORKER_IMAGE=gsd-worker:latest
+      - ORCHESTRATOR_WORKER_NETWORK=host
+      - ORCHESTRATOR_REDIS_HOST=127.0.0.1
+      - ORCHESTRATOR_REDIS_PORT=6379
+      - ORCHESTRATOR_REDIS_DB=1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./libs/gsd-shared:/app/libs/gsd-shared:ro
+      - ./logs/task-orchestrator:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
   # gsd-worker: 任务执行器 (临时容器)
   # ---------------------------------------------------------------------------
   # 注意: gsd-worker 通常通过 docker run --rm 方式运行
