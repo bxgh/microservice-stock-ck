@@ -21,6 +21,7 @@ class DataQualityService:
     
     def __init__(self):
         self.clickhouse_pool = None
+        self._benchmark_cache = {}  # (start_date, end_date) -> [dates]
         
     async def initialize(self):
         """初始化 ClickHouse 连接池"""
@@ -100,99 +101,92 @@ class DataQualityService:
                     "check_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 }
     
-    async def check_daily_completeness(self, date: str = None) -> Dict[str, Any]:
+    async def check_cross_db_consistency(self, days: int = 7) -> Dict[str, Any]:
         """
-        检查指定日期的数据完整性
+        [对账逻辑] 检查最近 N 天 MySQL 与 ClickHouse 的记录数一致性
+        这是判断同步质量的最直接标准。
         
-        Args:
-            date: 检查日期，默认为最新交易日
-            
         Returns:
             {
-                "date": "2025-12-31",
-                "expected": 5200,
-                "actual": 5198,
-                "missing_rate": "0.04%",
-                "status": "OK" | "WARNING" | "ERROR",
-                "missing_stocks": [...]
+                "status": "OK" | "ERROR",
+                "details": [
+                    {"date": "2025-12-31", "mysql_count": 5468, "clickhouse_count": 5468, "diff": 0, "status": "OK"},
+                    ...
+                ]
             }
         """
-        async with self.clickhouse_pool.acquire() as conn:
-            async with conn.cursor() as cursor:
-                # 获取检查日期
-                if not date:
-                    await cursor.execute("SELECT MAX(trade_date) FROM stock_kline_daily")
-                    result = await cursor.fetchone()
-                    date = str(result[0]) if result[0] else None
-                    
-                if not date:
-                    return {"status": "ERROR", "message": "无数据可检查"}
-                
-                # 获取前一交易日作为基准
-                sql_prev = """
-                    SELECT MAX(trade_date) 
-                    FROM stock_kline_daily 
-                    WHERE trade_date < %(date)s
-                """
-                await cursor.execute(sql_prev, {"date": date})
-                prev_result = await cursor.fetchone()
-                prev_date = str(prev_result[0]) if prev_result[0] else None
-                
-                if not prev_date:
-                    return {"status": "WARNING", "message": "无前一交易日数据作为基准"}
-                
-                # 对比两日数据
-                sql_compare = """
-                    SELECT 
-                        (SELECT COUNT(DISTINCT stock_code) FROM stock_kline_daily WHERE trade_date = %(date)s) as actual,
-                        (SELECT COUNT(DISTINCT stock_code) FROM stock_kline_daily WHERE trade_date = %(prev_date)s) as expected
-                """
-                await cursor.execute(sql_compare, {"date": date, "prev_date": prev_date})
-                result = await cursor.fetchone()
-                
-                actual = result[0] or 0
-                expected = result[1] or 0
-                
-                missing_rate = ((expected - actual) / expected * 100) if expected > 0 else 0
-                
-                # 判断状态
-                if missing_rate <= 1:
-                    status = "OK"
-                    message = "数据完整性正常"
-                elif missing_rate <= 5:
-                    status = "WARNING"
-                    message = f"缺失率 {missing_rate:.2f}%"
-                else:
-                    status = "ERROR"
-                    message = f"数据大面积缺失 {missing_rate:.2f}%"
-                
-                # 获取缺失的股票列表 (最多返回 20 个)
-                missing_stocks = []
-                if actual < expected:
-                    sql_missing = """
-                        SELECT stock_code 
+        # 1. 获取 MySQL 统计
+        mysql_stats = {}
+        try:
+            pool = await MySQLPoolManager.get_pool()
+            async with pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    sql = """
+                        SELECT trade_date, COUNT(*) as cnt 
                         FROM stock_kline_daily 
-                        WHERE trade_date = %(prev_date)s
-                          AND stock_code NOT IN (
-                              SELECT stock_code FROM stock_kline_daily WHERE trade_date = %(date)s
-                          )
-                        LIMIT 20
+                        WHERE trade_date >= DATE_SUB(CURDATE(), INTERVAL %s DAY)
+                        GROUP BY trade_date
+                        ORDER BY trade_date DESC
                     """
-                    await cursor.execute(sql_missing, {"date": date, "prev_date": prev_date})
-                    missing_stocks = [row[0] for row in await cursor.fetchall()]
-                
-                return {
-                    "date": date,
-                    "prev_date": prev_date,
-                    "expected": expected,
-                    "actual": actual,
-                    "missing_count": expected - actual,
-                    "missing_rate": f"{missing_rate:.2f}%",
-                    "status": status,
-                    "message": message,
-                    "missing_stocks_sample": missing_stocks,
-                    "check_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                }
+                    await cursor.execute(sql, (days,))
+                    for date, count in await cursor.fetchall():
+                        mysql_stats[str(date)] = count
+        except Exception as e:
+            logger.error(f"MySQL 统计查询失败: {e}")
+            return {"status": "ERROR", "message": f"MySQL 查询异常: {e}"}
+
+        # 2. 获取 ClickHouse 统计
+        ch_stats = {}
+        try:
+            async with self.clickhouse_pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    sql = """
+                        SELECT trade_date, count(*) as cnt 
+                        FROM stock_kline_daily 
+                        WHERE trade_date >= today() - %(days)s
+                        GROUP BY trade_date
+                        ORDER BY trade_date DESC
+                    """
+                    await cursor.execute(sql, {"days": days})
+                    for date, count in await cursor.fetchall():
+                        ch_stats[str(date)] = count
+        except Exception as e:
+            logger.error(f"ClickHouse 统计查询失败: {e}")
+            return {"status": "ERROR", "message": f"ClickHouse 查询异常: {e}"}
+
+        # 3. 对比分析
+        details = []
+        is_all_ok = True
+        
+        # 以 MySQL 的日期为准（源头）
+        for date, m_count in mysql_stats.items():
+            c_count = ch_stats.get(date, 0)
+            diff = m_count - c_count
+            status = "OK" if diff == 0 else "ERROR"
+            if diff != 0:
+                is_all_ok = False
+            
+            details.append({
+                "date": date,
+                "mysql_count": m_count,
+                "clickhouse_count": c_count,
+                "diff": diff,
+                "status": status
+            })
+
+        overall_status = "OK" if is_all_ok and details else "ERROR"
+        message = "源数据库与 ClickHouse 数据完全对齐" if overall_status == "OK" else "发现源数据库与 ClickHouse 存在数据不一致"
+        if not details:
+            overall_status = "WARNING"
+            message = "最近 7 天范围内无数据可对比"
+
+        return {
+            "status": overall_status,
+            "message": message,
+            "days": days,
+            "details": details,
+            "check_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
     
     async def check_duplicates(self, days: int = 7) -> Dict[str, Any]:
         """
@@ -461,6 +455,253 @@ class DataQualityService:
             "message": message,
             "check_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
+
+    # ========== 深度扫描 (Universe Deep Scan) ==========
+    
+    async def _get_benchmark_calendar(self, start_date: str, end_date: str, cursor) -> List[str]:
+        """
+        获取基准日历 (以 sh.000001 为准)
+        """
+        cache_key = (start_date, end_date)
+        if cache_key in self._benchmark_cache:
+            return self._benchmark_cache[cache_key]
+
+        # 优先使用 sh.000001，如果由于某种原因不可用，则使用全市场合集
+        sql = """
+            SELECT DISTINCT trade_date 
+            FROM stock_kline_daily 
+            WHERE stock_code = 'sh.000001'
+              AND trade_date >= %(start)s AND trade_date <= %(end)s
+            ORDER BY trade_date
+        """
+        await cursor.execute(sql, {"start": start_date, "end": end_date})
+        results = await cursor.fetchall()
+        
+        # 如果 000001 没数据，退而求其次使用市场最活跃的日期集合（去重后的合集）
+        if not results:
+            sql_fallback = """
+                SELECT DISTINCT trade_date 
+                FROM stock_kline_daily 
+                WHERE trade_date >= %(start)s AND trade_date <= %(end)s
+                ORDER BY trade_date
+            """
+            await cursor.execute(sql_fallback, {"start": start_date, "end": end_date})
+            results = await cursor.fetchall()
+        
+        final_dates = [str(r[0]) for r in results]
+        self._benchmark_cache[cache_key] = final_dates
+        return final_dates
+
+    async def _is_market_suspended(self, date: str, cursor) -> bool:
+        """
+        探测某天是否全市场停牌（通过全市场活跃度判断）
+        """
+        await cursor.execute(
+            "SELECT COUNT(*) FROM stock_kline_daily WHERE trade_date = %(date)s",
+            {"date": date}
+        )
+        count = (await cursor.fetchone())[0]
+        # 如果全市场只有不到 10 只股票有数据，判定为非交易日
+        return count < 10
+
+    async def check_stock_health_deep(self, stock_code: str) -> Dict[str, Any]:
+        """
+        执行个股精准深度扫描 (零容忍模式)
+        """
+        async with self.clickhouse_pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                # 1. 获取个股数据范围
+                await cursor.execute(
+                    "SELECT MIN(trade_date), MAX(trade_date) FROM stock_kline_daily WHERE stock_code = %(code)s",
+                    {"code": stock_code}
+                )
+                res = await cursor.fetchone()
+                if not res or not res[0]:
+                    return {"stock_code": stock_code, "status": "ERROR", "message": "无历史记录"}
+                
+                start_date, end_date = str(res[0]), str(res[1])
+                
+                # 2. 获取基准日历
+                benchmark = await self._get_benchmark_calendar(start_date, end_date, cursor)
+                
+                # 3. 获取个股实际日历
+                await cursor.execute(
+                    "SELECT trade_date FROM stock_kline_daily WHERE stock_code = %(code)s ORDER BY trade_date",
+                    {"code": stock_code}
+                )
+                actual = [str(r[0]) for r in await cursor.fetchall()]
+                
+                # 4. 计算差集 (缺失日期)
+                missing_dates = list(set(benchmark) - set(actual))
+                missing_dates.sort()
+                
+                # 5. 过滤停牌 (Batch Optimized)
+                true_missing = []
+                suspensions = []
+                
+                if missing_dates:
+                    # 一次性查询所有缺失日期的市场活跃度
+                    await cursor.execute(
+                        "SELECT trade_date, COUNT(*) FROM stock_kline_daily WHERE trade_date IN %(dates)s GROUP BY trade_date",
+                        {"dates": missing_dates}
+                    )
+                    market_activity = {str(r[0]): r[1] for r in await cursor.fetchall()}
+                    
+                    for m_date in missing_dates:
+                        market_count = market_activity.get(m_date, 0)
+                        if market_count > 100:
+                            true_missing.append(m_date)
+                        else:
+                            suspensions.append(m_date)
+                
+                # 6. 判定状态 (零容忍：缺一天即 ERROR)
+                status = "OK" if not true_missing else "ERROR"
+                
+                report = {
+                    "stock_code": stock_code,
+                    "status": status,
+                    "listing_date": start_date,
+                    "last_date": end_date,
+                    "missing_count": len(true_missing),
+                    "missing_dates": true_missing,
+                    "suspension_count": len(suspensions),
+                    "check_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                }
+                
+                return report
+
+    async def _persist_health_ledger(self, report: Dict[str, Any]):
+        """
+        持久化扫描结果到 MySQL ledger
+        """
+        try:
+            pool = await MySQLPoolManager.get_pool()
+            async with pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    # 创建 Ledger 表
+                    create_sql = """
+                    CREATE TABLE IF NOT EXISTS stock_health_ledger (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        stock_code VARCHAR(20) NOT NULL UNIQUE,
+                        status VARCHAR(10) NOT NULL,
+                        listing_date DATE,
+                        missing_count INT DEFAULT 0,
+                        missing_details JSON,
+                        suspension_count INT DEFAULT 0,
+                        last_scan_time DATETIME,
+                        repair_status INT DEFAULT 0,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        INDEX idx_status (status),
+                        INDEX idx_last_scan (last_scan_time)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                    """
+                    await cursor.execute(create_sql)
+                    
+                    # 更新或插入记录
+                    upsert_sql = """
+                    INSERT INTO stock_health_ledger 
+                    (stock_code, status, listing_date, missing_count, missing_details, suspension_count, last_scan_time)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON DUPLICATE KEY UPDATE 
+                        status = VALUES(status),
+                        missing_count = VALUES(missing_count),
+                        missing_details = VALUES(missing_details),
+                        suspension_count = VALUES(suspension_count),
+                        last_scan_time = VALUES(last_scan_time)
+                    """
+                    await cursor.execute(upsert_sql, (
+                        report["stock_code"],
+                        report["status"],
+                        report["listing_date"],
+                        report["missing_count"],
+                        json.dumps(report["missing_dates"]),
+                        report["suspension_count"],
+                        report["check_time"]
+                    ))
+            # 只有异常时才打 Warning 日志
+            if report["status"] == "ERROR":
+                logger.warning(f"⚠️ 深度扫描发现异常: {report['stock_code']} 缺失 {report['missing_count']} 天")
+        except Exception as e:
+            logger.error(f"❌ 持久化 Ledger 失败: {e}")
+
+    async def run_universe_scan_batch(self, batch_size: int = 100) -> Dict[str, Any]:
+        """
+        运行全市场批量扫描
+        """
+        logger.info(f"开始执行全市场深度扫描迭代 (批次大小: {batch_size})")
+        
+        # 1. 获取需要扫描的股票代码
+        pool = await MySQLPoolManager.get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                # 0. 确保表存在
+                create_sql = """
+                CREATE TABLE IF NOT EXISTS stock_health_ledger (
+                    stock_code VARCHAR(20) PRIMARY KEY,
+                    status VARCHAR(10) NOT NULL,
+                    listing_date DATE,
+                    missing_count INT DEFAULT 0,
+                    missing_details JSON,
+                    suspension_count INT DEFAULT 0,
+                    last_scan_time DATETIME,
+                    repair_status INT DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_status (status),
+                    INDEX idx_last_scan (last_scan_time)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                """
+                await cursor.execute(create_sql)
+
+                # 策略：优先选最久没扫的，如果 ledger 还没覆盖全市场，则补充新发现的代码
+                await cursor.execute("SELECT stock_code FROM stock_health_ledger ORDER BY last_scan_time ASC LIMIT %s", (batch_size,))
+                stock_list = [r[0] for r in await cursor.fetchall()]
+                
+                if len(stock_list) < batch_size:
+                    # 如果 ledger 还没满 batch_size，或者全市场代码还没进 ledger，则从 ClickHouse 捞取
+                    needed = batch_size - len(stock_list)
+                    async with self.clickhouse_pool.acquire() as ch_conn:
+                        async with ch_conn.cursor() as ch_cursor:
+                            # 捞取 ClickHouse 中的一部分代码作为种子
+                            await ch_cursor.execute("SELECT DISTINCT stock_code FROM stock_kline_daily LIMIT 2000")
+                            all_codes = [r[0] for r in await ch_cursor.fetchall()]
+                            
+                            # 找出不在 ledger 中的代码
+                            await cursor.execute("SELECT stock_code FROM stock_health_ledger")
+                            existing_in_ledger = {r[0] for r in await cursor.fetchall()}
+                            
+                            final_new_codes = []
+                            for c in all_codes:
+                                if c not in existing_in_ledger:
+                                    final_new_codes.append(c)
+                                    if len(final_new_codes) >= needed:
+                                        break
+                            
+                            stock_list.extend(final_new_codes)
+                
+                logger.info(f"待处理股票列表 ({len(stock_list)} 只): {stock_list[:10]}{'...' if len(stock_list) > 10 else ''}")
+
+        # 2. 依次扫描
+        results = []
+        error_count = 0
+        
+        for i, code in enumerate(stock_list):
+            try:
+                logger.info(f"[{i+1}/{len(stock_list)}] 正在深度扫描: {code}")
+                report = await self.check_stock_health_deep(code)
+                logger.info(f"[{i+1}/{len(stock_list)}] {code} 扫描完成，状态: {report['status']}")
+                await self._persist_health_ledger(report)
+                results.append(report)
+                if report["status"] == "ERROR":
+                    error_count += 1
+            except Exception as e:
+                logger.error(f"扫描股票 {code} 时发生致命错误: {e}", exc_info=True)
+                
+        return {
+            "batch_size": len(stock_list),
+            "scanned_count": len(results),
+            "error_count": error_count,
+            "message": f"扫描完成，发现 {error_count} 只异常股票"
+        }
     
     # ========== 综合报告与持久化 ==========
     
@@ -511,11 +752,11 @@ class DataQualityService:
         logger.info("开始执行每日数据质量检查...")
         
         timeliness = await self.check_timeliness()
-        completeness = await self.check_daily_completeness()
+        consistency = await self.check_cross_db_consistency(days=7)
         duplicates = await self.check_duplicates()
         
         # 汇总状态
-        all_status = [timeliness["status"], completeness["status"], duplicates["status"]]
+        all_status = [timeliness["status"], consistency["status"], duplicates["status"]]
         if "ERROR" in all_status:
             overall_status = "ERROR"
         elif "WARNING" in all_status:
@@ -529,7 +770,7 @@ class DataQualityService:
             "check_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "checks": {
                 "timeliness": timeliness,
-                "daily_completeness": completeness,
+                "cross_db_consistency": consistency,
                 "duplicates": duplicates
             }
         }

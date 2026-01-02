@@ -756,12 +756,13 @@ class KLineSyncService:
                     logger.warning(f"L1验证失败: {code} {row.get('trade_date')} - {error}")
                     continue
                 
-                # L5: 跨字段关联
-                is_valid, error = self._validate_cross_field_correlation(row)
-                if not is_valid:
-                    validation_stats["L5_failed"] += 1
-                    logger.warning(f"L5验证失败: {code} {row.get('trade_date')} - {error}")
-                    continue
+                # L5: 跨字段关联 (指数代码跳过由于成交量计算差异导致的校验失败)
+                if not code.startswith(('sh.000', 'sz.399')):
+                    is_valid, error = self._validate_cross_field_correlation(row)
+                    if not is_valid:
+                        validation_stats["L5_failed"] += 1
+                        logger.warning(f"L5验证失败: {code} {row.get('trade_date')} - {error}")
+                        continue
                 
                 # L2: 历史一致性
                 is_valid, error = self._validate_price_continuity(row, prev_row)
