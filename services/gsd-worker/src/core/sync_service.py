@@ -810,3 +810,170 @@ class KLineSyncService:
                 await cursor.execute("SET max_partitions_per_insert_block = 10000")
                 await cursor.execute(insert_query, values)
                 logger.info(f"✓ 插入 {len(valid_rows)} 条记录到ClickHouse (增强验证通过率: {pass_rate:.1f}%)")
+
+    async def get_all_stock_codes(self) -> list[str]:
+        """
+        获取所有股票代码
+        
+        从 MySQL stock_info 表中获取所有股票代码，用于分片处理
+        
+        Returns:
+            股票代码列表，如 ['sh.600519', 'sz.000001', ...]
+        """
+        try:
+            query = """
+                SELECT DISTINCT code 
+                FROM stock_info 
+                WHERE code IS NOT NULL 
+                ORDER BY code
+            """
+            rows = await self._fetch_from_mysql_with_retry(query)
+            stock_codes = [row['code'] for row in rows]
+            logger.info(f"获取到 {len(stock_codes)} 只股票代码")
+            return stock_codes
+        except Exception as e:
+            logger.error(f"获取股票代码失败: {e}")
+            # 如果 stock_info 表不存在，尝试从 stock_kline_daily 表获取
+            try:
+                query = """
+                    SELECT DISTINCT code 
+                    FROM stock_kline_daily 
+                    WHERE code IS NOT NULL 
+                    ORDER BY code
+                """
+                rows = await self._fetch_from_mysql_with_retry(query)
+                stock_codes = [row['code'] for row in rows]
+                logger.info(f"从 stock_kline_daily 获取到 {len(stock_codes)} 只股票代码")
+                return stock_codes
+            except Exception as e2:
+                logger.error(f"从 stock_kline_daily 获取股票代码也失败: {e2}")
+                raise e2
+
+    async def sync_by_shard(self, shard_index: int, total_shards: int):
+        """
+        按分片同步：将所有股票分成 N 片，只同步第 shard_index 片的数据
+        
+        用于并行处理，提高同步效率
+        
+        Args:
+            shard_index: 分片索引 (0-based)，范围 [0, total_shards-1]
+            total_shards: 总分片数
+            
+        Example:
+            # 4个容器并行处理
+            # 容器1: sync_by_shard(0, 4)  处理 0, 4, 8, 12...
+            # 容器2: sync_by_shard(1, 4)  处理 1, 5, 9, 13...
+            # 容器3: sync_by_shard(2, 4)  处理 2, 6, 10, 14...
+            # 容器4: sync_by_shard(3, 4)  处理 3, 7, 11, 15...
+        """
+        start_time = datetime.now()
+        logger.info(f"开始分片同步 (分片 {shard_index+1}/{total_shards})...")
+        await self._update_status(
+            "running", 
+            f"分片 {shard_index+1}/{total_shards} 正在获取股票列表...", 
+            0.0
+        )
+        
+        try:
+            # 1. 获取所有股票代码
+            all_stock_codes = await self.get_all_stock_codes()
+            
+            if not all_stock_codes:
+                msg = "未找到任何股票代码"
+                logger.warning(msg)
+                await self._update_status("success", msg, 100.0)
+                return
+            
+            # 2. 分片：使用取模方式分配股票
+            shard_stock_codes = [
+                code for i, code in enumerate(all_stock_codes) 
+                if i % total_shards == shard_index
+            ]
+            
+            logger.info(
+                f"分片 {shard_index+1}/{total_shards}: "
+                f"负责 {len(shard_stock_codes)}/{len(all_stock_codes)} 只股票"
+            )
+            
+            if not shard_stock_codes:
+                msg = f"分片 {shard_index+1}/{total_shards} 无股票需要处理"
+                logger.info(msg)
+                await self._update_status("success", msg, 100.0)
+                return
+            
+            # 3. 查询 ClickHouse 最大日期
+            async with self.clickhouse_pool.acquire() as ch_conn:
+                async with ch_conn.cursor() as cursor:
+                    query = "SELECT MAX(trade_date) as max_date FROM stock_kline_daily"
+                    await cursor.execute(query)
+                    result = await cursor.fetchone()
+                    ch_max_date = result[0] if result and result[0] else None
+            
+            if not ch_max_date:
+                logger.warning("ClickHouse 表为空，将同步所有历史数据")
+                # 对于分片模式，如果 ClickHouse 为空，应该先执行全量同步
+                msg = "ClickHouse 为空，请先执行全量同步"
+                logger.error(msg)
+                await self._update_status("failed", msg, 0.0)
+                raise ValueError(msg)
+            
+            logger.info(f"ClickHouse 最大日期: {ch_max_date}")
+            
+            # 4. 批量查询本分片股票的增量数据
+            placeholders = ','.join(['%s'] * len(shard_stock_codes))
+            query = f"""
+                SELECT 
+                    code, trade_date, open, high, low, close,
+                    volume, amount, turnover, pct_chg
+                FROM stock_kline_daily
+                WHERE code IN ({placeholders})
+                  AND trade_date > %s
+                ORDER BY trade_date, code
+            """
+            
+            params = tuple(shard_stock_codes) + (ch_max_date,)
+            rows = await self._fetch_from_mysql_with_retry(query, params)
+            
+            # 5. 同步数据
+            duration = (datetime.now() - start_time).total_seconds()
+            if rows:
+                await self._insert_to_clickhouse_enhanced(rows)
+                min_date = min(row['trade_date'] for row in rows)
+                max_date = max(row['trade_date'] for row in rows)
+                
+                msg = (
+                    f"分片 {shard_index+1}/{total_shards} 同步完成: "
+                    f"{len(rows):,} 条记录 ({min_date} ~ {max_date}), "
+                    f"{len(shard_stock_codes)} 只股票"
+                )
+                logger.info(f"✓ {msg}")
+                await self._update_status("success", msg, 100.0, {
+                    "shard_index": shard_index,
+                    "total_shards": total_shards,
+                    "new_records": len(rows),
+                    "stock_count": len(shard_stock_codes),
+                    "date_range": f"{min_date}~{max_date}"
+                })
+                await self._log_to_db("SUCCESS", len(rows), msg, duration)
+            else:
+                msg = (
+                    f"分片 {shard_index+1}/{total_shards}: "
+                    f"无新数据需要同步 ({len(shard_stock_codes)} 只股票)"
+                )
+                logger.info(f"✓ {msg}")
+                await self._update_status("success", msg, 100.0, {
+                    "shard_index": shard_index,
+                    "total_shards": total_shards,
+                    "new_records": 0,
+                    "stock_count": len(shard_stock_codes)
+                })
+                await self._log_to_db("SUCCESS", 0, msg, duration)
+                
+        except Exception as e:
+            duration = (datetime.now() - start_time).total_seconds()
+            msg = f"分片 {shard_index+1}/{total_shards} 同步失败: {str(e)}"
+            logger.error(msg, exc_info=True)
+            await self._update_status("failed", msg, 0.0)
+            await self._log_to_db("FAILED", 0, msg, duration)
+            raise e
+

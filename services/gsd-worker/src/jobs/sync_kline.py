@@ -30,11 +30,12 @@ async def main(shard_index: int = 0, total_shards: int = 1):
     await service.initialize()
     
     try:
-        # TODO: 实现分片逻辑
+        # 分片模式：并行处理
         if total_shards > 1:
-            logger.info(f"分片模式: {shard_index}/{total_shards}")
-            # await service.sync_by_shard(shard_index, total_shards)
+            logger.info(f"分片模式: {shard_index+1}/{total_shards}")
+            await service.sync_by_shard(shard_index, total_shards)
         else:
+            # 单机模式：智能增量同步
             await service.sync_smart_incremental()
         
         logger.info("K线同步任务完成")
@@ -44,6 +45,7 @@ async def main(shard_index: int = 0, total_shards: int = 1):
         return 1
     finally:
         await service.close()
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="K线同步任务")
