@@ -195,6 +195,11 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Mount API routes
+from api.tasks import router as tasks_router
+app.include_router(tasks_router, prefix="/api/v1", tags=["tasks"])
+
+# Prometheus metrics
 from prometheus_client import make_asgi_app
 metrics_app = make_asgi_app()
 app.mount("/metrics", metrics_app)
