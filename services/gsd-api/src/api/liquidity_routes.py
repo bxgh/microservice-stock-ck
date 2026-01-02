@@ -3,8 +3,12 @@
 流动性数据 API Routes - 通过 gRPC 调用 mootdx-source
 """
 from fastapi import APIRouter, HTTPException, Depends, Path
+from typing import Dict, Any
+import logging
 
 from grpc_client import get_datasource_client, DataSourceClient
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/stocks", tags=["流动性"])
 
@@ -18,7 +22,7 @@ async def get_client() -> DataSourceClient:
 async def get_liquidity_metrics(
     stock_code: str = Path(..., description="股票代码"),
     client: DataSourceClient = Depends(get_client)
-):
+) -> Dict[str, Any]:
     """
     获取流动性指标
     
@@ -54,6 +58,7 @@ async def get_liquidity_metrics(
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Error fetching liquidity metrics: {e}")
         raise HTTPException(
             status_code=500,
             detail=f"获取流动性指标失败: {str(e)}"

@@ -26,7 +26,7 @@ def _get_uptime() -> int:
 
 
 @router.get("/health", response_model=None, summary="健康检查")
-async def health_check():
+async def health_check() -> ApiResponse:
     """
     系统健康检查端点
 
@@ -90,7 +90,7 @@ async def health_check():
 
 
 @router.get("/ready", response_model=None, summary="就绪检查")
-async def readiness_check():
+async def readiness_check() -> ApiResponse:
     """
     就绪检查端点
 
@@ -114,7 +114,7 @@ async def readiness_check():
 
 
 @router.get("/live", response_model=None, summary="存活检查")
-async def liveness_check():
+async def liveness_check() -> ApiResponse:
     """
     存活检查端点
 

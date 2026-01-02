@@ -4,10 +4,13 @@
 """
 from fastapi import APIRouter, HTTPException, Depends, Path, Query
 from urllib.parse import unquote
+import logging
 import pandas as pd
 from typing import Dict, Any, List
 
 from grpc_client import get_datasource_client, DataSourceClient
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/market", tags=["市场与行业"])
 
@@ -19,7 +22,7 @@ async def get_client() -> DataSourceClient:
 async def get_market_ranking(
     ranking_type: str = Query("limit_up", description="榜单类型: limit_up (涨停), hot (人气), up (涨幅), volume (成交量)"),
     client: DataSourceClient = Depends(get_client)
-):
+) -> Dict[str, Any]:
     """
     获取市场榜单数据 (人气、涨停等) - 用于 Smart Money 策略
     """
@@ -52,12 +55,13 @@ async def get_market_ranking(
             "count": len(data)
         }
     except Exception as e:
+        logger.error(f"Error fetching ranking: {e}")
         raise HTTPException(status_code=500, detail=f"Error fetching ranking: {str(e)}")
 
 @router.get("/sector/list")
 async def get_sector_list(
     client: DataSourceClient = Depends(get_client)
-):
+) -> Dict[str, Any]:
     """
     获取全量板块/行业列表 (通过自然语言查询)
     """
@@ -74,13 +78,14 @@ async def get_sector_list(
             "count": len(df)
         }
     except Exception as e:
+        logger.error(f"Error fetching sector list: {e}")
         raise HTTPException(status_code=500, detail=f"Error fetching sector list: {str(e)}")
 
 @router.get("/sector/{sector_code}/stocks")
 async def get_sector_stocks(
     sector_code: str = Path(..., description="板块代码或名称"),
     client: DataSourceClient = Depends(get_client)
-):
+) -> Dict[str, Any]:
     """
     获取指定板块的成分股
     """
@@ -109,6 +114,7 @@ async def get_sector_stocks(
         }
     except Exception as e:
         if isinstance(e, HTTPException): raise e
+        logger.error(f"Error fetching sector stocks: {e}")
         raise HTTPException(status_code=500, detail=f"Error fetching sector stocks: {str(e)}")
 
 # 保留原有的 industry 接口重定向
@@ -116,7 +122,7 @@ async def get_sector_stocks(
 async def get_industry_stats(
     industry_code: str,
     client: DataSourceClient = Depends(get_client)
-):
+) -> List[Dict[str, Any]] | Dict[str, Any]:
     """兼容旧版本的行业统计接口"""
     params = {"industry": industry_code}
     df = await client.fetch_ranking("industry_stats", params=params)
@@ -127,7 +133,7 @@ async def get_industry_stats(
 async def get_dragon_tiger(
     date: str = Query(None, description="日期 (YYYY-MM-DD)"),
     client: DataSourceClient = Depends(get_client)
-):
+) -> Dict[str, Any]:
     """
     获取龙虎榜数据 - 识别主力投机动向
     """
@@ -158,13 +164,14 @@ async def get_dragon_tiger(
             "count": len(data)
         }
     except Exception as e:
+        logger.error(f"Error fetching dragon tiger data: {e}")
         raise HTTPException(status_code=500, detail=f"Error fetching dragon tiger data: {str(e)}")
 
 @router.get("/capital_flow/{stock_code}")
 async def get_capital_flow(
     stock_code: str = Path(..., description="股票代码"),
     client: DataSourceClient = Depends(get_client)
-):
+) -> Dict[str, Any]:
     """
     获取个股资金流向 - Smart Money 策略核心
     """
@@ -181,4 +188,5 @@ async def get_capital_flow(
         }
     except Exception as e:
         if isinstance(e, HTTPException): raise e
+        logger.error(f"Error fetching capital flow: {e}")
         raise HTTPException(status_code=500, detail=f"Error fetching capital flow: {str(e)}")

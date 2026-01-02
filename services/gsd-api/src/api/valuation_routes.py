@@ -4,9 +4,12 @@
 """
 from fastapi import APIRouter, HTTPException, Depends, Path
 from typing import Dict, Any, List
+import logging
 import pandas as pd
 
 from grpc_client import get_datasource_client, DataSourceClient
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/market/valuation", tags=["市场估值"])
 
@@ -20,7 +23,7 @@ async def get_client() -> DataSourceClient:
 async def get_current_valuation(
     stock_code: str = Path(..., description="股票代码"),
     client: DataSourceClient = Depends(get_client)
-):
+) -> Dict[str, Any]:
     """
     获取实时估值指标 (PE/PB/市值) - 通过 gRPC
     """
@@ -49,6 +52,7 @@ async def get_current_valuation(
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Error fetching current valuation: {e}")
         raise HTTPException(
             status_code=500,
             detail=f"获取估值数据失败: {str(e)}"
@@ -59,7 +63,7 @@ async def get_current_valuation(
 async def get_valuation_history(
     stock_code: str = Path(..., description="股票代码"),
     client: DataSourceClient = Depends(get_client)
-):
+) -> Dict[str, Any]:
     """
     获取历史估值走势与统计
     """
@@ -87,6 +91,7 @@ async def get_valuation_history(
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Error fetching valuation history: {e}")
         raise HTTPException(
             status_code=500,
             detail=f"获取估值历史数据失败: {str(e)}"

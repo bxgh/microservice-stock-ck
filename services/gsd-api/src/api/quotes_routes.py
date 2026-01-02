@@ -23,7 +23,7 @@ async def get_client() -> DataSourceClient:
 async def get_realtime_quotes(
     codes: str = Query(..., description="股票代码列表，逗号分隔 (e.g. 600519,000001)"),
     client: DataSourceClient = Depends(get_client)
-):
+) -> Dict[str, Any]:
     """
     批量获取实时行情 - 通过 gRPC 调用 mootdx-source
     """
@@ -51,6 +51,8 @@ async def get_realtime_quotes(
             "count": len(quotes)
         }
     except Exception as e:
+        if isinstance(e, HTTPException): raise e
+        logger.error(f"Error fetching quotes: {e}")
         raise HTTPException(status_code=500, detail=f"Error fetching quotes: {str(e)}")
 
 @router.get("/tick/{stock_code}")
@@ -58,7 +60,7 @@ async def get_tick_data(
     stock_code: str = Path(..., description="股票代码"),
     date: str = Query(None, description="日期 (YYYYMMDD)，不填默认为当日"),
     client: DataSourceClient = Depends(get_client)
-):
+) -> Dict[str, Any]:
     """
     获取分笔数据 - 用于 OFI 策略
     """
@@ -89,6 +91,7 @@ async def get_tick_data(
         }
     except Exception as e:
         if isinstance(e, HTTPException): raise e
+        logger.error(f"Error fetching tick data: {e}")
         raise HTTPException(status_code=500, detail=f"Error fetching tick data: {str(e)}")
 
 @router.get("/history/{stock_code}")
@@ -98,7 +101,7 @@ async def get_historical_kline(
     end_date: str = Query(None, description="结束日期 (YYYY-MM-DD)"),
     frequency: str = Query("d", description="频率: d=日, w=周, m=月, 1m, 5m, 15m, 30m, 60m"),
     adjust: str = Query("2", description="复权: 0=不复权, 1=前复权, 2=后复权")
-):
+) -> Dict[str, Any]:
     """
     获取历史 K 线数据 - 优先从ClickHouse查询，失败时降级到MySQL
     

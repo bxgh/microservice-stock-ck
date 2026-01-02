@@ -3,10 +3,13 @@
 股票基本信息 API Routes - 通过 gRPC 调用 mootdx-source
 """
 from fastapi import APIRouter, HTTPException, Depends, Path
+import logging
 import pandas as pd
 from typing import Dict, Any
 
 from grpc_client import get_datasource_client, DataSourceClient
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/stocks", tags=["股票信息"])
 
@@ -18,7 +21,7 @@ async def get_client() -> DataSourceClient:
 async def get_stock_info(
     stock_code: str = Path(..., description="股票代码"),
     client: DataSourceClient = Depends(get_client)
-):
+) -> Dict[str, Any]:
     """
     获取股票基本信息 (代码、名称、行业、上市日期等)
     """
@@ -53,12 +56,13 @@ async def get_stock_info(
     except Exception as e:
         if isinstance(e, HTTPException):
             raise e
+        logger.error(f"Error fetching stock info: {e}")
         raise HTTPException(status_code=500, detail=f"Error fetching stock info: {str(e)}")
 
 @router.get("/list")
 async def list_stocks(
     client: DataSourceClient = Depends(get_client)
-):
+) -> Dict[str, Any]:
     """
     获取所有股票列表
     """
@@ -81,4 +85,5 @@ async def list_stocks(
             "count": len(data_list)
         }
     except Exception as e:
+        logger.error(f"Error listing stocks: {e}")
         raise HTTPException(status_code=500, detail=f"Error listing stocks: {str(e)}")
