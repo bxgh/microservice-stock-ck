@@ -61,6 +61,9 @@ RUN if [ "$ENABLE_PROXY" = "true" ]; then \
 # 复制源代码
 COPY services/gsd-api/src/ ./src/
 
+# 设置PYTHONPATH
+ENV PYTHONPATH=/app/src
+
 # 创建非root用户
 RUN useradd --create-home --shell /bin/bash app && \
     mkdir -p /app/logs && \
