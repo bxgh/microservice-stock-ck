@@ -13,6 +13,7 @@
 | [04_implementation_roadmap.md](./04_implementation_roadmap.md) | 实施路线图 |
 | **[05_final_architecture.md](./05_final_architecture.md)** | **最终确认方案** ⭐ |
 | [06_orchestrator_design.md](./06_orchestrator_design.md) | Task Orchestrator 详细设计 |
+| [07_gsd_shared_design.md](./07_gsd_shared_design.md) | GSD-Shared 共享库设计 |
 
 ## 核心结论 (已确认 v2)
 
