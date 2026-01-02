@@ -57,6 +57,10 @@ RUN if [ "$ENABLE_PROXY" = "true" ]; then \
         pip install -e /tmp/gsd-shared; \
     fi
 
+# 复制配置和迁移文件
+COPY services/task-orchestrator/config/ ./config/
+COPY services/task-orchestrator/migrations/ ./migrations/
+
 # 复制源代码
 COPY services/task-orchestrator/src/ ./src/
 
