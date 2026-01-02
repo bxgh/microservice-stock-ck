@@ -198,3 +198,108 @@ async def repair_stock(stock_code: str):
 2. **从源头重建**: 清除所有层级数据，从原始数据源重新开始
 3. **人工确认**: 重建操作需人工触发，避免误操作
 4. **保持简单**: 一个策略解决所有问题
+
+---
+
+## 八、任务调度集成
+
+### 8.1 每日任务链
+
+本地服务器（`get-stockdata`）在 ClickHouse 入库后的完整任务流程：
+
+```
+18:10  [wait-upstream]      等待云端 MySQL 数据就绪
+       ↓
+18:15  [sync-kline]         MySQL → ClickHouse 增量同步
+       ↓
+18:30  [daily-check]        完整性校验
+       ↓ 通过                    ↓ 失败
+18:35  [strategy-scan]      18:35  [auto-repair] 自动修复
+       ↓                          ↓
+19:00  [daily-report]       重新校验 → 人工告警
+```
+
+| 时间 | 任务 | API | 触发方式 |
+|:-----|:-----|:----|:---------|
+| 18:10 | 等待云端就绪 | `GET /sync/wait-upstream` | task-scheduler |
+| 18:15 | 增量同步 | `POST /sync/kline` | task-scheduler |
+| 18:30 | 完整性校验 | `GET /quality/daily-check` | task-scheduler |
+| 18:35 | 自动修复 | `POST /repair/auto` | 条件触发 |
+| 18:45 | 策略扫描 | `POST quant-strategy/jobs/scan` | 依赖触发 |
+| 19:00 | 每日报告 | `POST /notify/daily-report` | 最终触发 |
+
+### 8.2 自动化边界
+
+根据缺失规模决定处理方式：
+
+| 缺失规模 | 处理方式 | 人工介入 |
+|:---------|:---------|:---------|
+| < 50 只 | 自动修复后重试 | 否 |
+| 50-200 只 | 告警 + 等待确认后修复 | 是 |
+| > 200 只 | 终止任务 + 紧急告警 | 必须 |
+
+### 8.3 告警机制
+
+| 告警事件 | 渠道 | 级别 |
+|:---------|:-----|:-----|
+| 同步成功,无异常 | 每日邮件 | INFO |
+| 缺失 < 50 只,已自动修复 | 企微消息 | WARNING |
+| 缺失 ≥ 50 只 | 企微消息 + 电话 | CRITICAL |
+| 云端数据未就绪 (超时) | 企微消息 | CRITICAL |
+
+### 8.4 新增 API
+
+| API | 方法 | 说明 |
+|:----|:-----|:-----|
+| `/sync/wait-upstream` | GET | 轮询等待云端 MySQL 数据就绪 |
+| `/quality/daily-check` | GET | 综合完整性校验 (记录数+日期连续性) |
+| `/repair/auto` | POST | 自动修复小规模缺失 |
+| `/notify/daily-report` | POST | 发送每日数据质量报告 |
+
+### 8.5 task-scheduler 配置示例
+
+```yaml
+workflows:
+  post_collection_pipeline:
+    trigger:
+      type: trading_cron
+      expression: "10 18 * * 1-5"
+    
+    tasks:
+      - id: wait_upstream
+        target: get-stockdata/sync/wait-upstream
+        timeout: 720
+        
+      - id: sync_kline
+        depends_on: [wait_upstream]
+        target: get-stockdata/sync/kline
+        
+      - id: validate
+        depends_on: [sync_kline]
+        target: get-stockdata/quality/daily-check
+        
+      - id: auto_repair
+        depends_on: [validate]
+        condition: "validate.missing_count < 50 && validate.missing_count > 0"
+        target: get-stockdata/repair/auto
+        
+      - id: strategy_scan
+        depends_on: [validate, auto_repair]
+        condition: "validate.status == 'COMPLETE' || auto_repair.status == 'SUCCESS'"
+        target: quant-strategy/jobs/daily-scan
+        
+      - id: report
+        depends_on: [validate, auto_repair, strategy_scan]
+        target: get-stockdata/notify/daily-report
+```
+
+---
+
+## 九、核心指标
+
+| 指标 | 目标值 | 计算方式 |
+|:-----|:-------|:---------|
+| 日同步成功率 | ≥ 99% | 成功天数 / 交易日总数 |
+| 数据完整率 | ≥ 98% | ClickHouse 记录数 / MySQL 记录数 |
+| 修复及时率 | ≥ 95% | 当日修复成功 / 当日发现问题 |
+| 告警响应时间 | < 30 分钟 | 从告警到人工确认 |
