@@ -1,0 +1,190 @@
+version: '3.8'
+
+# =============================================================================
+# GSD Services Docker Compose Configuration
+# =============================================================================
+# 用于运行 gsd-api 和 gsd-worker 服务
+# 依赖: MySQL, ClickHouse, Redis (在主 docker-compose.yml 中定义)
+
+services:
+  # ---------------------------------------------------------------------------
+  # gsd-api: 查询服务 (长期运行)
+  # ---------------------------------------------------------------------------
+  gsd-api:
+    build:
+      context: ./services/gsd-api
+      dockerfile: Dockerfile
+    container_name: gsd-api
+    hostname: gsd-api
+    
+    # 网络模式: host (用于 Mootdx TCP 连接)
+    network_mode: host
+    
+    environment:
+      # 服务配置
+      - SERVICE_NAME=gsd-api
+      - SERVICE_VERSION=1.0.0
+      - LOG_LEVEL=INFO
+      - HOST=0.0.0.0
+      - PORT=8000
+      
+      # MySQL 配置
+      - MYSQL_HOST=127.0.0.1
+      - MYSQL_PORT=3306
+      - MYSQL_USER=stock_user
+      - MYSQL_PASSWORD=stock_password
+      - MYSQL_DATABASE=stock_data
+      - MYSQL_POOL_SIZE=10
+      - MYSQL_MAX_OVERFLOW=20
+      
+      # ClickHouse 配置
+      - CLICKHOUSE_HOST=127.0.0.1
+      - CLICKHOUSE_PORT=9000
+      - CLICKHOUSE_USER=default
+      - CLICKHOUSE_PASSWORD=
+      - CLICKHOUSE_DATABASE=stock_data
+      - CLICKHOUSE_POOL_SIZE=10
+      
+      # Redis 配置
+      - REDIS_HOST=127.0.0.1
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=
+      - REDIS_DB=0
+      - REDIS_POOL_SIZE=10
+      
+      # 缓存配置
+      - CACHE_TTL_REALTIME=5
+      - CACHE_TTL_DAILY=3600
+      - CACHE_TTL_FINANCIAL=86400
+      
+      # Mootdx 配置
+      - MOOTDX_TIMEOUT=10
+      - MOOTDX_RETRY_TIMES=3
+      
+      # Nacos 配置 (可选)
+      - NACOS_SERVER_ADDR=127.0.0.1:8848
+      - NACOS_NAMESPACE=public
+      - NACOS_GROUP=DEFAULT_GROUP
+      - ENABLE_NACOS=false
+    
+    volumes:
+      # 挂载共享库 (开发模式)
+      - ./libs/gsd-shared:/app/libs/gsd-shared:ro
+      # 挂载日志目录
+      - ./logs/gsd-api:/app/logs
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    restart: unless-stopped
+    
+    labels:
+      - "com.microservice.name=gsd-api"
+      - "com.microservice.type=query"
+      - "com.microservice.version=1.0.0"
+
+  # ---------------------------------------------------------------------------
+  # gsd-worker: 任务执行器 (临时容器)
+  # ---------------------------------------------------------------------------
+  # 注意: gsd-worker 通常通过 docker run --rm 方式运行
+  # 此配置仅用于测试和开发
+  # 
+  # 生产环境使用示例:
+  # docker run --rm \
+  #   --network host \
+  #   --env-file services/gsd-worker/.env \
+  #   -v $(pwd)/libs/gsd-shared:/app/libs/gsd-shared:ro \
+  #   gsd-worker:latest \
+  #   python -m jobs.sync_kline --shard 0 --total 4
+  # ---------------------------------------------------------------------------
+  
+  # gsd-worker-test:
+  #   build:
+  #     context: ./services/gsd-worker
+  #     dockerfile: Dockerfile
+  #   container_name: gsd-worker-test
+  #   
+  #   network_mode: host
+  #   
+  #   environment:
+  #     - SERVICE_NAME=gsd-worker
+  #     - SERVICE_VERSION=1.0.0
+  #     - LOG_LEVEL=INFO
+  #     
+  #     # MySQL 配置
+  #     - MYSQL_HOST=127.0.0.1
+  #     - MYSQL_PORT=3306
+  #     - MYSQL_USER=stock_user
+  #     - MYSQL_PASSWORD=stock_password
+  #     - MYSQL_DATABASE=stock_data
+  #     - MYSQL_POOL_SIZE=5
+  #     
+  #     # ClickHouse 配置
+  #     - CLICKHOUSE_HOST=127.0.0.1
+  #     - CLICKHOUSE_PORT=9000
+  #     - CLICKHOUSE_USER=default
+  #     - CLICKHOUSE_PASSWORD=
+  #     - CLICKHOUSE_DATABASE=stock_data
+  #     - CLICKHOUSE_POOL_SIZE=5
+  #     
+  #     # Redis 配置
+  #     - REDIS_HOST=127.0.0.1
+  #     - REDIS_PORT=6379
+  #     - REDIS_PASSWORD=
+  #     - REDIS_DB=1
+  #     - REDIS_POOL_SIZE=5
+  #     
+  #     # 任务配置
+  #     - BATCH_SIZE=1000
+  #     - MAX_CONCURRENT_TASKS=10
+  #     - TASK_TIMEOUT=3600
+  #     - MAX_RETRIES=3
+  #     - RETRY_DELAY=5
+  #   
+  #   volumes:
+  #     - ./libs/gsd-shared:/app/libs/gsd-shared:ro
+  #     - ./logs/gsd-worker:/app/logs
+  #   
+  #   # 测试命令: 运行健康检查
+  #   command: ["python", "-c", "print('gsd-worker container ready')"]
+  #   
+  #   # 不自动重启 (临时任务)
+  #   restart: "no"
+
+# =============================================================================
+# 使用说明
+# =============================================================================
+# 
+# 1. 启动 gsd-api 服务:
+#    docker-compose -f docker-compose.gsd.yml up -d gsd-api
+# 
+# 2. 查看 gsd-api 日志:
+#    docker-compose -f docker-compose.gsd.yml logs -f gsd-api
+# 
+# 3. 停止服务:
+#    docker-compose -f docker-compose.gsd.yml down
+# 
+# 4. 运行 gsd-worker 任务 (推荐方式):
+#    docker run --rm \
+#      --network host \
+#      --env-file services/gsd-worker/.env \
+#      -v $(pwd)/libs/gsd-shared:/app/libs/gsd-shared:ro \
+#      gsd-worker:latest \
+#      python -m jobs.sync_kline --date 2026-01-02
+# 
+# 5. 运行分片任务:
+#    for i in {0..3}; do
+#      docker run --rm -d \
+#        --network host \
+#        --env-file services/gsd-worker/.env \
+#        -v $(pwd)/libs/gsd-shared:/app/libs/gsd-shared:ro \
+#        --name gsd-worker-shard-$i \
+#        gsd-worker:latest \
+#        python -m jobs.sync_kline --shard $i --total 4
+#    done
+# 
+# =============================================================================
