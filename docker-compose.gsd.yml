@@ -111,13 +111,26 @@ services:
       - ORCHESTRATOR_WORKER_NETWORK=host
       - ORCHESTRATOR_REDIS_HOST=127.0.0.1
       - ORCHESTRATOR_REDIS_PORT=6379
+      - ORCHESTRATOR_REDIS_PASSWORD=redis123
       - ORCHESTRATOR_REDIS_DB=1
+
+      # Worker DB Config (Passed to workers)
+      - WORKER_MYSQL_HOST=127.0.0.1
+      - WORKER_MYSQL_PORT=36301
+      - WORKER_MYSQL_USER=root
+      - WORKER_MYSQL_PASSWORD=alwaysup@888
+      - WORKER_MYSQL_DATABASE=alwaysup
+      - WORKER_CLICKHOUSE_HOST=127.0.0.1
+      - WORKER_CLICKHOUSE_PORT=9000
+      - WORKER_CLICKHOUSE_USER=default
+      - WORKER_CLICKHOUSE_PASSWORD=
+      - WORKER_CLICKHOUSE_DATABASE=stock_data
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./libs/gsd-shared:/app/libs/gsd-shared:ro
       - ./logs/task-orchestrator:/app/logs
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:18000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
