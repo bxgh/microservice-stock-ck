@@ -4,38 +4,75 @@ from fastapi import FastAPI
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 import docker
+import aiomysql
 from datetime import datetime
+from pathlib import Path
 
 from config.settings import settings
+from config.task_loader import TaskLoader, TaskConfig, ScheduleType
+from core.logger_service import TaskLogger
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Global Scheduler
+# Global Scheduler and Clients
 scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
 docker_client = None
+mysql_pool = None
+task_logger = None
+task_config: TaskConfig = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    global docker_client
+    global docker_client, mysql_pool, task_logger, task_config
     logger.info("🚀 Starting Task Orchestrator...")
     
-    # Initialize Docker Client
+    # 1. Initialize MySQL Connection Pool
+    try:
+        mysql_pool = await aiomysql.create_pool(
+            host=settings.MYSQL_HOST,
+            port=settings.MYSQL_PORT,
+            user=settings.MYSQL_USER,
+            password=settings.MYSQL_PASSWORD,
+            db=settings.MYSQL_DATABASE,
+            minsize=1,
+            maxsize=settings.MYSQL_POOL_SIZE
+        )
+        logger.info(f"✓ MySQL pool created ({settings.MYSQL_HOST}:{settings.MYSQL_PORT})")
+        
+        # Initialize Task Logger
+        task_logger = TaskLogger(mysql_pool)
+        logger.info("✓ TaskLogger initialized")
+    except Exception as e:
+        logger.error(f"❌ Failed to connect to MySQL: {e}")
+        raise
+    
+    # 2. Initialize Docker Client
     try:
         docker_client = docker.DockerClient(base_url=settings.DOCKER_HOST)
         version = docker_client.version()
         logger.info(f"🐳 Connected to Docker Engine v{version.get('Version')}")
     except Exception as e:
         logger.error(f"❌ Failed to connect to Docker: {e}")
-        # We might want to exit here if Docker is critical, but for now just log
+        raise
     
-    # Start Scheduler
+    # 3. Load Task Configuration from YAML
+    try:
+        config_path = Path(__file__).parent.parent / "config" / "tasks.yml"
+        loader = TaskLoader()
+        task_config = loader.load_from_yaml(str(config_path))
+        logger.info(f"✓ Loaded {len(task_config.tasks)} tasks from YAML")
+    except Exception as e:
+        logger.error(f"❌ Failed to load task configuration: {e}")
+        raise
+    
+    # 4. Start Scheduler
     scheduler.start()
     logger.info("⏰ Scheduler started")
     
-    # Register Scheduled Jobs
+    # 5. Register Scheduled Jobs
     await register_jobs()
     
     yield
@@ -43,35 +80,61 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("🛑 Shutting down Task Orchestrator...")
     scheduler.shutdown()
+    
     if docker_client:
         docker_client.close()
+    
+    if mysql_pool:
+        mysql_pool.close()
+        await mysql_pool.wait_closed()
+        logger.info("✓ MySQL pool closed")
 
 async def register_jobs() -> None:
-    """Register all scheduled jobs"""
-    logger.info("🔧 Registering jobs...")
+    """Register all scheduled jobs from YAML configuration"""
+    global task_config
+    
+    logger.info(f"🔧 Registering {len(task_config.tasks)} jobs from YAML...")
+    
     try:
         from scheduler.triggers import TradingDayTrigger
         from gsd_shared.utils.calendar_service import CalendarService
         
-        logger.info("🔧 Initializing CalendarService...")
         cal_service = CalendarService()
         
-        logger.info("🔧 Creating TradingDayTrigger...")
-        # K-Line Sync: 15:05 on Trading Days
-        trigger = TradingDayTrigger(
-            CronTrigger(hour=15, minute=5, timezone=settings.TIMEZONE),
-            cal_service
-        )
+        # 只注册启用的任务
+        enabled_tasks = [t for t in task_config.tasks if t.enabled]
         
-        logger.info("🔧 Adding job to scheduler...")
-        scheduler.add_job(
-            job_daily_sync_kline,
-            trigger,
-            id="daily_sync_kline",
-            name="Daily K-Line Sync",
-            replace_existing=True
-        )
-        logger.info("📅 Registered job: Daily K-Line Sync (15:05 Trading Days)")
+        for task_def in enabled_tasks:
+            # 创建触发器
+            if task_def.schedule.type == ScheduleType.TRADING_CRON:
+                base_trigger = CronTrigger.from_crontab(
+                    task_def.schedule.expression,
+                    timezone=settings.TIMEZONE
+                )
+                trigger = TradingDayTrigger(base_trigger, cal_service)
+            elif task_def.schedule.type == ScheduleType.CRON:
+                trigger = CronTrigger.from_crontab(
+                    task_def.schedule.expression,
+                    timezone=settings.TIMEZONE
+                )
+            else:
+                logger.warning(f"Skipping task {task_def.id}: unsupported schedule type {task_def.schedule.type}")
+                continue
+            
+            # 注册任务
+            # TODO: 根据任务类型创建不同的执行函数
+            # 暂时使用硬编码的 job_daily_sync_kline
+            if task_def.id == "daily_kline_sync":
+                scheduler.add_job(
+                    job_daily_sync_kline,
+                    trigger,
+                    id=task_def.id,
+                    name=task_def.name,
+                    replace_existing=True
+                )
+                logger.info(f"📅 Registered: {task_def.name} ({task_def.schedule.expression})")
+        
+        logger.info(f"✓ Registered {len(enabled_tasks)} jobs")
     except Exception as e:
         logger.error(f"❌ Failed to register jobs: {e}")
         raise

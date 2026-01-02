@@ -46,5 +46,13 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_prefix = "ORCHESTRATOR_"
+    
+    # Orchestrator MySQL (for task logs)
+    MYSQL_HOST: str = "127.0.0.1"
+    MYSQL_PORT: int = 36301  # GOST tunnel
+    MYSQL_USER: str = "root"
+    MYSQL_PASSWORD: str = "alwaysup@888"
+    MYSQL_DATABASE: str = "alwaysup"
+    MYSQL_POOL_SIZE: int = 5
 
 settings = Settings()
