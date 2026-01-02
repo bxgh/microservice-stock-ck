@@ -14,7 +14,7 @@ from models.base_models import ApiResponse
 logger = logging.getLogger(__name__)
 
 # 创建路由器
-health_router = APIRouter(prefix="/api/v1", tags=["health"])
+router = APIRouter(prefix="/api/v1", tags=["health"])
 
 # 记录服务启动时间
 start_time = datetime.now()
@@ -25,7 +25,7 @@ def _get_uptime() -> int:
     return int((datetime.now() - start_time).total_seconds())
 
 
-@health_router.get("/health", response_model=None, summary="健康检查")
+@router.get("/health", response_model=None, summary="健康检查")
 async def health_check():
     """
     系统健康检查端点
@@ -89,7 +89,7 @@ async def health_check():
         )
 
 
-@health_router.get("/ready", response_model=None, summary="就绪检查")
+@router.get("/ready", response_model=None, summary="就绪检查")
 async def readiness_check():
     """
     就绪检查端点
@@ -113,7 +113,7 @@ async def readiness_check():
         )
 
 
-@health_router.get("/live", response_model=None, summary="存活检查")
+@router.get("/live", response_model=None, summary="存活检查")
 async def liveness_check():
     """
     存活检查端点
