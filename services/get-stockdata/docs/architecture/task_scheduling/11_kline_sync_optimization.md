@@ -115,11 +115,15 @@ LIMIT 1;
 **表名**: `sync_progress` (已存在)  
 **库名**: `alwaysup`
 
-**关键字段说明**:
-- `task_name`: 云端全市场采集任务固定为 `'full_market_sync'`
-- `total_records`: 用于阈值校验（正常应 > 4800）
-- `updated_at`: 用于历史预测和今日信号检测
-- `status`: completed(完成), failed(失败), running(进行中)
+**查询示例**（用于历史预测）:
+```sql
+SELECT updated_at 
+FROM sync_progress 
+WHERE task_name = 'full_market_sync' 
+  AND status = 'completed' 
+ORDER BY updated_at DESC 
+LIMIT 1;
+```
 
 ### 6.2 本地同步日志表 (腾讯云 MySQL)
 
