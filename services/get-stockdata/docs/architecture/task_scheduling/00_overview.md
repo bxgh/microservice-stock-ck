@@ -44,16 +44,34 @@
 | 50-200 只 | 告警+人工确认 |
 | > 200 只 | 终止+紧急告警 |
 
+### 决策 5：自适应触发逻辑 (针对 K线同步)
+
+**选择**：基于前一日云端完成时间预测 + 实时信号量轮询。
+
+**原因**：
+- 云端 Baostock 采集时间不固定（通常在 18:30 以后）。
+- 避免盲目等待导致的资源浪费。
+- 确保本地同步的数据完整性。
+
 ## 服务职责
 
-```
-本地服务器职责 (ClickHouse 入库后)
-├── 数据同步 (MySQL → ClickHouse)
-├── 数据校验 (完整性检测)
-├── 自动修复 (小规模缺失)
-├── 策略触发 (调用 quant-strategy)
-└── 告警通知 (推送到企微)
+```mermaid
+graph TD
+    Cloud[腾讯云 Baostock 采集] -- 写入数据 --> CloudDB[(腾讯云 MySQL)]
+    Cloud -- 写入 SUCCESS 日志 --> CloudLog[sync_execution_logs]
+    
+    subgraph 本地环境
+    Orchestrator[task-orchestrator] -- 18:30 触发预备 --> Worker[gsd-worker]
+    Worker -- 1. 查询 CloudLog 历史耗时 --> Worker
+    Worker -- 2. 计算预测窗口并等待 --> Worker
+    Worker -- 3. 轮询今日 SUCCESS 信号 --> Worker
+    Worker -- 4. 数据搬运 --> LocalCH[(本地 ClickHouse)]
+    end
 ```
 
-云端职责 (不在本地)：
-- 数据采集 (Baostock/AkShare → MySQL)
+| 维度 | 内容 |
+|:---------|:---------|
+| **数据来源 (Source)** | 腾讯云 MySQL (`alwaysup.stock_kline_daily`) |
+| **数据去向 (Target)** | 本地 ClickHouse (`stock_data.stock_kline_daily`) |
+| **触发信号** | 腾讯云 MySQL `sync_execution_logs` (task_name = 'kline_daily_sync') |
+| **启动基准** | 18:30（进入自适应检查阶段） |
