@@ -89,6 +89,14 @@ class Settings(BaseSettings):
     max_retries: int = 3
     retry_delay: int = 5
 
+    # K线同步调度配置
+    kline_sync_history_buffer_min: int = 5
+    kline_sync_sleep_check_interval_min: int = 15
+    kline_sync_poll_interval_min: int = 2
+    kline_sync_timeout_time: str = "21:00"
+    kline_sync_min_records: int = 4800
+    kline_sync_batch_size: int = 10000
+
     class Config:
         env_file = ".env"
         env_prefix = "GSD_"

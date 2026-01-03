@@ -424,24 +424,41 @@ class KLineSyncService:
         await self._update_status("running", "开始同步复权因子...", 0.0)
         
         try:
+            # 1. 查询ClickHouse最大除权日期
+            async with self.clickhouse_pool.acquire() as ch_conn:
+                async with ch_conn.cursor() as cursor:
+                    await cursor.execute("SELECT MAX(ex_date) FROM stock_adjust_factor")
+                    result = await cursor.fetchone()
+                    ch_max_date = result[0] if result and result[0] else None # '1900-01-01' logic in date check
+
+            # 构建查询条件
+            if ch_max_date:
+                logger.info(f"ClickHouse复权因子最大日期: {ch_max_date}")
+                where_clause = f"WHERE adjust_date > '{ch_max_date}'"
+            else:
+                logger.info("ClickHouse无复权因子数据，执行全量同步")
+                where_clause = ""
+            
+            # 2. 获取MySQL待同步总数
             async with self.mysql_pool.acquire() as mysql_conn:
                 async with mysql_conn.cursor(aiomysql.DictCursor) as cursor:
-                    # 1. 获取总数
-                    await cursor.execute("SELECT COUNT(*) as cnt FROM stock_adjust_factor")
+                    await cursor.execute(f"SELECT COUNT(*) as cnt FROM stock_adjust_factor {where_clause}")
                     total = (await cursor.fetchone())['cnt']
-                    logger.info(f"MySQL 复权因子总数: {total:,}")
+                    logger.info(f"待同步复权因子总数: {total:,}")
                     
                     if total == 0:
-                        await self._update_status("success", "MySQL无复权因子数据", 100.0)
+                        await self._update_status("success", "无新复权因子数据", 100.0)
+                        await self._log_to_db("SUCCESS", 0, "无新复权因子数据", (datetime.now() - start_time).total_seconds())
                         return
 
-                    # 2. 分批同步
+                    # 3. 分批同步
                     offset = 0
                     synced = 0
                     while offset < total:
                         query = f"""
                             SELECT code, adjust_date, fore_adjust_factor, back_adjust_factor
                             FROM stock_adjust_factor
+                            {where_clause}
                             ORDER BY adjust_date, code
                             LIMIT {batch_size} OFFSET {offset}
                         """
