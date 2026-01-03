@@ -16,6 +16,7 @@ from tenacity import (
     retry_if_exception_type,
     before_sleep_log
 )
+from core.exceptions import DataMismatchException
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +109,7 @@ class KLineSyncService:
         except Exception as e:
             logger.warning(f"Failed to update redis status: {e}")
 
-    async def _log_to_db(self, status: str, records: int, message: str, duration: float):
+    async def _log_to_db(self, status: str, records: int, message: str, duration: float, task_name: str = "kline_daily_sync"):
         """记录执行结果到 MySQL"""
         try:
             if not self.mysql_pool:
@@ -123,7 +124,7 @@ class KLineSyncService:
                         VALUES (%s, %s, %s, %s, %s, NOW())
                     """
                     await cursor.execute(sql, (
-                        "kline_daily_sync", 
+                        task_name, 
                         status.upper(), 
                         records, 
                         message, 
@@ -251,6 +252,12 @@ class KLineSyncService:
             duration = (datetime.now() - start_time).total_seconds()
             if rows:
                 await self._insert_to_clickhouse_enhanced(rows)
+                
+                # [NEW] Verify Consistency
+                distinct_dates = sorted(list(set(row['trade_date'] for row in rows)))
+                for d in distinct_dates:
+                     await self.verify_consistency(d)
+
                 min_date = min(row['trade_date'] for row in rows)
                 max_date = max(row['trade_date'] for row in rows)
                 msg = f"智能增量同步完成：{len(rows):,} 条记录 ({min_date} ~ {max_date})"
@@ -613,6 +620,40 @@ class KLineSyncService:
                 await cursor.execute("SET max_partitions_per_insert_block = 10000")
                 await cursor.execute(insert_query, values)
                 logger.debug(f"插入 {len(valid_rows)} 条记录到ClickHouse (校验通过率: {len(valid_rows)}/{len(rows)})")
+
+    async def verify_consistency(self, trade_date: str):
+        """
+        验证指定日期的数据一致性 (Verify-After-Write)
+        
+        策略: 对比 MySQL 和 ClickHouse 的记录数
+        """
+        logger.info(f"正在校验数据一致性: {trade_date}")
+        
+        # 1. Query MySQL Count
+        mysql_count = 0
+        async with self.mysql_pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute("SELECT COUNT(*) FROM stock_kline_daily WHERE trade_date = %s", (trade_date,))
+                res = await cursor.fetchone()
+                mysql_count = res[0] if res else 0
+
+        # 2. Query ClickHouse Count
+        ch_count = 0
+        async with self.clickhouse_pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                # Use parameterized query to prevent SQL injection
+                await cursor.execute("SELECT count() FROM stock_kline_daily WHERE trade_date = %(date)s", {'date': trade_date})
+                res = await cursor.fetchone()
+                ch_count = res[0] if res else 0
+        
+        # 3. Compare
+        if mysql_count != ch_count:
+            msg = f"数据不一致 ({trade_date}): MySQL={mysql_count} vs ClickHouse={ch_count}"
+            logger.error(f"❌ {msg}")
+            # Raise exception to trigger retry or failure log
+            raise DataMismatchException(msg, mysql_count, ch_count)
+        
+        logger.info(f"✓ 一致性校验通过 ({trade_date}): count={mysql_count}")
 
     # ========== 增强验证层 (L2, L5, L7) ==========
     

@@ -176,7 +176,20 @@ tasks:
       max_attempts: 1
   
   # ========== 数据质量任务 ==========
-  
+
+  # 每周深度审计 (P0) - 全量聚合校验 & 自动修复
+  - id: weekly_deep_audit
+    name: 每周深度审计
+    type: docker
+    enabled: true
+    schedule:
+      type: cron
+      expression: "0 2 * * 0"  # 周日 02:00
+    target:
+      command: ["jobs.weekly_audit"]
+    retry:
+      max_attempts: 1
+
   # 月度数据审计 (P2)
   - id: monthly_audit
     name: 月度数据审计

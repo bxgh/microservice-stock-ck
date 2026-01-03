@@ -175,6 +175,16 @@ async def register_jobs() -> None:
                     replace_existing=True
                 )
                 logger.info(f"📅 Registered: {task_def.name} ({task_def.schedule.expression})")
+            
+            elif task_def.id == "weekly_deep_audit":
+                scheduler.add_job(
+                    job_weekly_deep_audit,
+                    trigger,
+                    id=task_def.id,
+                    name=task_def.name,
+                    replace_existing=True
+                )
+                logger.info(f"📅 Registered: {task_def.name} ({task_def.schedule.expression})")
         
         logger.info(f"✓ Registered {len(enabled_tasks)} jobs")
     except Exception as e:
@@ -231,6 +241,28 @@ async def job_daily_sync_kline() -> None:
     )
     
     await engine.run_workflow(workflow)
+
+async def job_weekly_deep_audit() -> None:
+    """Weekly Deep Audit Job"""
+    from executor.docker_executor import DockerExecutor
+    
+    if not docker_client:
+        logger.error("❌ Docker client not connected, skipping job")
+        return
+        
+    executor = DockerExecutor(docker_client)
+    
+    # Run the worker with weekly_audit command
+    # Using DockerExecutor directly since it's a single container task
+    try:
+        container_id = executor.run_worker(
+            command=["jobs.weekly_audit"],
+            name_suffix="weekly-audit",
+            environment={"PYTHONPATH": "/app/src"}
+        )
+        logger.info(f"🚀 Started Weekly Audit job (CID: {container_id})")
+    except Exception as e:
+        logger.error(f"❌ Failed to start Weekly Audit job: {e}")
 
 app = FastAPI(
     title=settings.APP_NAME,
