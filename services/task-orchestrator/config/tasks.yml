@@ -24,39 +24,52 @@ global:
 tasks:
   # ========== 数据同步任务 ==========
   
-  # K线每日同步 (P0)
+  # K线每日同步 - 本地模式 (P0)
+  # 本地单进程执行，调用 Mootdx 获取数据
   - id: daily_kline_sync
     name: K线每日同步
-    type: workflow
+    type: docker
     enabled: true
     schedule:
       type: trading_cron
       expression: "5 15 * * 1-5"
-    workflow:
-      - id: sync-shards
-        parallel: true
-        tasks:
-          - id: sync-0
-            command: ["jobs.sync_kline", "--shard", "0", "--total", "4"]
-          - id: sync-1
-            command: ["jobs.sync_kline", "--shard", "1", "--total", "4"]
-          - id: sync-2
-            command: ["jobs.sync_kline", "--shard", "2", "--total", "4"]
-          - id: sync-3
-            command: ["jobs.sync_kline", "--shard", "3", "--total", "4"]
-      
-      - id: quality-check
-        command: ["jobs.quality_check", "--deep", "--batch", "100"]
-        depends_on: [sync-shards]
-      
-      - id: data-repair
-        command: ["jobs.data_repair", "--limit", "20"]
-        depends_on: [quality-check]
-    
+    target:
+      command: ["jobs.sync_kline"]  # 无分片参数，顺序执行
     retry:
       max_attempts: 2
       backoff_seconds: 600
-      backoff_multiplier: 2.0
+  
+  # K线每日同步 - 云端分片模式 (未来腾讯云部署使用)
+  # 4个分片并行，调用 Baostock 获取数据
+  # - id: daily_kline_sync_cloud
+  #   name: K线每日同步(云端)
+  #   type: workflow
+  #   enabled: false
+  #   schedule:
+  #     type: trading_cron
+  #     expression: "5 15 * * 1-5"
+  #   workflow:
+  #     - id: sync-shards
+  #       parallel: true
+  #       tasks:
+  #         - id: sync-0
+  #           command: ["jobs.sync_kline", "--shard", "0", "--total", "4"]
+  #         - id: sync-1
+  #           command: ["jobs.sync_kline", "--shard", "1", "--total", "4"]
+  #         - id: sync-2
+  #           command: ["jobs.sync_kline", "--shard", "2", "--total", "4"]
+  #         - id: sync-3
+  #           command: ["jobs.sync_kline", "--shard", "3", "--total", "4"]
+  #     - id: quality-check
+  #       command: ["jobs.quality_check", "--deep", "--batch", "100"]
+  #       depends_on: [sync-shards]
+  #     - id: data-repair
+  #       command: ["jobs.data_repair", "--limit", "20"]
+  #       depends_on: [quality-check]
+  #   retry:
+  #     max_attempts: 2
+  #     backoff_seconds: 600
+
   
   # 财务数据更新 (P1)
   - id: weekly_financial_sync
