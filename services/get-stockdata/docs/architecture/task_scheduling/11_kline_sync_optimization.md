@@ -84,7 +84,7 @@ LIMIT 1;
                                                      
 19:08                                                ✅ 同步完成 (耗时 12 分钟)
                                                      📝 写入本地日志:
-                                                        sync_execution_logs (本地)
+                                                        sync_execution_logs
                                                         status = 'SUCCESS'
                                                      🎉 容器退出
 ```
