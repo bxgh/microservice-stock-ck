@@ -13,11 +13,11 @@
 **对象**: 腾讯云 MySQL (`alwaysup`)
 **SQL**:
 ```sql
-SELECT execution_time 
-FROM sync_execution_logs 
-WHERE task_name = 'kline_daily_sync' 
-  AND status = 'SUCCESS' 
-ORDER BY execution_time DESC 
+SELECT last_update_time 
+FROM sync_progress 
+WHERE task_name = 'full_market_sync' 
+  AND status = 'completed' 
+ORDER BY last_update_time DESC 
 LIMIT 1;
 ```
 
@@ -31,8 +31,8 @@ LIMIT 1;
 
 ### 2.3 信号量轮询阶段 (Polling)
 进入窗口期后，系统转为高频轮询（每 2 分钟检查一次）：
-- **检测目标**: 今日日期且状态为 `SUCCESS` 的 `kline_daily_sync` 记录。
-- **阈值校验**: 验证 `records_processed` 是否在正常范围（如 > 4800）。
+- **检测目标**: 今日日期且状态为 `completed` 的 `full_market_sync` 记录。
+- **阈值校验**: 验证 `total_records` 是否在正常范围（如 > 4800）。
 
 ## 3. 异常处理与保障
 
@@ -74,17 +74,17 @@ LIMIT 1;
 
 18:55           ✅ 采集完成
                 📝 写入日志:
-                   task_name = 'kline_daily_sync'
-                   status = 'SUCCESS'
-                   records_processed = 5000
+                   task_name = 'full_market_sync'
+                   status = 'completed'
+                   total_records = 5000
 
-18:56                                                🔍 检查信号: ✅ 发现 SUCCESS
+18:56                                                🔍 检查信号: ✅ 发现 completed
                                                      ✓ 阈值校验: 5000 > 4800 通过
                                                      🚚 开始同步 MySQL → ClickHouse
                                                      
 19:08                                                ✅ 同步完成 (耗时 12 分钟)
                                                      📝 写入本地日志:
-                                                        task_execution_logs
+                                                        sync_execution_logs (本地)
                                                         status = 'SUCCESS'
                                                      🎉 容器退出
 ```
@@ -99,7 +99,7 @@ LIMIT 1;
 
 19:15           ❌ 采集失败
                 📝 写入日志:
-                   status = 'FAILED'
+                   status = 'failed'
                    error_message = 'Baostock timeout'
 
 19:16                                                🔍 发现 FAILED 记录
@@ -110,34 +110,36 @@ LIMIT 1;
 
 ## 6. 数据表结构定义
 
-### 6.1 云端信号量表 (腾讯云 MySQL)
+### 6.1 云端采集进度表 (腾讯云 MySQL)
 
 ```sql
--- 表名: sync_execution_logs
+-- 表名: sync_progress
 -- 库名: alwaysup
-CREATE TABLE sync_execution_logs (
+CREATE TABLE sync_progress (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     task_name VARCHAR(50) NOT NULL COMMENT '任务名称',
-    execution_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '执行时间',
-    status VARCHAR(20) NOT NULL COMMENT '状态: SUCCESS, FAILED, RUNNING',
-    records_processed INT DEFAULT 0 COMMENT '同步/处理记录数',
-    details TEXT COMMENT '详细日志信息',
-    duration_seconds FLOAT DEFAULT 0.0 COMMENT '耗时(秒)',
-    INDEX idx_task_time (task_name, execution_time)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='云端采集任务执行日志表';
+    last_update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '最后更新时间',
+    status VARCHAR(20) NOT NULL COMMENT '状态: completed, failed, running',
+    total_records INT DEFAULT 0 COMMENT '总记录数',
+    start_time DATETIME COMMENT '开始时间',
+    end_time DATETIME COMMENT '结束时间',
+    error_message TEXT COMMENT '错误信息',
+    INDEX idx_task_time (task_name, last_update_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='云端采集任务进度表';
 ```
 
 **关键字段说明**:
-- `task_name`: 云端采集任务固定为 `'kline_daily_sync'`
-- `records_processed`: 用于阈值校验（正常应 > 4800）
-- `execution_time`: 用于历史预测和今日信号检测
+- `task_name`: 云端全市场采集任务固定为 `'full_market_sync'`
+- `total_records`: 用于阈值校验（正常应 > 4800）
+- `last_update_time`: 用于历史预测和今日信号检测
+- `status`: completed(完成), failed(失败), running(进行中)
 
-### 6.2 本地执行日志表 (本地 MySQL)
+### 6.2 本地同步日志表 (本地 MySQL)
 
 ```sql
--- 表名: task_execution_logs
+-- 表名: sync_execution_logs
 -- 库名: alwaysup (本地)
-CREATE TABLE task_execution_logs (
+CREATE TABLE sync_execution_logs (
     id VARCHAR(36) PRIMARY KEY,
     task_id VARCHAR(100) NOT NULL,
     task_name VARCHAR(100) NOT NULL,
@@ -158,7 +160,7 @@ K线同步任务**同时处理**复权因子数据：
 
 ```
 gsd-worker 执行流程:
-1. 检测云端信号 (kline_daily_sync SUCCESS)
+1. 检测云端信号 (full_market_sync completed)
 2. 同步 K线数据 (stock_kline_daily)
 3. 同步 复权因子 (stock_adjust_factor)  ← 自动执行
 4. 写入本地日志

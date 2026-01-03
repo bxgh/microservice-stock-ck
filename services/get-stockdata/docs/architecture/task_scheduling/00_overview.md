@@ -58,13 +58,13 @@
 ```mermaid
 graph TD
     Cloud[腾讯云 Baostock 采集] -- 写入数据 --> CloudDB[(腾讯云 MySQL)]
-    Cloud -- 写入 SUCCESS 日志 --> CloudLog[sync_execution_logs]
+    Cloud -- 写入 completed 状态 --> CloudLog[sync_progress]
     
     subgraph 本地环境
     Orchestrator[task-orchestrator] -- 18:30 触发预备 --> Worker[gsd-worker]
     Worker -- 1. 查询 CloudLog 历史耗时 --> Worker
     Worker -- 2. 计算预测窗口并等待 --> Worker
-    Worker -- 3. 轮询今日 SUCCESS 信号 --> Worker
+    Worker -- 3. 轮询今日 completed 信号 --> Worker
     Worker -- 4. 数据搬运 --> LocalCH[(本地 ClickHouse)]
     end
 ```
@@ -73,5 +73,5 @@ graph TD
 |:---------|:---------|
 | **数据来源 (Source)** | 腾讯云 MySQL (`alwaysup.stock_kline_daily`) |
 | **数据去向 (Target)** | 本地 ClickHouse (`stock_data.stock_kline_daily`) |
-| **触发信号** | 腾讯云 MySQL `sync_execution_logs` (task_name = 'kline_daily_sync') |
+| **触发信号** | 腾讯云 MySQL `sync_progress` (task_name = 'full_market_sync') |
 | **启动基准** | 18:30（进入自适应检查阶段） |
