@@ -112,21 +112,8 @@ LIMIT 1;
 
 ### 6.1 云端采集进度表 (腾讯云 MySQL)
 
-```sql
--- 表名: sync_progress
--- 库名: alwaysup
-CREATE TABLE sync_progress (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    task_name VARCHAR(50) NOT NULL COMMENT '任务名称',
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '最后更新时间',
-    status VARCHAR(20) NOT NULL COMMENT '状态: completed, failed, running',
-    total_records INT DEFAULT 0 COMMENT '总记录数',
-    start_time DATETIME COMMENT '开始时间',
-    end_time DATETIME COMMENT '结束时间',
-    error_message TEXT COMMENT '错误信息',
-    INDEX idx_task_time (task_name, updated_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='云端采集任务进度表';
-```
+**表名**: `sync_progress` (已存在)  
+**库名**: `alwaysup`
 
 **关键字段说明**:
 - `task_name`: 云端全市场采集任务固定为 `'full_market_sync'`
