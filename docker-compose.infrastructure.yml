@@ -49,14 +49,18 @@ services:
     image: clickhouse/clickhouse-server:latest
     container_name: microservice-stock-clickhouse
     restart: unless-stopped
-    volumes:
-      - clickhouse_data:/var/lib/clickhouse
-      - clickhouse_logs:/var/log/clickhouse-server
     ports:
       - "8123:8123"  # HTTP接口
       - "9000:9000"  # TCP接口
       - "9004:9004"  # MySQL兼容接口
       - "9009:9009"  # 复制通信接口
+      - "9181:9181"  # Keeper 客户端端口
+      - "9234:9234"  # Keeper Raft 端口
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - clickhouse_logs:/var/log/clickhouse-server
+      - ./infrastructure/clickhouse/config/keeper_config.xml:/etc/clickhouse-server/config.d/keeper_config.xml:ro
+      - ./infrastructure/clickhouse/config/replication_config.xml:/etc/clickhouse-server/config.d/replication_config.xml:ro
     networks:
       - microservice-stock
     depends_on:

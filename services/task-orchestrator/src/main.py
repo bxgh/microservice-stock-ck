@@ -1,15 +1,17 @@
 import logging
 from contextlib import asynccontextmanager
+from typing import Optional, Dict, Any
 from fastapi import FastAPI
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 import docker
 import aiomysql
+import httpx
 from datetime import datetime
 from pathlib import Path
 
 from config.settings import settings
-from config.task_loader import TaskLoader, TaskConfig, ScheduleType
+from config.task_loader import TaskLoader, TaskConfig, ScheduleType, TaskDefinition, TaskType
 from core.logger_service import TaskLogger
 
 # Setup logging
@@ -60,6 +62,209 @@ async def auto_migrate():
     
     except Exception as e:
         logger.error(f"❌ Migration failed: {e}")
+        raise
+
+# --- Generic Runners ---
+
+class GenericTaskRunner:
+    @staticmethod
+    async def run_http_task(task: TaskDefinition):
+        """Generic runner for HTTP tasks"""
+        logger.info(f"▶️ Executing HTTP task: {task.name} ({task.target.method} {task.target.url})")
+        
+        async with httpx.AsyncClient(timeout=task.target.timeout_seconds) as client:
+            try:
+                response = await client.request(
+                    method=task.target.method,
+                    url=task.target.url,
+                    headers=task.target.headers,
+                    content=task.target.body
+                )
+                response.raise_for_status()
+                logger.info(f"✅ HTTP Task success: {task.name} - Status {response.status_code}")
+                # Log execution success (TODO: Integrate with TaskLogger)
+            except Exception as e:
+                logger.error(f"❌ HTTP Task failed: {task.name} - {e}")
+                raise
+
+    @staticmethod
+    async def run_docker_task(task: TaskDefinition):
+        """Generic runner for Docker tasks"""
+        if not docker_client:
+            logger.error("❌ Docker client not connected")
+            return
+
+        logger.info(f"▶️ Executing Docker task: {task.name} ({task.target.image})")
+        try:
+            container = docker_client.containers.run(
+                image=task.target.image,
+                command=task.target.command,
+                environment=task.target.environment,
+                detach=True,
+                remove=True  # Auto-remove after run? Or track status?
+            )
+            logger.info(f"✅ Docker Task started: {task.name} - CID {container.id[:12]}")
+        except Exception as e:
+            logger.error(f"❌ Docker Task failed: {task.name} - {e}")
+            raise
+
+# --- Custom Job Handlers ---
+
+async def job_daily_sync_kline() -> None:
+    """Daily K-Line Sync & Quality Check Workflow (Specialized Logic)"""
+    from executor.docker_executor import DockerExecutor
+    from core.dag_engine import DAGEngine, Workflow, Task
+    
+    if not docker_client:
+        logger.error("❌ Docker client not connected, skipping job")
+        return
+        
+    executor = DockerExecutor(docker_client)
+    engine = DAGEngine(executor)
+    
+    # Define Workflow
+    total_shards = 4 
+    sync_tasks = []
+    
+    # Step 1: Sync Shards
+    for i in range(total_shards):
+        sync_tasks.append(Task(
+            id=f"sync-shard-{i}",
+            name=f"K-Line Sync Shard {i}",
+            command=["jobs.sync_kline", "--shard", str(i), "--total", str(total_shards)],
+            environment={"PYTHONPATH": "/app/src"}
+        ))
+    
+    # Step 2: Quality Check (Depends on ALL shards)
+    quality_task = Task(
+        id="quality-check",
+        name="Data Quality Daily Check",
+        command=["jobs.quality_check", "--deep", "--batch", "100"],
+        dependencies={t.id for t in sync_tasks},
+        environment={"PYTHONPATH": "/app/src"}
+    )
+    
+    # Step 3: Data Repair (Depends on Quality Check)
+    repair_task = Task(
+        id="data-repair",
+        name="Auto Data Repair",
+        command=["jobs.data_repair", "--limit", "20"],
+        dependencies={quality_task.id},
+        environment={"PYTHONPATH": "/app/src"}
+    )
+    
+    workflow = Workflow(
+        name="Daily Market Sync & Quality Check",
+        tasks=sync_tasks + [quality_task, repair_task]
+    )
+    
+    logger.info("🚀 Starting Daily Market Sync workflow...")
+    await engine.run_workflow(workflow)
+
+async def job_weekly_deep_audit() -> None:
+    """Weekly Deep Audit Job (Specialized Logic)"""
+    from executor.docker_executor import DockerExecutor
+    
+    logger.info("🛠️ Manual/Scheduled execution started: weekly_deep_audit")
+    if not docker_client:
+        logger.error("❌ Docker client not connected, skipping job")
+        return
+        
+    executor = DockerExecutor(docker_client)
+    
+    # Run the worker with weekly_audit command
+    try:
+        container_id = executor.run_worker(
+            command=["jobs.weekly_audit"],
+            name_suffix="weekly-audit",
+            environment={"PYTHONPATH": "/app/src"}
+        )
+        logger.info(f"🚀 Started Weekly Audit job (CID: {container_id})")
+    except Exception as e:
+        logger.error(f"❌ Failed to start Weekly Audit job: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+
+# --- Registration Logic ---
+
+async def register_jobs() -> None:
+    """Register all scheduled jobs from YAML configuration"""
+    global task_config
+    
+    logger.info(f"🔧 Registering {len(task_config.tasks)} jobs from YAML...")
+    
+    try:
+        from scheduler.triggers import TradingDayTrigger
+        from gsd_shared.utils.calendar_service import CalendarService
+        
+        cal_service = CalendarService()
+        
+        # 只注册启用的任务
+        enabled_tasks = [t for t in task_config.tasks if t.enabled]
+        
+        for task_def in enabled_tasks:
+            # 1. 创建触发器
+            trigger = None
+            if task_def.schedule.type == ScheduleType.TRADING_CRON:
+                base_trigger = CronTrigger.from_crontab(
+                    task_def.schedule.expression,
+                    timezone=settings.TIMEZONE
+                )
+                trigger = TradingDayTrigger(base_trigger, cal_service)
+            elif task_def.schedule.type == ScheduleType.CRON:
+                trigger = CronTrigger.from_crontab(
+                    task_def.schedule.expression,
+                    timezone=settings.TIMEZONE
+                )
+            else:
+                logger.warning(f"Skipping task {task_def.id}: unsupported schedule type {task_def.schedule.type}")
+                continue
+            
+            # 2. 确定执行函数
+            job_func = None
+            
+            # A. 优先查找是否存在特定的 Handler 函数 (job_{task_id})
+            # 这样可以保留复杂的 DAG 逻辑或特殊处理
+            special_handler_name = f"job_{task_def.id}"
+            if special_handler_name in globals():
+                job_func = globals()[special_handler_name]
+                logger.info(f"  • {task_def.id}: Using specialized handler '{special_handler_name}'")
+            
+            # B. 如果没有特殊 Handler，使用通用 Runner
+            else:
+                if task_def.type == TaskType.HTTP:
+                    # 使用闭包或 functools.partial 来绑定 task_def
+                    # 这里定义一个 wrapper
+                    async def http_wrapper(t=task_def):
+                        await GenericTaskRunner.run_http_task(t)
+                    job_func = http_wrapper
+                    logger.info(f"  • {task_def.id}: Using Generic HTTP Runner")
+                    
+                elif task_def.type == TaskType.DOCKER:
+                    async def docker_wrapper(t=task_def):
+                        await GenericTaskRunner.run_docker_task(t)
+                    job_func = docker_wrapper
+                    logger.info(f"  • {task_def.id}: Using Generic Docker Runner")
+                
+                else:
+                    logger.warning(f"Skipping task {task_def.id}: unsupported task type {task_def.type}")
+                    continue
+
+            # 3. 注册到 Scheduler
+            scheduler.add_job(
+                job_func,
+                trigger,
+                id=task_def.id,
+                name=task_def.name,
+                replace_existing=True
+            )
+            logger.info(f"  ✓ Registered: {task_def.name} ({task_def.schedule.expression})")
+        
+        logger.info(f"✓ Registered all jobs from YAML")
+    except Exception as e:
+        logger.error(f"❌ Failed to register jobs: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         raise
 
 @asynccontextmanager
@@ -131,139 +336,6 @@ async def lifespan(app: FastAPI):
         await mysql_pool.wait_closed()
         logger.info("✓ MySQL pool closed")
 
-async def register_jobs() -> None:
-    """Register all scheduled jobs from YAML configuration"""
-    global task_config
-    
-    logger.info(f"🔧 Registering {len(task_config.tasks)} jobs from YAML...")
-    
-    try:
-        from scheduler.triggers import TradingDayTrigger
-        from gsd_shared.utils.calendar_service import CalendarService
-        
-        cal_service = CalendarService()
-        
-        # 只注册启用的任务
-        enabled_tasks = [t for t in task_config.tasks if t.enabled]
-        
-        for task_def in enabled_tasks:
-            # 创建触发器
-            if task_def.schedule.type == ScheduleType.TRADING_CRON:
-                base_trigger = CronTrigger.from_crontab(
-                    task_def.schedule.expression,
-                    timezone=settings.TIMEZONE
-                )
-                trigger = TradingDayTrigger(base_trigger, cal_service)
-            elif task_def.schedule.type == ScheduleType.CRON:
-                trigger = CronTrigger.from_crontab(
-                    task_def.schedule.expression,
-                    timezone=settings.TIMEZONE
-                )
-            else:
-                logger.warning(f"Skipping task {task_def.id}: unsupported schedule type {task_def.schedule.type}")
-                continue
-            
-            # 注册任务
-            # TODO: 根据任务类型创建不同的执行函数
-            # 暂时使用硬编码的 job_daily_sync_kline
-            if task_def.id == "daily_kline_sync":
-                scheduler.add_job(
-                    job_daily_sync_kline,
-                    trigger,
-                    id=task_def.id,
-                    name=task_def.name,
-                    replace_existing=True
-                )
-                logger.info(f"📅 Registered: {task_def.name} ({task_def.schedule.expression})")
-            
-            elif task_def.id == "weekly_deep_audit":
-                scheduler.add_job(
-                    job_weekly_deep_audit,
-                    trigger,
-                    id=task_def.id,
-                    name=task_def.name,
-                    replace_existing=True
-                )
-                logger.info(f"📅 Registered: {task_def.name} ({task_def.schedule.expression})")
-        
-        logger.info(f"✓ Registered {len(enabled_tasks)} jobs")
-    except Exception as e:
-        logger.error(f"❌ Failed to register jobs: {e}")
-        raise
-
-async def job_daily_sync_kline() -> None:
-    """Daily K-Line Sync & Quality Check Workflow"""
-    from executor.docker_executor import DockerExecutor
-    from core.dag_engine import DAGEngine, Workflow, Task
-    
-    if not docker_client:
-        logger.error("❌ Docker client not connected, skipping job")
-        return
-        
-    executor = DockerExecutor(docker_client)
-    engine = DAGEngine(executor)
-    
-    # Define Workflow
-    total_shards = 4 
-    sync_tasks = []
-    
-    # Step 1: Sync Shards
-    for i in range(total_shards):
-        sync_tasks.append(Task(
-            id=f"sync-shard-{i}",
-            name=f"K-Line Sync Shard {i}",
-            command=["jobs.sync_kline", "--shard", str(i), "--total", str(total_shards)],
-            environment={"PYTHONPATH": "/app/src"}
-        ))
-    
-    # Step 2: Quality Check (Depends on ALL shards)
-    # Enable deep scan to fill the ledger for repair
-    quality_task = Task(
-        id="quality-check",
-        name="Data Quality Daily Check",
-        command=["jobs.quality_check", "--deep", "--batch", "100"],
-        dependencies={t.id for t in sync_tasks},
-        environment={"PYTHONPATH": "/app/src"}
-    )
-    
-    # Step 3: Data Repair (Depends on Quality Check)
-    repair_task = Task(
-        id="data-repair",
-        name="Auto Data Repair",
-        command=["jobs.data_repair", "--limit", "20"],
-        dependencies={quality_task.id},
-        environment={"PYTHONPATH": "/app/src"}
-    )
-    
-    workflow = Workflow(
-        name="Daily Market Sync & Quality Check",
-        tasks=sync_tasks + [quality_task, repair_task]
-    )
-    
-    await engine.run_workflow(workflow)
-
-async def job_weekly_deep_audit() -> None:
-    """Weekly Deep Audit Job"""
-    from executor.docker_executor import DockerExecutor
-    
-    if not docker_client:
-        logger.error("❌ Docker client not connected, skipping job")
-        return
-        
-    executor = DockerExecutor(docker_client)
-    
-    # Run the worker with weekly_audit command
-    # Using DockerExecutor directly since it's a single container task
-    try:
-        container_id = executor.run_worker(
-            command=["jobs.weekly_audit"],
-            name_suffix="weekly-audit",
-            environment={"PYTHONPATH": "/app/src"}
-        )
-        logger.info(f"🚀 Started Weekly Audit job (CID: {container_id})")
-    except Exception as e:
-        logger.error(f"❌ Failed to start Weekly Audit job: {e}")
-
 app = FastAPI(
     title=settings.APP_NAME,
     lifespan=lifespan
@@ -296,95 +368,6 @@ async def health_check():
         "docker": docker_status
     }
 
-@app.post("/debug/trigger/{job_name}")
-async def trigger_job(job_name: str) -> dict:
-    """
-    Manually trigger a job (Debug only)
-    Example: /debug/trigger/sync_kline
-    """
-    from executor.docker_executor import DockerExecutor
-    
-    if not docker_client:
-        return {"error": "Docker not connected"}
-        
-    executor = DockerExecutor(docker_client)
-    
-    try:
-        if job_name == "sync_kline":
-            # Run a dummy sync (shard 0/1)
-            # Dockerfile has ENTRYPOINT ["python", "-m"]
-            cmd = ["jobs.sync_kline", "--shard", "0", "--total", "1"]
-            cid = executor.run_worker(
-                command=cmd,
-                name_suffix=f"manual-{job_name}",
-                environment={"ENVIRONMENT": "development"}
-            )
-            return {"status": "started", "container_id": cid, "job": job_name}
-            
-        return {"error": "Unknown job"}
-        
-    except Exception as e:
-        return {"error": str(e)}
-
-@app.post("/debug/workflow/{name}")
-async def trigger_workflow(name: str) -> dict:
-    """
-    Trigger a complex workflow
-    """
-    from executor.docker_executor import DockerExecutor
-    from core.dag_engine import DAGEngine, Workflow, Task
-    from gsd_shared.utils.calendar_service import CalendarService
-    
-    # 1. Check Calendar (Demo)
-    cal = CalendarService()
-    is_trading = cal.is_trading_day()
-    logger.info(f"📅 Today is trading day? {is_trading}")
-    
-    if not docker_client:
-        return {"error": "Docker not connected"}
-        
-    executor = DockerExecutor(docker_client)
-    engine = DAGEngine(executor)
-    
-    if name == "sync_kline_full":
-        # Create a DAG:
-        # Task 1: Sync Shard 0
-        # Task 2: Sync Shard 1
-        # Task 3: Verify (Depends on 1 & 2)
-        
-        task1 = Task(
-            id="sync-shard-0",
-            name="Sync K-Line Shard 0",
-            command=["jobs.sync_kline", "--shard", "0", "--total", "2"]
-        )
-        
-        task2 = Task(
-            id="sync-shard-1",
-            name="Sync K-Line Shard 1",
-            command=["jobs.sync_kline", "--shard", "1", "--total", "2"]
-        )
-        
-        task3 = Task(
-            id="finalize",
-            name="Finalize Sync",
-            command=["jobs.sync_kline", "--help"], # Dummy command for now
-            dependencies={"sync-shard-0", "sync-shard-1"}
-        )
-        
-        workflow = Workflow(
-            name="Manual K-Line Sync Workflow",
-            tasks=[task1, task2, task3]
-        )
-        
-        # Fire and forget (in background)
-        # In real app, we track run ID
-        import asyncio
-        asyncio.create_task(engine.run_workflow(workflow))
-        
-        return {"status": "started", "workflow": name, "trading_day": is_trading}
-        
-    return {"error": "Unknown workflow"}
-
 @app.get("/jobs")
 async def list_jobs() -> list:
     """List scheduled jobs"""
@@ -400,4 +383,4 @@ async def list_jobs() -> list:
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=18000, reload=settings.DEBUG)
+    uvicorn.run("main:app", host="0.0.0.0", port=18000)
