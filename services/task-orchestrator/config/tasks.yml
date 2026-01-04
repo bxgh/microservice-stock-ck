@@ -175,6 +175,29 @@ tasks:
     retry:
       max_attempts: 1
   
+  # ClickHouse 系统日志清理 (P1)
+  - id: weekly_clickhouse_log_cleanup
+    name: ClickHouse日志清理
+    type: http
+    enabled: true
+    schedule:
+      type: cron
+      expression: "0 3 * * 0"  # 周日 03:00
+    target:
+      # 通过添加 multiquery=true 参数支持多语句执行
+      url: "http://127.0.0.1:8123/?multiquery=true"
+      method: POST
+      body: |
+        ALTER TABLE system.trace_log DELETE WHERE event_date < today() - 7;
+        ALTER TABLE system.text_log DELETE WHERE event_date < today() - 7;
+        ALTER TABLE system.query_log DELETE WHERE event_date < today() - 14;
+        ALTER TABLE system.metric_log DELETE WHERE event_date < today() - 7;
+        ALTER TABLE system.asynchronous_metric_log DELETE WHERE event_date < today() - 7;
+      timeout_seconds: 300
+    retry:
+      max_attempts: 2
+      backoff_seconds: 60
+  
   # ========== 数据质量任务 ==========
 
   # 每周深度审计 (P0) - 全量聚合校验 & 自动修复

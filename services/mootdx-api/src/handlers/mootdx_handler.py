@@ -64,7 +64,6 @@ class MootdxHandler:
             if self.client:
                 self.client = None
                 logger.info("Mootdx client closed")
-v    
     async def get_quotes(
         self,
         codes: List[str],

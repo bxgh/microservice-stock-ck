@@ -121,6 +121,11 @@ CREATE TABLE data_collection_records (
 PARTITION BY toYYYYMM(timestamp)
 ORDER BY (timestamp, data_source_id, collection_type)
 TTL timestamp + INTERVAL 90 DAY;
+
+> [!NOTE]
+> 所有核心股票数据表（K线、分笔、快照等）已从标准 `MergeTree` 系列引擎迁移至 `Replicated` 引擎（如 `ReplicatedReplacingMergeTree`），以支持 Server 41 和 Server 58 之间的双主同步。
+> 详细的集群拓扑和引擎规范请参阅 [ClickHouse 双主复制集群](./clickhouse-replicated-cluster.md)。
+
 ```
 
 ## Redis Data Structures (缓存和消息队列)
