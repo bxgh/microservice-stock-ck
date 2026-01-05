@@ -68,6 +68,16 @@
 | **P1** | 统一访问层 `FinancialDataProvider`<br>`major_shareholder_pledge_ratio` API<br>Prometheus 指标 & Grafana 面板配置 |
 | **P2** | 实时行情同步脚本（`realtime_quote_sync.py`）<br>完整《数据本地化方案》文档<br>运维手册、故障恢复流程 |
 
+## EPIC 分解
+
+| EPIC ID | 标题 | 优先级 | 周次 |
+|---------|------|--------|------|
+| [EPIC-011](../epics/EPIC_011_DATA_LOCALIZATION_INFRASTRUCTURE.md) | 数据本地化基础设施 | P0 | W1-W2 |
+| [EPIC-012](../epics/EPIC_012_INCREMENTAL_SYNC_REALTIME.md) | 增量同步与实时行情 | P0 | W3-W5 |
+| [EPIC-013](../epics/EPIC_013_FINANCIAL_DATA_UNIFIED_ACCESS.md) | 财务数据与统一访问层 | P1 | W6-W8 |
+| [EPIC-014](../epics/EPIC_014_SYSTEM_VERIFICATION_DOCUMENTATION.md) | 系统验证与文档完善 | P1 | W9-W13 |
+| [EPIC-015](../epics/EPIC_015_LONG_TERM_PLATFORM_ENHANCEMENT.md) | 长期规划 - 平台能力扩展 | P2 | 2026-02 起 |
+
 ## 相关文档
 
 | 文档 | 内容 |

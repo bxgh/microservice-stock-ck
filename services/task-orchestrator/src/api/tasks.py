@@ -110,16 +110,13 @@ async def trigger_task(task_id: str):
     手动触发任务
     """
     from main import scheduler
+    from datetime import datetime
     
-    job = scheduler.get_job(task_id)
-    if not job:
-        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found or not registered")
+    # 手动触发任务: 设置下一次运行时间为当前时间
+    now = datetime.now()
+    scheduler.modify_job(task_id, next_run_time=now)
     
-    # 手动触发任务
-    job.modify(next_run_time=None)  # 立即执行
-    scheduler.modify_job(task_id, next_run_time=None)
-    
-    return {"status": "triggered", "task_id": task_id}
+    return {"status": "triggered", "task_id": task_id, "run_time": str(now)}
 
 
 @router.get("/tasks/{task_id}/history", response_model=List[TaskHistory])

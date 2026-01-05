@@ -123,10 +123,12 @@ def reset_singleton():
 
 | 资源 | 地址 | 用途 | 访问方式 |
 |------|------|------|----------|
-| **代理服务器** | `192.168.151.18:3128` | 外网访问 | HTTP/HTTPS Proxy |
+| **GOST Foreign 隧道** | `127.0.0.1:12346` | HTTPS 外网访问 | **Docker/应用首选** |
+| **GOST Domestic 隧道** | `127.0.0.1:12345` | HTTP 内网代理 | 内网流量 |
+| **Squid 代理** | `192.168.151.18:3128` | 上游代理 | **不要直接使用** |
 | **云端 MySQL** | `43.145.51.23:26300` | K线数据源 | SSH 隧道 (本地 36301) |
-| **Baostock API** | `124.221.80.250:8001` | 历史 K 线 | 代理 |
-| **AkShare API** | `124.221.80.250:8003` | 实时行情 | 代理 |
+| **Baostock API** | `124.221.80.250:8001` | 历史 K 线 | 通过 GOST Foreign |
+| **AkShare API** | `124.221.80.250:8003` | 实时行情 | 通过 GOST Foreign |
 | **Nacos** | `127.0.0.1:8848` | 服务发现 | host 模式直连 |
 | **ClickHouse** | `127.0.0.1:9000` | 时序存储 | host 模式直连 |
 | **Redis** | `127.0.0.1:6379` | 缓存 | host 模式直连 |
@@ -144,34 +146,86 @@ def reset_singleton():
 
 #### 🔧 代理配置要点
 
+##### ✅ 正确配置 (使用 GOST Foreign 隧道)
+
 ```bash
-# 必须配置的环境变量
-HTTP_PROXY=http://192.168.151.18:3128
-HTTPS_PROXY=http://192.168.151.18:3128
+# 系统环境变量 - 应用程序使用
+HTTP_PROXY=http://127.0.0.1:12346      # GOST Foreign 隧道
+HTTPS_PROXY=http://127.0.0.1:12346     # GOST Foreign 隧道
 NO_PROXY=localhost,127.0.0.1,0.0.0.0,::1,192.168.,10.,172.16.
+
+# Docker daemon 配置 (/etc/systemd/system/docker.service.d/http-proxy.conf)
+[Service]
+Environment="HTTP_PROXY=http://127.0.0.1:12346"
+Environment="HTTPS_PROXY=http://127.0.0.1:12346"
+Environment="NO_PROXY=localhost,127.0.0.1,::1,192.168.,10.,172.16."
 
 # Docker 容器内传递 (docker-compose.yml)
 environment:
-  - HTTP_PROXY=http://192.168.151.18:3128
-  - HTTPS_PROXY=http://192.168.151.18:3128
+  - HTTP_PROXY=http://127.0.0.1:12346
+  - HTTPS_PROXY=http://127.0.0.1:12346
   - NO_PROXY=localhost,127.0.0.1,0.0.0.0,::1,microservice-stock-nacos
 ```
 
-> ⚠️ **NO_PROXY 必须包含**: `localhost,127.0.0.1` 以及所有内网服务名
-
-#### 🚇 SSH 隧道 (GOST)
-
-云端 MySQL 通过 GOST 隧道访问：
+##### ❌ 错误配置 (直接使用 Squid)
 
 ```bash
-# 隧道服务配置 (/etc/systemd/system/gost-mysql-tunnel.service)
-# 本地 36301 → 代理 → 云端 43.145.51.23:26300
+# ❌ 不要这样配置！Squid 需要通过 GOST 隧道访问
+HTTP_PROXY=http://192.168.151.18:3128   # 会导致 HTTPS 请求失败
+HTTPS_PROXY=http://192.168.151.18:3128  # ERR_CANNOT_FORWARD
+```
 
-# 检查隧道状态
+> ⚠️ **关键**: 
+> - **HTTPS 访问必须走 GOST Foreign 隧道** (`127.0.0.1:12346`)
+> - **不要直接使用 Squid 代理** (`192.168.151.18:3128`)
+> - **NO_PROXY 必须包含**: `localhost,127.0.0.1` 以及所有内网服务名
+
+#### 🚇 GOST 隧道架构
+
+本项目使用 **多个 GOST 隧道** 处理不同类型的网络流量：
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                    GOST 隧道架构                              │
+├──────────────────────────────────────────────────────────────┤
+│                                                              │
+│  应用/Docker                                                 │
+│      │                                                       │
+│      ├─ HTTPS 请求 ──→ GOST Foreign (12346) ──→ Squid ──→ 外网
+│      │                                                       │
+│      ├─ HTTP 请求  ──→ GOST Domestic (12345) ──→ Squid ──→ 外网
+│      │                                                       │
+│      └─ MySQL 连接 ──→ GOST MySQL (36301) ──→ 云端 MySQL    │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
+```
+
+##### GOST 服务列表
+
+| 服务 | 端口 | 用途 | 配置文件 |
+|------|------|------|----------|
+| **gost-foreign** | 12346 | **HTTPS 外网流量** (Docker 镜像拉取等) | `/etc/gost.json` |
+| **gost-domestic** | 12345 | HTTP 内网代理 | `/etc/gost-domestic.json` |
+| **gost-mysql-tunnel** | 36301 | 云端 MySQL 专用隧道 | systemd 服务 |
+| **gost-health-check** | - | 隧道健康监控 | systemd 服务 |
+
+##### 检查隧道状态
+
+```bash
+# 查看所有 GOST 服务
+systemctl list-units --type=service --state=running | grep gost
+
+# 检查 Foreign 隧道 (HTTPS)
+systemctl status gost-foreign
+
+# 检查 MySQL 隧道
 systemctl status gost-mysql-tunnel
 
-# 测试隧道连通性
+# 测试 MySQL 隧道连通性
 mysql -h 127.0.0.1 -P 36301 -u root -p
+
+# 测试 HTTPS 隧道
+curl -x http://127.0.0.1:12346 https://registry-1.docker.io/v2/
 ```
 
 #### 🔍 网络诊断命令
@@ -194,9 +248,11 @@ docker inspect <container> | grep NetworkMode
 ```
 
 **关键教训**:
-> 1. 使用 `network_mode: host` 时，容器内可用 127.0.0.1 访问宿主机服务
-> 2. 访问外网必须配置代理，访问内网必须加入 NO_PROXY
-> 3. 云端 MySQL 必须通过隧道，不能直连
+> 1. **HTTPS 访问必须走 GOST Foreign 隧道** (`127.0.0.1:12346`)，不要直接用 Squid
+> 2. 使用 `network_mode: host` 时，容器内可用 127.0.0.1 访问宿主机服务
+> 3. 访问外网必须配置代理，访问内网必须加入 NO_PROXY
+> 4. 云端 MySQL 必须通过 GOST MySQL 隧道 (36301)，不能直连
+> 5. Docker daemon 代理配置在 `/etc/systemd/system/docker.service.d/http-proxy.conf`
 
 📚 **详细参考**: [internal-network-setup.md](../architecture/internal-network-setup.md)
 
@@ -400,6 +456,7 @@ def validate_kline(df: pd.DataFrame) -> list[str]:
 | 2026-01-04 | task-orchestrator MySQL 连接失败 | GOST 隧道配置错误 | PROGRESS_REPORT_20260104 |
 | 2026-01-04 | mootdx-api IndentationError | 修复语法错误 | PROGRESS_REPORT_20260104 |
 | 2026-01-05 | snapshot-recorder 无 graceful shutdown | 实现资源清理 | WALKTHROUGH_SNAPSHOT_RECORDER |
+| 2026-01-05 | Docker 镜像拉取失败 (ERR_CANNOT_FORWARD) | 使用 GOST Foreign 隧道 (12346) 而非直接 Squid | EPIC-011 验收报告 |
 
 ---
 

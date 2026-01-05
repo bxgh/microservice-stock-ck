@@ -1,0 +1,27 @@
+[Unit]
+Description=GOST MySQL Tunnel to Tencent Cloud
+Documentation=https://github.com/ginuerzh/gost
+After=network.target gost-domestic.service
+Requires=gost-domestic.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/gost -L tcp://:36301/43.145.51.23:26300 -F http://127.0.0.1:8118
+
+# EPIC-011 Story 11.2: Enhanced auto-restart strategy
+Restart=always
+RestartSec=10s
+StartLimitInterval=300s
+StartLimitBurst=10
+
+# Logging
+StandardOutput=append:/var/log/gost-mysql-tunnel.log
+StandardError=append:/var/log/gost-mysql-tunnel.log
+
+# Resource limits
+MemoryLimit=256M
+CPUQuota=20%
+
+[Install]
+WantedBy=multi-user.target

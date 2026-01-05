@@ -44,17 +44,29 @@ class DockerExecutor:
                 "MYSQL_PASSWORD": settings.WORKER_MYSQL_PASSWORD,
                 "MYSQL_DATABASE": settings.WORKER_MYSQL_DATABASE,
                 
+                # Also inject with GSD_ prefix for compatibility (e.g. DataQualityService)
+                "GSD_DB_HOST": settings.WORKER_MYSQL_HOST,
+                "GSD_DB_PORT": str(settings.WORKER_MYSQL_PORT),
+                "GSD_DB_USER": settings.WORKER_MYSQL_USER,
+                "GSD_DB_PASSWORD": settings.WORKER_MYSQL_PASSWORD,
+                "GSD_DB_NAME": settings.WORKER_MYSQL_DATABASE,
+                
                 "CLICKHOUSE_HOST": settings.WORKER_CLICKHOUSE_HOST,
                 "CLICKHOUSE_PORT": str(settings.WORKER_CLICKHOUSE_PORT),
                 "CLICKHOUSE_USER": settings.WORKER_CLICKHOUSE_USER,
                 "CLICKHOUSE_PASSWORD": settings.WORKER_CLICKHOUSE_PASSWORD,
                 "CLICKHOUSE_DATABASE": settings.WORKER_CLICKHOUSE_DATABASE,
                 
-                "REDIS_HOST": settings.REDIS_HOST, # Workers typically use same Redis host
+                "GSD_CLICKHOUSE_HOST": settings.WORKER_CLICKHOUSE_HOST,
+                "GSD_CLICKHOUSE_PORT": str(settings.WORKER_CLICKHOUSE_PORT),
+                "GSD_CLICKHOUSE_USER": settings.WORKER_CLICKHOUSE_USER,
+                "GSD_CLICKHOUSE_PASSWORD": settings.WORKER_CLICKHOUSE_PASSWORD,
+                "GSD_CLICKHOUSE_DATABASE": settings.WORKER_CLICKHOUSE_DATABASE,
+                
+                "REDIS_HOST": settings.REDIS_HOST,
                 "REDIS_PORT": str(settings.REDIS_PORT),
                 "REDIS_PASSWORD": settings.REDIS_PASSWORD,
-                # Workers might need different DB, usually 0 for cache, 1 for status
-                # But sync_service uses settings.REDIS_DB which defaults to 0
+                "GSD_REDIS_URL": f"redis://{':' + settings.REDIS_PASSWORD + '@' if settings.REDIS_PASSWORD else ''}{settings.REDIS_HOST}:{settings.REDIS_PORT}"
             })
             
             # Mounts - assumes running on host where libs/gsd-shared is available

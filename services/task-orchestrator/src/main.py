@@ -70,15 +70,19 @@ class GenericTaskRunner:
     @staticmethod
     async def run_http_task(task: TaskDefinition):
         """Generic runner for HTTP tasks"""
-        logger.info(f"▶️ Executing HTTP task: {task.name} ({task.target.method} {task.target.url})")
+        method = task.target.get('method', 'POST')
+        url = task.target.get('url')
+        timeout = task.target.get('timeout_seconds', 30)
         
-        async with httpx.AsyncClient(timeout=task.target.timeout_seconds) as client:
+        logger.info(f"▶️ Executing HTTP task: {task.name} ({method} {url})")
+        
+        async with httpx.AsyncClient(timeout=timeout) as client:
             try:
                 response = await client.request(
-                    method=task.target.method,
-                    url=task.target.url,
-                    headers=task.target.headers,
-                    content=task.target.body
+                    method=method,
+                    url=url,
+                    headers=task.target.get('headers'),
+                    content=task.target.get('body')
                 )
                 response.raise_for_status()
                 logger.info(f"✅ HTTP Task success: {task.name} - Status {response.status_code}")
@@ -94,12 +98,16 @@ class GenericTaskRunner:
             logger.error("❌ Docker client not connected")
             return
 
-        logger.info(f"▶️ Executing Docker task: {task.name} ({task.target.image})")
+        image = task.target.get('image') or settings.WORKER_IMAGE
+        command = task.target.get('command')
+        environment = task.target.get('environment')
+
+        logger.info(f"▶️ Executing Docker task: {task.name} ({image})")
         try:
             container = docker_client.containers.run(
-                image=task.target.image,
-                command=task.target.command,
-                environment=task.target.environment,
+                image=image,
+                command=command,
+                environment=environment,
                 detach=True,
                 remove=True  # Auto-remove after run? Or track status?
             )
@@ -110,7 +118,7 @@ class GenericTaskRunner:
 
 # --- Custom Job Handlers ---
 
-async def job_daily_sync_kline() -> None:
+async def job_daily_kline_sync() -> None:
     """Daily K-Line Sync & Quality Check Workflow (Specialized Logic)"""
     from executor.docker_executor import DockerExecutor
     from core.dag_engine import DAGEngine, Workflow, Task
