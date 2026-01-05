@@ -87,11 +87,13 @@ class CalendarService:
             # A股交易日 = (非周末) AND (非节假日)
             
             is_weekend = day.weekday() >= 5
-            is_holiday = chinese_calendar.is_holiday(day)
-            
-            # 注意：chinese_calendar.is_holiday 在调休上班日会返回 False
-            # 但我们需要的是“是否放假”。
-            # 实际上，A股规则很简单：周一到周五，且不是法定节假日。
+            try:
+                is_holiday = chinese_calendar.is_holiday(day)
+            except NotImplementedError:
+                # 如果是未来年份且无节假日数据，回退到仅判断周末
+                is_holiday = is_weekend
+            except Exception:
+                is_holiday = is_weekend
             
             if is_weekend:
                 return False
@@ -101,7 +103,6 @@ class CalendarService:
                 return False
                 
             # 如果是周一到周五，检查是否是节假日
-            # chinese_calendar.is_holiday(day) 在周一到周五如果是假期会返回 True
             if is_holiday:
                 return False
                 

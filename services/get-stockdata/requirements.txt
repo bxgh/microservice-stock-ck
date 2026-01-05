@@ -41,3 +41,9 @@ tenacity==8.2.3
 
 # Logging
 loguru==0.7.2
+
+# Data Source Direct Access (for SnapshotRecorder)
+mootdx[cli]==0.11.1
+chinesecalendar==1.9.1
+pyarrow==14.0.1
+PyYAML==6.0.21
