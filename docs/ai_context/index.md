@@ -17,6 +17,7 @@
 | [TECH_DEBT.md](./TECH_DEBT.md) | 技术债务清单 | 参考 |
 | [PROMPT_TEMPLATES.md](./PROMPT_TEMPLATES.md) | 新会话提示词模板 | 参考 |
 | [STRATEGY_DATA_REQUIREMENTS.md](./STRATEGY_DATA_REQUIREMENTS.md) | 策略数据需求分析 | 参考 |
+| [FUTURE_DEVELOPMENT_PLAN.md](./FUTURE_DEVELOPMENT_PLAN.md) | 后续开发规划 | 参考 |
 
 ---
 
