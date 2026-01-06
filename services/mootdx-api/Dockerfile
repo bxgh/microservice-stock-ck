@@ -3,11 +3,11 @@ FROM python:3.12-slim
 WORKDIR /app
 
 # 安装 Python 依赖
-COPY requirements.txt .
+COPY services/mootdx-api/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 复制源代码
-COPY src/ ./src/
+COPY services/mootdx-api/src/ ./src/
 
 # 设置 Python 路径
 ENV PYTHONPATH=/app/src

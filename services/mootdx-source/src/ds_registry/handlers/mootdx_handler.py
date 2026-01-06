@@ -104,7 +104,10 @@ class MootdxHandler:
         
         Args:
             codes: 股票代码列表（仅支持单个代码）
-            params: 额外参数（暂未使用）
+            params: 额外参数
+                - date: 交易日期（整数格式 YYYYMMDD）
+                - start: 起始位置（默认 0）
+                - offset: 获取数量（默认 800）
         
         Returns:
             DataFrame 包含字段:
@@ -123,12 +126,29 @@ class MootdxHandler:
         if not codes:
             raise ValueError("No code specified for TICK")
         
+        # 提取参数
+        date = params.get("date")  # 整数格式
+        start = params.get("start", 0)
+        offset = params.get("offset", 800)
+        
         loop = asyncio.get_event_loop()
         try:
-            data = await loop.run_in_executor(
-                None,
-                lambda: self.client.transactions(symbol=codes[0])
-            )
+            # 根据是否有日期参数调用不同的方法
+            if date is not None:
+                data = await loop.run_in_executor(
+                    None,
+                    lambda: self.client.transactions(
+                        symbol=codes[0],
+                        date=date,
+                        start=start,
+                        offset=offset
+                    )
+                )
+            else:
+                data = await loop.run_in_executor(
+                    None,
+                    lambda: self.client.transactions(symbol=codes[0])
+                )
             return data if data is not None else pd.DataFrame()
         except Exception as e:
             logger.error(f"Mootdx get_tick failed: {e}")

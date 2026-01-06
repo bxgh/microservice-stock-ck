@@ -20,6 +20,7 @@ services:
       retries: 3
     volumes:
       - mootdx_config:/root/.mootdx
+      - ./services/mootdx-api/src:/app/src  # 开发模式挂载源码
 
   # MooTDX Source 服务 (gRPC + 路由)
   mootdx-source:

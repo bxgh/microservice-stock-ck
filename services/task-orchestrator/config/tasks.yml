@@ -32,9 +32,34 @@ tasks:
     enabled: true
     schedule:
       type: trading_cron
-      expression: "5 15 * * 1-5"
+      expression: "30 17 * * *"
     target:
-      command: ["jobs.sync_kline"]  # 无分片参数，顺序执行
+      command: ["jobs.sync_kline"]
+      network_mode: "host"
+      environment:
+        MYSQL_HOST: "127.0.0.1"
+        MYSQL_PORT: "36301"
+        MYSQL_USER: "root"
+        MYSQL_PASSWORD: "alwaysup@888"
+        MYSQL_DATABASE: "alwaysup"
+        KLINE_SYNC_TIMEOUT_TIME: "21:00"
+        CLICKHOUSE_HOST: "127.0.0.1"
+        CLICKHOUSE_PORT: "9000"
+    retry:
+      max_attempts: 2
+      backoff_seconds: 600
+  
+  # 盘后分笔数据采集 (P1)
+  # 17:30 执行，确保数据已稳定
+  - id: daily_tick_sync
+    name: 盘后分笔采集
+    type: docker
+    enabled: true
+    schedule:
+      type: trading_cron
+      expression: "30 17 * * 1-5"
+    target:
+      command: ["jobs.sync_tick"]
     retry:
       max_attempts: 2
       backoff_seconds: 600

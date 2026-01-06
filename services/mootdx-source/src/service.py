@@ -25,8 +25,7 @@ import pandas as pd
 
 from datasource.v1 import data_source_pb2, data_source_pb2_grpc
 from ds_registry import DataSource  # 从本地 ds_registry 包导入
-from ds_registry.handlers import EasyquotationHandler
-from mootdx_client import MootdxAPIClient  # 使用 HTTP 客户端
+from ds_registry.handlers import EasyquotationHandler, MootdxHandler
 from cloud_client import CloudAPIClient
 from config import HistoryDefaults, QueryDefaults, DragonTigerDefaults, RetryConfig
 
@@ -144,7 +143,7 @@ class MooTDXService(data_source_pb2_grpc.DataSourceServiceServicer):
     
     def __init__(self):
         # 本地/HTTP 数据源客户端
-        self.mootdx_client: Optional[MootdxAPIClient] = None
+        self.mootdx_handler: Optional[MootdxHandler] = None
         self.easy_handler: Optional[EasyquotationHandler] = None
         
         # 云端 API 客户端
@@ -157,9 +156,9 @@ class MooTDXService(data_source_pb2_grpc.DataSourceServiceServicer):
     async def initialize(self) -> None:
         """初始化所有数据源"""
         try:
-            # 1. 初始化 mootdx API 客户端
-            self.mootdx_client = MootdxAPIClient()
-            await self.mootdx_client.initialize()
+            # 1. 初始化 mootdx 本地 handler
+            self.mootdx_handler = MootdxHandler()
+            await self.mootdx_handler.initialize()
             
             # 2. 初始化 easyquotation handler
             self.easy_handler = EasyquotationHandler()
@@ -178,8 +177,8 @@ class MooTDXService(data_source_pb2_grpc.DataSourceServiceServicer):
     async def close(self) -> None:
         """清理所有资源"""
         try:
-            if self.mootdx_client:
-                await self.mootdx_client.close()
+            if self.mootdx_handler:
+                await self.mootdx_handler.close()
             if self.easy_handler:
                 await self.easy_handler.close()
             if self.cloud_client:
@@ -407,16 +406,17 @@ class MooTDXService(data_source_pb2_grpc.DataSourceServiceServicer):
         params: Dict[str, Any]
     ) -> pd.DataFrame:
         """mootdx: 实时行情（委托给 handler）"""
-        if not self.mootdx_client:
-            logger.warning("Mootdx client not initialized")
+        if not self.mootdx_handler:
+            logger.warning("Mootdx handler not initialized")
             return pd.DataFrame()
-        return await self.mootdx_client.get_quotes(codes, params)
+        return await self.mootdx_handler.get_quotes(codes, params)
     
     async def _fetch_quotes_easyquotation(
         self,
         codes: List[str],
         params: Dict[str, Any]
     ) -> pd.DataFrame:
+        # ... (unchanged)
         """
         easyquotation: 实时行情（降级用，委托给 handler）
         
@@ -433,10 +433,11 @@ class MooTDXService(data_source_pb2_grpc.DataSourceServiceServicer):
         params: Dict[str, Any]
     ) -> pd.DataFrame:
         """mootdx: 分笔数据（委托给 handler）"""
-        if not self.mootdx_client:
-            logger.warning("Mootdx client not initialized")
+        logger.info(f"DEBUG: _fetch_tick_mootdx called with codes={codes}, params={params}")
+        if not self.mootdx_handler:
+            logger.warning("Mootdx handler not initialized")
             return pd.DataFrame()
-        return await self.mootdx_client.get_tick(codes, params)
+        return await self.mootdx_handler.get_tick(codes, params)
     
     async def _fetch_history_mootdx(
         self,
@@ -444,10 +445,10 @@ class MooTDXService(data_source_pb2_grpc.DataSourceServiceServicer):
         params: Dict[str, Any]
     ) -> pd.DataFrame:
         """mootdx: 历史K线（降级用，委托给 handler）"""
-        if not self.mootdx_client:
-            logger.warning("Mootdx client not initialized")
+        if not self.mootdx_handler:
+            logger.warning("Mootdx handler not initialized")
             return pd.DataFrame()
-        return await self.mootdx_client.get_history(codes, params)
+        return await self.mootdx_handler.get_history(codes, params)
 
     async def _fetch_meta_mootdx(
         self,
@@ -455,16 +456,16 @@ class MooTDXService(data_source_pb2_grpc.DataSourceServiceServicer):
         params: Dict[str, Any]
     ) -> pd.DataFrame:
         """mootdx: 股票元数据/个股信息"""
-        if not self.mootdx_client:
-            logger.warning("Mootdx client not initialized")
+        if not self.mootdx_handler:
+            logger.warning("Mootdx handler not initialized")
             return pd.DataFrame()
             
         # 如果 codes 为 ["all"] 或为空，则获取全量列表
         if not codes or codes == ["all"]:
-            return await self.mootdx_client.get_stocks([], params)
+            return await self.mootdx_handler.get_stocks([], params)
             
         # 否则获取特定代码信息并过滤
-        df = await self.mootdx_client.get_stocks([], params)
+        df = await self.mootdx_handler.get_stocks([], params)
         if not df.empty and 'code' in df.columns:
             # 确保代码列是字符串并补全
             df['code'] = df['code'].astype(str).str.zfill(6)
@@ -693,7 +694,7 @@ class MooTDXService(data_source_pb2_grpc.DataSourceServiceServicer):
         """gRPC: 健康检查"""
         # 检查所有数据源状态
         healthy = all([
-            self.mootdx_client is not None,
+            self.mootdx_handler is not None,
             self.easy_handler is not None,
             self.cloud_client is not None
         ])

@@ -131,12 +131,29 @@ class MootdxHandler:
         if not codes:
             raise ValueError("No code specified for TICK")
         
+        # 提取参数
+        date = params.get("date")
+        start = params.get("start", 0)
+        offset = params.get("offset", 800)
+        
         loop = asyncio.get_event_loop()
         try:
-            data = await loop.run_in_executor(
+            if date is not None:
+                data = await loop.run_in_executor(
+                    None,
+                    lambda: self.client.transactions(
+                        symbol=codes[0],
+                        date=date,
+                        start=start,
+                        offset=offset
+                    )
+                )
+            else:
+                data = await loop.run_in_executor(
                     None,
                     lambda: self.client.transactions(symbol=codes[0])
                 )
+                
             # 集成标准化逻辑
             if data is not None:
                 data = standardize_mootdx_fields(data, data_type='tick')
