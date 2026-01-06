@@ -118,56 +118,10 @@ class GenericTaskRunner:
 
 # --- Custom Job Handlers ---
 
-async def job_daily_kline_sync() -> None:
-    """Daily K-Line Sync & Quality Check Workflow (Specialized Logic)"""
-    from executor.docker_executor import DockerExecutor
-    from core.dag_engine import DAGEngine, Workflow, Task
-    
-    if not docker_client:
-        logger.error("❌ Docker client not connected, skipping job")
-        return
-        
-    executor = DockerExecutor(docker_client)
-    engine = DAGEngine(executor)
-    
-    # Define Workflow
-    total_shards = 4 
-    sync_tasks = []
-    
-    # Step 1: Sync Shards
-    for i in range(total_shards):
-        sync_tasks.append(Task(
-            id=f"sync-shard-{i}",
-            name=f"K-Line Sync Shard {i}",
-            command=["jobs.sync_kline", "--shard", str(i), "--total", str(total_shards)],
-            environment={"PYTHONPATH": "/app/src"}
-        ))
-    
-    # Step 2: Quality Check (Depends on ALL shards)
-    quality_task = Task(
-        id="quality-check",
-        name="Data Quality Daily Check",
-        command=["jobs.quality_check", "--deep", "--batch", "100"],
-        dependencies={t.id for t in sync_tasks},
-        environment={"PYTHONPATH": "/app/src"}
-    )
-    
-    # Step 3: Data Repair (Depends on Quality Check)
-    repair_task = Task(
-        id="data-repair",
-        name="Auto Data Repair",
-        command=["jobs.data_repair", "--limit", "20"],
-        dependencies={quality_task.id},
-        environment={"PYTHONPATH": "/app/src"}
-    )
-    
-    workflow = Workflow(
-        name="Daily Market Sync & Quality Check",
-        tasks=sync_tasks + [quality_task, repair_task]
-    )
-    
-    logger.info("🚀 Starting Daily Market Sync workflow...")
-    await engine.run_workflow(workflow)
+# Removed deprecated job_daily_kline_sync function
+# K-line sync now uses single-process mode via generic Docker runner
+# Configuration is in tasks.yml: command: ["jobs.sync_kline"]
+
 
 async def job_weekly_deep_audit() -> None:
     """Weekly Deep Audit Job (Specialized Logic)"""
