@@ -1,0 +1,1000 @@
+{
+    "annotations": {
+        "list": []
+    },
+    "editable": true,
+    "fiscalYearStartMonth": 0,
+    "graphTooltip": 0,
+    "id": null,
+    "links": [],
+    "liveNow": false,
+    "panels": [
+        {
+            "datasource": {
+                "type": "mysql",
+                "uid": "${DS_MYSQL}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "mappings": [
+                        {
+                            "options": {
+                                "0": {
+                                    "color": "red",
+                                    "index": 0,
+                                    "text": "异常"
+                                },
+                                "1": {
+                                    "color": "green",
+                                    "index": 1,
+                                    "text": "正常"
+                                }
+                            },
+                            "type": "value"
+                        }
+                    ],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "red",
+                                "value": null
+                            },
+                            {
+                                "color": "green",
+                                "value": 1
+                            }
+                        ]
+                    }
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 4,
+                "w": 6,
+                "x": 0,
+                "y": 0
+            },
+            "id": 1,
+            "options": {
+                "colorMode": "background",
+                "graphMode": "none",
+                "justifyMode": "auto",
+                "orientation": "auto",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ],
+                    "fields": "",
+                    "values": false
+                },
+                "textMode": "auto"
+            },
+            "pluginVersion": "10.0.0",
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "mysql",
+                        "uid": "${DS_MYSQL}"
+                    },
+                    "format": "table",
+                    "rawQuery": true,
+                    "rawSql": "SELECT MIN(is_healthy) as value FROM gost_tunnel_status WHERE timestamp > NOW() - INTERVAL 10 MINUTE",
+                    "refId": "A"
+                }
+            ],
+            "title": "🔗 GOST 隧道状态",
+            "type": "stat"
+        },
+        {
+            "datasource": {
+                "type": "mysql",
+                "uid": "${DS_MYSQL}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "mappings": [],
+                    "max": 100,
+                    "min": 0,
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 70
+                            },
+                            {
+                                "color": "red",
+                                "value": 85
+                            }
+                        ]
+                    },
+                    "unit": "percent"
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 4,
+                "w": 6,
+                "x": 6,
+                "y": 0
+            },
+            "id": 2,
+            "options": {
+                "orientation": "auto",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ],
+                    "fields": "",
+                    "values": false
+                },
+                "showThresholdLabels": false,
+                "showThresholdMarkers": true
+            },
+            "pluginVersion": "10.0.0",
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "mysql",
+                        "uid": "${DS_MYSQL}"
+                    },
+                    "format": "table",
+                    "rawQuery": true,
+                    "rawSql": "SELECT cpu_usage_percent as value FROM system_resources WHERE server = 'server41' ORDER BY timestamp DESC LIMIT 1",
+                    "refId": "A"
+                }
+            ],
+            "title": "💻 Server 41 CPU",
+            "type": "gauge"
+        },
+        {
+            "datasource": {
+                "type": "mysql",
+                "uid": "${DS_MYSQL}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "mappings": [],
+                    "max": 100,
+                    "min": 0,
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 70
+                            },
+                            {
+                                "color": "red",
+                                "value": 85
+                            }
+                        ]
+                    },
+                    "unit": "percent"
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 4,
+                "w": 6,
+                "x": 12,
+                "y": 0
+            },
+            "id": 3,
+            "options": {
+                "orientation": "auto",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ],
+                    "fields": "",
+                    "values": false
+                },
+                "showThresholdLabels": false,
+                "showThresholdMarkers": true
+            },
+            "pluginVersion": "10.0.0",
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "mysql",
+                        "uid": "${DS_MYSQL}"
+                    },
+                    "format": "table",
+                    "rawQuery": true,
+                    "rawSql": "SELECT cpu_usage_percent as value FROM system_resources WHERE server = 'server58' ORDER BY timestamp DESC LIMIT 1",
+                    "refId": "A"
+                }
+            ],
+            "title": "💻 Server 58 CPU",
+            "type": "gauge"
+        },
+        {
+            "datasource": {
+                "type": "mysql",
+                "uid": "${DS_MYSQL}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "mappings": [],
+                    "max": 100,
+                    "min": 0,
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 70
+                            },
+                            {
+                                "color": "red",
+                                "value": 85
+                            }
+                        ]
+                    },
+                    "unit": "percent"
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 4,
+                "w": 6,
+                "x": 18,
+                "y": 0
+            },
+            "id": 4,
+            "options": {
+                "orientation": "auto",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ],
+                    "fields": "",
+                    "values": false
+                },
+                "showThresholdLabels": false,
+                "showThresholdMarkers": true
+            },
+            "pluginVersion": "10.0.0",
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "mysql",
+                        "uid": "${DS_MYSQL}"
+                    },
+                    "format": "table",
+                    "rawQuery": true,
+                    "rawSql": "SELECT memory_usage_percent as value FROM redis_status ORDER BY timestamp DESC LIMIT 1",
+                    "refId": "A"
+                }
+            ],
+            "title": "💾 Redis 内存",
+            "type": "gauge"
+        },
+        {
+            "datasource": {
+                "type": "mysql",
+                "uid": "${DS_MYSQL}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "custom": {
+                        "axisCenteredZero": false,
+                        "axisColorMode": "text",
+                        "axisLabel": "",
+                        "axisPlacement": "auto",
+                        "barAlignment": 0,
+                        "drawStyle": "line",
+                        "fillOpacity": 20,
+                        "gradientMode": "none",
+                        "hideFrom": {
+                            "legend": false,
+                            "tooltip": false,
+                            "viz": false
+                        },
+                        "lineInterpolation": "smooth",
+                        "lineWidth": 2,
+                        "pointSize": 5,
+                        "scaleDistribution": {
+                            "type": "linear"
+                        },
+                        "showPoints": "never",
+                        "spanNulls": true,
+                        "stacking": {
+                            "group": "A",
+                            "mode": "none"
+                        },
+                        "thresholdsStyle": {
+                            "mode": "off"
+                        }
+                    },
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "unit": "percent"
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 4
+            },
+            "id": 5,
+            "options": {
+                "legend": {
+                    "calcs": [
+                        "lastNotNull"
+                    ],
+                    "displayMode": "table",
+                    "placement": "bottom",
+                    "showLegend": true
+                },
+                "tooltip": {
+                    "mode": "multi",
+                    "sort": "none"
+                }
+            },
+            "pluginVersion": "10.0.0",
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "mysql",
+                        "uid": "${DS_MYSQL}"
+                    },
+                    "format": "time_series",
+                    "rawQuery": true,
+                    "rawSql": "SELECT timestamp - INTERVAL 8 HOUR AS time, cpu_usage_percent AS 'Server 41' FROM system_resources WHERE server = 'server41' AND timestamp > NOW() - INTERVAL 24 HOUR ORDER BY timestamp",
+                    "refId": "A"
+                },
+                {
+                    "datasource": {
+                        "type": "mysql",
+                        "uid": "${DS_MYSQL}"
+                    },
+                    "format": "time_series",
+                    "rawQuery": true,
+                    "rawSql": "SELECT timestamp - INTERVAL 8 HOUR AS time, cpu_usage_percent AS 'Server 58' FROM system_resources WHERE server = 'server58' AND timestamp > NOW() - INTERVAL 24 HOUR ORDER BY timestamp",
+                    "refId": "B"
+                }
+            ],
+            "title": "📈 CPU 使用率趋势 (24h)",
+            "type": "timeseries"
+        },
+        {
+            "datasource": {
+                "type": "mysql",
+                "uid": "${DS_MYSQL}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "custom": {
+                        "axisCenteredZero": false,
+                        "axisColorMode": "text",
+                        "axisLabel": "",
+                        "axisPlacement": "auto",
+                        "barAlignment": 0,
+                        "drawStyle": "line",
+                        "fillOpacity": 20,
+                        "gradientMode": "none",
+                        "hideFrom": {
+                            "legend": false,
+                            "tooltip": false,
+                            "viz": false
+                        },
+                        "lineInterpolation": "smooth",
+                        "lineWidth": 2,
+                        "pointSize": 5,
+                        "scaleDistribution": {
+                            "type": "linear"
+                        },
+                        "showPoints": "never",
+                        "spanNulls": true,
+                        "stacking": {
+                            "group": "A",
+                            "mode": "none"
+                        },
+                        "thresholdsStyle": {
+                            "mode": "off"
+                        }
+                    },
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "unit": "decgbytes"
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 4
+            },
+            "id": 6,
+            "options": {
+                "legend": {
+                    "calcs": [
+                        "lastNotNull"
+                    ],
+                    "displayMode": "table",
+                    "placement": "bottom",
+                    "showLegend": true
+                },
+                "tooltip": {
+                    "mode": "multi",
+                    "sort": "none"
+                }
+            },
+            "pluginVersion": "10.0.0",
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "mysql",
+                        "uid": "${DS_MYSQL}"
+                    },
+                    "format": "time_series",
+                    "rawQuery": true,
+                    "rawSql": "SELECT timestamp - INTERVAL 8 HOUR AS time, memory_used_gb AS 'Server 41' FROM system_resources WHERE server = 'server41' AND timestamp > NOW() - INTERVAL 24 HOUR ORDER BY timestamp",
+                    "refId": "A"
+                },
+                {
+                    "datasource": {
+                        "type": "mysql",
+                        "uid": "${DS_MYSQL}"
+                    },
+                    "format": "time_series",
+                    "rawQuery": true,
+                    "rawSql": "SELECT timestamp - INTERVAL 8 HOUR AS time, memory_used_gb AS 'Server 58' FROM system_resources WHERE server = 'server58' AND timestamp > NOW() - INTERVAL 24 HOUR ORDER BY timestamp",
+                    "refId": "B"
+                }
+            ],
+            "title": "📈 内存使用趋势 (24h)",
+            "type": "timeseries"
+        },
+        {
+            "datasource": {
+                "type": "mysql",
+                "uid": "${DS_MYSQL}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "custom": {
+                        "align": "auto",
+                        "cellOptions": {
+                            "type": "color-background"
+                        },
+                        "inspect": false
+                    },
+                    "mappings": [
+                        {
+                            "options": {
+                                "0": {
+                                    "color": "red",
+                                    "index": 0,
+                                    "text": "❌ 停止"
+                                },
+                                "1": {
+                                    "color": "green",
+                                    "index": 1,
+                                    "text": "✅ 运行"
+                                }
+                            },
+                            "type": "value"
+                        }
+                    ],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "red",
+                                "value": null
+                            },
+                            {
+                                "color": "green",
+                                "value": 1
+                            }
+                        ]
+                    }
+                },
+                "overrides": [
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "service_name"
+                        },
+                        "properties": [
+                            {
+                                "id": "displayName",
+                                "value": "服务名称"
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "is_healthy"
+                        },
+                        "properties": [
+                            {
+                                "id": "displayName",
+                                "value": "状态"
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "response_time_ms"
+                        },
+                        "properties": [
+                            {
+                                "id": "displayName",
+                                "value": "响应时间(ms)"
+                            }
+                        ]
+                    }
+                ]
+            },
+            "gridPos": {
+                "h": 6,
+                "w": 12,
+                "x": 0,
+                "y": 12
+            },
+            "id": 7,
+            "options": {
+                "showHeader": true,
+                "cellHeight": "sm",
+                "footer": {
+                    "show": false
+                }
+            },
+            "pluginVersion": "10.0.0",
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "mysql",
+                        "uid": "${DS_MYSQL}"
+                    },
+                    "format": "table",
+                    "rawQuery": true,
+                    "rawSql": "SELECT service_name, is_healthy, ROUND(response_time_ms, 1) as response_time_ms FROM service_health WHERE timestamp = (SELECT MAX(timestamp) FROM service_health)",
+                    "refId": "A"
+                }
+            ],
+            "title": "🏥 微服务健康状态",
+            "type": "table"
+        },
+        {
+            "datasource": {
+                "type": "mysql",
+                "uid": "${DS_MYSQL}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "custom": {
+                        "align": "auto",
+                        "cellOptions": {
+                            "type": "color-background"
+                        },
+                        "inspect": false
+                    },
+                    "mappings": [
+                        {
+                            "options": {
+                                "0": {
+                                    "color": "red",
+                                    "index": 0,
+                                    "text": "❌ 停止"
+                                },
+                                "1": {
+                                    "color": "green",
+                                    "index": 1,
+                                    "text": "✅ 运行"
+                                }
+                            },
+                            "type": "value"
+                        }
+                    ],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "red",
+                                "value": null
+                            },
+                            {
+                                "color": "green",
+                                "value": 1
+                            }
+                        ]
+                    }
+                },
+                "overrides": [
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "container_name"
+                        },
+                        "properties": [
+                            {
+                                "id": "displayName",
+                                "value": "容器名称"
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "is_running"
+                        },
+                        "properties": [
+                            {
+                                "id": "displayName",
+                                "value": "状态"
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "image"
+                        },
+                        "properties": [
+                            {
+                                "id": "displayName",
+                                "value": "镜像"
+                            }
+                        ]
+                    }
+                ]
+            },
+            "gridPos": {
+                "h": 6,
+                "w": 12,
+                "x": 12,
+                "y": 12
+            },
+            "id": 8,
+            "options": {
+                "showHeader": true,
+                "cellHeight": "sm",
+                "footer": {
+                    "show": false
+                }
+            },
+            "pluginVersion": "10.0.0",
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "mysql",
+                        "uid": "${DS_MYSQL}"
+                    },
+                    "format": "table",
+                    "rawQuery": true,
+                    "rawSql": "SELECT container_name, is_running, image FROM docker_status WHERE timestamp = (SELECT MAX(timestamp) FROM docker_status) ORDER BY is_running DESC, container_name",
+                    "refId": "A"
+                }
+            ],
+            "title": "🐳 Docker 容器状态",
+            "type": "table"
+        },
+        {
+            "datasource": {
+                "type": "mysql",
+                "uid": "${DS_MYSQL}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "blue",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "unit": "short"
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 4,
+                "w": 6,
+                "x": 0,
+                "y": 18
+            },
+            "id": 9,
+            "options": {
+                "colorMode": "value",
+                "graphMode": "area",
+                "justifyMode": "auto",
+                "orientation": "auto",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ],
+                    "fields": "",
+                    "values": false
+                },
+                "textMode": "auto"
+            },
+            "pluginVersion": "10.0.0",
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "mysql",
+                        "uid": "${DS_MYSQL}"
+                    },
+                    "format": "table",
+                    "rawQuery": true,
+                    "rawSql": "SELECT kline_today as value FROM clickhouse_business_metrics ORDER BY timestamp DESC LIMIT 1",
+                    "refId": "A"
+                }
+            ],
+            "title": "📊 今日 K线同步",
+            "type": "stat"
+        },
+        {
+            "datasource": {
+                "type": "mysql",
+                "uid": "${DS_MYSQL}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "purple",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "unit": "short"
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 4,
+                "w": 6,
+                "x": 6,
+                "y": 18
+            },
+            "id": 10,
+            "options": {
+                "colorMode": "value",
+                "graphMode": "area",
+                "justifyMode": "auto",
+                "orientation": "auto",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ],
+                    "fields": "",
+                    "values": false
+                },
+                "textMode": "auto"
+            },
+            "pluginVersion": "10.0.0",
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "mysql",
+                        "uid": "${DS_MYSQL}"
+                    },
+                    "format": "table",
+                    "rawQuery": true,
+                    "rawSql": "SELECT snapshot_today as value FROM clickhouse_business_metrics ORDER BY timestamp DESC LIMIT 1",
+                    "refId": "A"
+                }
+            ],
+            "title": "📸 今日快照数据",
+            "type": "stat"
+        },
+        {
+            "datasource": {
+                "type": "mysql",
+                "uid": "${DS_MYSQL}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "orange",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "unit": "short"
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 4,
+                "w": 6,
+                "x": 12,
+                "y": 18
+            },
+            "id": 11,
+            "options": {
+                "colorMode": "value",
+                "graphMode": "none",
+                "justifyMode": "auto",
+                "orientation": "auto",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ],
+                    "fields": "",
+                    "values": false
+                },
+                "textMode": "auto"
+            },
+            "pluginVersion": "10.0.0",
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "mysql",
+                        "uid": "${DS_MYSQL}"
+                    },
+                    "format": "table",
+                    "rawQuery": true,
+                    "rawSql": "SELECT stock_count as value FROM clickhouse_business_metrics ORDER BY timestamp DESC LIMIT 1",
+                    "refId": "A"
+                }
+            ],
+            "title": "🏢 股票覆盖数",
+            "type": "stat"
+        },
+        {
+            "datasource": {
+                "type": "mysql",
+                "uid": "${DS_MYSQL}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "unit": "short"
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 4,
+                "w": 6,
+                "x": 18,
+                "y": 18
+            },
+            "id": 12,
+            "options": {
+                "colorMode": "value",
+                "graphMode": "none",
+                "justifyMode": "auto",
+                "orientation": "auto",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ],
+                    "fields": "",
+                    "values": false
+                },
+                "textMode": "auto"
+            },
+            "pluginVersion": "10.0.0",
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "mysql",
+                        "uid": "${DS_MYSQL}"
+                    },
+                    "format": "table",
+                    "rawQuery": true,
+                    "rawSql": "SELECT kline_total as value FROM clickhouse_business_metrics ORDER BY timestamp DESC LIMIT 1",
+                    "refId": "A"
+                }
+            ],
+            "title": "📚 K线总量",
+            "type": "stat"
+        }
+    ],
+    "refresh": "5m",
+    "schemaVersion": 38,
+    "style": "dark",
+    "tags": [
+        "microservice-stock",
+        "overview"
+    ],
+    "templating": {
+        "list": []
+    },
+    "time": {
+        "from": "now-24h",
+        "to": "now"
+    },
+    "timepicker": {},
+    "timezone": "browser",
+    "title": "Microservice-Stock 系统总览",
+    "uid": "ms-stock-overview",
+    "version": 1,
+    "weekStart": ""
+}

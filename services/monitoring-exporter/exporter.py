@@ -15,6 +15,8 @@ import pymysql
 from prometheus_api_client import PrometheusConnect
 from clickhouse_driver import Client as ClickHouseClient
 import redis
+import subprocess
+import requests
 
 # 配置日志
 logging.basicConfig(
@@ -267,6 +269,192 @@ class MonitoringExporter:
         finally:
             cursor.close()
     
+    def export_server58_resources(self):
+        """通过 SSH 导出 58 服务器资源使用"""
+        logger.info("🖥️ 开始导出 Server 58 资源使用 (SSH)...")
+        
+        cursor = self.cloud_db.cursor()
+        timestamp = datetime.now()
+        
+        try:
+            # SSH 命令获取 CPU、内存、磁盘
+            ssh_cmd = """
+            python3 -c "
+import psutil
+import json
+result = {
+    'cpu': psutil.cpu_percent(interval=1),
+    'mem_total': psutil.virtual_memory().total / (1024**3),
+    'mem_used': psutil.virtual_memory().used / (1024**3),
+    'disk_total': psutil.disk_usage('/').total / (1024**3),
+    'disk_used': psutil.disk_usage('/').used / (1024**3)
+}
+print(json.dumps(result))
+"
+            """
+            
+            result = subprocess.run(
+                ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', 
+                 '192.168.151.58', ssh_cmd],
+                capture_output=True, text=True, timeout=30
+            )
+            
+            if result.returncode == 0:
+                import json
+                data = json.loads(result.stdout.strip())
+                
+                cursor.execute(
+                    """INSERT INTO system_resources 
+                       (server, cpu_usage_percent, memory_total_gb, memory_used_gb,
+                        disk_total_gb, disk_used_gb, timestamp) 
+                       VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+                    ('server58', data['cpu'], data['mem_total'], data['mem_used'],
+                     data['disk_total'], data['disk_used'], timestamp)
+                )
+                
+                self.cloud_db.commit()
+                logger.info(f"✅ Server 58 资源导出完成: CPU {data['cpu']}%, MEM {data['mem_used']:.1f}GB")
+            else:
+                logger.warning(f"⚠️ SSH 到 Server 58 失败: {result.stderr}")
+        
+        except subprocess.TimeoutExpired:
+            logger.error("❌ SSH 到 Server 58 超时")
+        except Exception as e:
+            self.cloud_db.rollback()
+            logger.error(f"❌ Server 58 资源导出失败: {e}")
+        finally:
+            cursor.close()
+    
+    def export_service_health(self):
+        """导出微服务健康状态"""
+        logger.info("🏥 开始导出微服务健康状态...")
+        
+        services = [
+            ('get-stockdata', 'http://127.0.0.1:8083/api/v1/health'),
+            ('quant-strategy', 'http://127.0.0.1:8084/api/v1/health'),
+            ('task-orchestrator', 'http://127.0.0.1:18000/health'),
+            ('mootdx-api', 'http://127.0.0.1:8003/api/v1/health'),
+        ]
+        
+        cursor = self.cloud_db.cursor()
+        timestamp = datetime.now()
+        
+        try:
+            for service_name, url in services:
+                try:
+                    resp = requests.get(url, timeout=5)
+                    is_healthy = 1 if resp.status_code == 200 else 0
+                    response_time_ms = resp.elapsed.total_seconds() * 1000
+                except Exception as e:
+                    is_healthy = 0
+                    response_time_ms = -1
+                    logger.warning(f"⚠️ 服务 {service_name} 健康检查失败: {e}")
+                
+                cursor.execute(
+                    """INSERT INTO service_health 
+                       (service_name, is_healthy, response_time_ms, timestamp) 
+                       VALUES (%s, %s, %s, %s)""",
+                    (service_name, is_healthy, response_time_ms, timestamp)
+                )
+            
+            self.cloud_db.commit()
+            logger.info(f"✅ 微服务健康状态导出完成: {len(services)} 个服务")
+        
+        except Exception as e:
+            self.cloud_db.rollback()
+            logger.error(f"❌ 微服务健康状态导出失败: {e}")
+        finally:
+            cursor.close()
+    
+    def export_docker_status(self):
+        """导出 Docker 容器状态"""
+        logger.info("🐳 开始导出 Docker 容器状态...")
+        
+        cursor = self.cloud_db.cursor()
+        timestamp = datetime.now()
+        
+        try:
+            result = subprocess.run(
+                ['docker', 'ps', '-a', '--format', '{{.Names}}|{{.Status}}|{{.Image}}'],
+                capture_output=True, text=True, timeout=10
+            )
+            
+            if result.returncode == 0:
+                for line in result.stdout.strip().split('\n'):
+                    if not line:
+                        continue
+                    parts = line.split('|')
+                    if len(parts) >= 2:
+                        container_name = parts[0]
+                        status = parts[1]
+                        image = parts[2] if len(parts) > 2 else ''
+                        
+                        # 判断是否运行中
+                        is_running = 1 if 'Up' in status else 0
+                        
+                        cursor.execute(
+                            """INSERT INTO docker_status 
+                               (server, container_name, status, image, is_running, timestamp) 
+                               VALUES (%s, %s, %s, %s, %s, %s)""",
+                            ('server41', container_name, status[:100], image[:100], 
+                             is_running, timestamp)
+                        )
+                
+                self.cloud_db.commit()
+                logger.info(f"✅ Docker 容器状态导出完成")
+            else:
+                logger.warning(f"⚠️ docker ps 命令失败: {result.stderr}")
+        
+        except Exception as e:
+            self.cloud_db.rollback()
+            logger.error(f"❌ Docker 容器状态导出失败: {e}")
+        finally:
+            cursor.close()
+    
+    def export_clickhouse_business_metrics(self):
+        """导出 ClickHouse 业务指标"""
+        logger.info("📈 开始导出 ClickHouse 业务指标...")
+        
+        cursor = self.cloud_db.cursor()
+        timestamp = datetime.now()
+        
+        try:
+            # K线数据量 - 今日
+            kline_today = self.clickhouse.execute(
+                "SELECT count() FROM stock_data.stock_kline_daily WHERE toDate(create_time) = today()"
+            )[0][0]
+            
+            # K线数据量 - 总量
+            kline_total = self.clickhouse.execute(
+                "SELECT count() FROM stock_data.stock_kline_daily"
+            )[0][0]
+            
+            # 快照数据量 - 今日
+            snapshot_today = self.clickhouse.execute(
+                "SELECT count() FROM stock_data.snapshot_data WHERE trade_date = today()"
+            )[0][0]
+            
+            # 股票覆盖数
+            stock_count = self.clickhouse.execute(
+                "SELECT countDistinct(stock_code) FROM stock_data.stock_kline_daily WHERE trade_date >= today() - 7"
+            )[0][0]
+            
+            cursor.execute(
+                """INSERT INTO clickhouse_business_metrics 
+                   (kline_today, kline_total, snapshot_today, stock_count, timestamp) 
+                   VALUES (%s, %s, %s, %s, %s)""",
+                (kline_today, kline_total, snapshot_today, stock_count, timestamp)
+            )
+            
+            self.cloud_db.commit()
+            logger.info(f"✅ ClickHouse 业务指标导出完成: K线今日 {kline_today}, 快照今日 {snapshot_today}")
+        
+        except Exception as e:
+            self.cloud_db.rollback()
+            logger.error(f"❌ ClickHouse 业务指标导出失败: {e}")
+        finally:
+            cursor.close()
+    
     def run_export(self):
         """执行完整导出流程"""
         logger.info("=" * 60)
@@ -277,12 +465,26 @@ class MonitoringExporter:
             # 连接云端数据库
             self.connect_cloud_mysql()
             
-            # 导出各类数据
-            self.export_prometheus_metrics()
-            self.export_clickhouse_replication()
-            self.export_redis_status()
+            # L0: 生死监控 (GOST 隧道)
             self.export_gost_tunnel_status()
+            
+            # L1: 资源水位 (41 + 58)
             self.export_system_resources()
+            self.export_server58_resources()
+            self.export_redis_status()
+            
+            # L2: 复制与同步
+            self.export_clickhouse_replication()
+            
+            # L3: 服务健康
+            self.export_service_health()
+            self.export_docker_status()
+            
+            # L4: 业务指标
+            self.export_clickhouse_business_metrics()
+            
+            # 其他 Prometheus 指标
+            self.export_prometheus_metrics()
             
             logger.info("=" * 60)
             logger.info("✅ 监控数据导出完成！")

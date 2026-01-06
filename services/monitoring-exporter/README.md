@@ -1,6 +1,6 @@
 # 📊 Monitoring Exporter (监控导出服务)
 
-> **版本**: 1.0.0  
+> **版本**: 1.1.0  
 > **状态**: Stable (运行中)  
 > **目标**: 将本地基础设施指标同步至腾讯云 MySQL，供 Grafana Cloud 远程访问。
 
@@ -10,16 +10,34 @@
 
 ```mermaid
 graph LR
-    A[本地采集] --> B(Monitoring Exporter)
-    B --> C{GOST 隧道: 36301}
-    C --> D[腾讯云 MySQL: monitoring]
-    D --> E[Grafana Cloud / 手机 APP]
+    A[Server 41 采集] --> B(Monitoring Exporter)
+    C[Server 58 采集] -->|SSH| B
+    B --> D{GOST 隧道: 36301}
+    D --> E[腾讯云 MySQL: monitoring]
+    E --> F[Grafana Cloud / 手机 APP]
 ```
 
-- **数据源**: Prometheus (9091), ClickHouse (9000), Redis (6379), System (psutil)
+- **数据源**: 
+  - Server 41: Prometheus, ClickHouse, Redis, Docker, System (psutil)
+  - Server 58: System (via SSH)
 - **同步频率**: 每 5 分钟 (300秒)
 - **存储方案**: 腾讯云 MySQL `monitoring` 数据库
 - **可视化**: [Grafana Cloud](https://ac1626285367.grafana.net/)
+
+---
+
+## 📊 采集指标说明 (L0-L4 分级)
+
+| 级别 | 指标类别 | 监控项 | 说明 |
+| :--- | :--- | :--- | :--- |
+| **L0** | GOST 隧道 | 存活状态 | 监控云端连接是否通畅 |
+| **L1** | System (41) | CPU, MEM, Disk | Server 41 资源水位 |
+| **L1** | System (58) | CPU, MEM, Disk | Server 58 资源水位 (SSH) |
+| **L1** | Redis | 内存使用率, OPS | 4GB 内存限制监控 |
+| **L2** | ClickHouse | 复制延迟, 队列大小, 只读状态 | 双主集群同步监控 |
+| **L3** | 微服务健康 | get-stockdata, quant-strategy, task-orchestrator, mootdx-api | HTTP 健康检查 |
+| **L3** | Docker | 容器状态 | 容器运行状态监控 |
+| **L4** | 业务指标 | K线同步量, 快照数据量, 股票覆盖数 | ClickHouse 业务数据 |
 
 ---
 
@@ -30,70 +48,41 @@ graph LR
 
 ```bash
 cd services/monitoring-exporter
-# 激活环境
 source .venv/bin/activate
 ```
 
 ### 2. 初始化数据库 (已执行)
-如果需要在新环境部署，运行：
 ```bash
 python init_db_py.py
+python create_monitoring_tables.py  # 扩展表
 ```
 
-### 3. 安装为系统服务 (推荐)
-为了确保服务器重启后自动同步，请执行：
+### 3. 服务管理
 ```bash
-sudo bash setup_service.sh
-```
-
----
-
-## 🛠️ 日常维护
-
-### 查看服务状态
-```bash
+# 查看状态
 sudo systemctl status monitoring-exporter
-```
 
-### 查看同步日志
-```bash
-# 查看实时日志
-tail -f exporter.log
-
-# 或使用系统日志
-journalctl -u monitoring-exporter -f
-```
-
-### 重启同步任务
-如果您修改了 `exporter.py`，请重启生效：
-```bash
+# 重启服务
 sudo systemctl restart monitoring-exporter
+
+# 查看日志
+tail -f exporter.log
 ```
 
 ---
 
-## 📊 采集指标说明
+## ⚙️ 核心配置
 
-| 指标类别 | 监控项 | 说明 |
-| :--- | :--- | :--- |
-| **ClickHouse** | 复制延迟, 队列大小, 只读状态 | 监控双主集群同步是否正常 |
-| **Redis** | 内存使用率, 活跃客户端, OPS | 监控 4GB 内存限制触发情况 |
-| **System** | CPU (%), Memory (GB), Disk (%) | 基础资源水位监控 |
-| **Gost** | 隧道服务存活状态 | 监控云端连接是否通畅 |
-
----
-
-## ⚙️ 核心配置说明
-
-- **Host**: `127.0.0.1:36301` (由 GOST 映射到腾讯云 MySQL)
+- **GOST 隧道**: `127.0.0.1:36301` → 腾讯云 MySQL
 - **MySQL 账号**: `root` / `alwaysup@888`
 - **Grafana 只读账号**: `grafana_readonly` / `alwaysup@monitoring`
-- **保留策略**: 数据库内置了事件 `cleanup_old_metrics`，自动保留最近 **30 天** 数据。
+- **保留策略**: 自动保留最近 **30 天** 数据
 
 ---
 
 ## 📝 迭代记录
-- **2026-01-05**: 初始化发布，支持基础资源与核心组件监控。
+- **2026-01-06**: v1.1.0 - 新增 Server 58 SSH 采集、微服务健康检查、Docker 状态、ClickHouse 业务指标
+- **2026-01-05**: v1.0.0 - 初始化发布，支持基础资源与核心组件监控
 
 ---
 *Created by AI Agent*
