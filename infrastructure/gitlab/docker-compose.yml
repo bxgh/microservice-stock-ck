@@ -1,0 +1,25 @@
+version: '3.8'
+services:
+  gitlab:
+    image: gitlab/gitlab-ce:latest
+    container_name: microservice-stock-gitlab
+    restart: unless-stopped
+    hostname: '192.168.151.58'
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://192.168.151.58:8800'
+        gitlab_rails['gitlab_shell_ssh_port'] = 8922
+    ports:
+      - '8800:8800'
+      - '8922:22'
+    volumes:
+      - '../../data/gitlab/config:/etc/gitlab'
+      - '../../data/gitlab/logs:/var/log/gitlab'
+      - '../../data/gitlab/data:/var/opt/gitlab'
+    networks:
+      - microservice-stock
+
+networks:
+  microservice-stock:
+    name: microservice-stock_microservice-stock
+    external: true
