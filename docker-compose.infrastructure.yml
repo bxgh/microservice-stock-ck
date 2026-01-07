@@ -24,22 +24,27 @@ services:
       timeout: 10s
       retries: 3
 
-  # 缓存服务 - Redis
+  # 缓存服务 - Redis (EPIC-011: 4GB cache for realtime quotes)
   redis:
-    image: redis:7.2.4-alpine
+    image: redis:7.0-alpine
     container_name: microservice-stock-redis
     restart: unless-stopped
-    command: redis-server --appendonly yes --requirepass redis123
+    command: redis-server /usr/local/etc/redis/redis.conf
     volumes:
       - redis_data:/data
+      - ./infrastructure/redis/config/redis.conf:/usr/local/etc/redis/redis.conf:ro
     ports:
       - "6379:6379"
     networks:
       - microservice-stock
     depends_on:
       - nacos
+    deploy:
+      resources:
+        limits:
+          memory: 4G
     healthcheck:
-      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      test: ["CMD", "redis-cli", "ping"]
       interval: 30s
       timeout: 10s
       retries: 3

@@ -20,6 +20,7 @@ services:
       retries: 3
     volumes:
       - mootdx_config:/root/.mootdx
+      - ./services/mootdx-api/src:/app/src  # 开发模式挂载源码
 
   # MooTDX Source 服务 (gRPC + 路由)
   mootdx-source:
@@ -46,6 +47,7 @@ services:
       # easyquotation: HTTP 需要代理
       - HTTP_PROXY=http://192.168.151.18:3128
       - HTTPS_PROXY=http://192.168.151.18:3128
+      - NO_PROXY=localhost,127.0.0.1,0.0.0.0,::1,microservice-stock-nacos
       # 云端 API URLs
       - AKSHARE_API_URL=http://124.221.80.250:8003
       - BAOSTOCK_API_URL=http://124.221.80.250:8001
@@ -54,6 +56,33 @@ services:
     volumes:
       - ./services/mootdx-source/src:/app/src  # 开发模式挂载源码
 
+
+  # Snapshot Recorder Service (Daemon)
+  snapshot-recorder:
+    image: get-stockdata:latest
+    container_name: microservice-stock-snapshot-recorder
+    restart: unless-stopped
+    # 脚本未打包进镜像，直接运行 Python 模块
+    # 使用 ; 允许 bestip 失败而不退出容器
+    command: python -u -m src.core.recorder.snapshot_recorder
+    network_mode: host
+    environment:
+      - LOG_LEVEL=INFO
+      - PYTHONPATH=/app
+      # ClickHouse Config (Host Mode)
+      - CLICKHOUSE_HOST=127.0.0.1
+      - CLICKHOUSE_PORT=9000
+      - CLICKHOUSE_DB=stock_data
+      # Network Proxy
+      - HTTP_PROXY=http://192.168.151.18:3128
+      - HTTPS_PROXY=http://192.168.151.18:3128
+      - NO_PROXY=localhost,127.0.0.1,0.0.0.0,::1,microservice-stock-nacos
+      - SNAPSHOT_STORAGE_PATH=/app/data/snapshots
+    volumes:
+      - ./services/get-stockdata/data:/app/data   # Persist local parquet
+      - ./services/get-stockdata/src:/app/src     # Hot-reload source
+      - ./services/get-stockdata/config:/app/config # Config files
+      - mootdx_config:/home/app/.mootdx           # Shared config
 
 
 networks:

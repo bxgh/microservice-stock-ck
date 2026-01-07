@@ -100,16 +100,39 @@ class GenericTaskRunner:
 
         image = task.target.get('image') or settings.WORKER_IMAGE
         command = task.target.get('command')
-        environment = task.target.get('environment')
+        # Prepare Environment: Merge task-specific env with default worker settings
+        env = {}
+        # 1. Start with defaults from orchestrator settings
+        env.update({
+            "MYSQL_HOST": settings.WORKER_MYSQL_HOST,
+            "MYSQL_PORT": str(settings.WORKER_MYSQL_PORT),
+            "MYSQL_USER": settings.WORKER_MYSQL_USER,
+            "MYSQL_PASSWORD": settings.WORKER_MYSQL_PASSWORD,
+            "MYSQL_DATABASE": settings.WORKER_MYSQL_DATABASE,
+            "CLICKHOUSE_HOST": settings.WORKER_CLICKHOUSE_HOST,
+            "CLICKHOUSE_PORT": str(settings.WORKER_CLICKHOUSE_PORT),
+            "CLICKHOUSE_USER": settings.WORKER_CLICKHOUSE_USER,
+            "CLICKHOUSE_PASSWORD": settings.WORKER_CLICKHOUSE_PASSWORD,
+            "CLICKHOUSE_DATABASE": settings.WORKER_CLICKHOUSE_DATABASE,
+            "TZ": settings.TIMEZONE,
+            "PYTHONPATH": "/app/src"
+        })
+        # 2. Override with task-specific environment variables
+        task_env = task.target.get('environment')
+        if task_env:
+            env.update(task_env)
 
-        logger.info(f"▶️ Executing Docker task: {task.name} ({image})")
+        network_mode = task.target.get('network_mode', 'host')
+
+        logger.info(f"▶️ Executing Docker task: {task.name} ({image}) net={network_mode}")
         try:
             container = docker_client.containers.run(
                 image=image,
                 command=command,
-                environment=environment,
+                environment=env,
                 detach=True,
-                remove=True  # Auto-remove after run? Or track status?
+                network_mode=network_mode,
+                remove=False  # Keep container for debugging
             )
             logger.info(f"✅ Docker Task started: {task.name} - CID {container.id[:12]}")
         except Exception as e:

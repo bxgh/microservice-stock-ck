@@ -62,11 +62,20 @@ app.include_router(router, prefix="/api/v1")
 
 @app.get("/health")
 async def health_check():
-    """健康检查"""
+    """健康检查 - 包含连接池状态"""
     global mootdx_handler
+    
+    if mootdx_handler:
+        pool_status = mootdx_handler.get_pool_status()
+        is_healthy = pool_status.get("active_connections", 0) > 0
+    else:
+        pool_status = {}
+        is_healthy = False
+    
     return {
-        "status": "healthy" if mootdx_handler and mootdx_handler.client else "unhealthy",
-        "service": "mootdx-api"
+        "status": "healthy" if is_healthy else "unhealthy",
+        "service": "mootdx-api",
+        "pool": pool_status
     }
 
 

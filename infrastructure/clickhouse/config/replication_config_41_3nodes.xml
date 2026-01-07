@@ -1,0 +1,52 @@
+<?xml version="1.0"?>
+<clickhouse>
+    <!-- 宏定义 - 用于复制表路径 -->
+    <macros>
+        <shard>01</shard>
+        <replica>server41</replica>
+    </macros>
+
+    <!-- 连接到 ClickHouse Keeper 集群 -->
+    <zookeeper>
+        <node>
+            <host>192.168.151.41</host>
+            <port>9181</port>
+        </node>
+        <node>
+            <host>192.168.151.58</host>
+            <port>9181</port>
+        </node>
+        <node>
+            <host>192.168.151.111</host>
+            <port>9181</port>
+        </node>
+        <session_timeout_ms>30000</session_timeout_ms>
+    </zookeeper>
+
+    <!-- 集群配置 -->
+    <remote_servers>
+        <stock_cluster>
+            <shard>
+                <internal_replication>true</internal_replication>
+                <replica>
+                    <host>192.168.151.41</host>
+                    <port>9000</port>
+                </replica>
+                <replica>
+                    <host>192.168.151.58</host>
+                    <port>9000</port>
+                </replica>
+                <replica>
+                    <host>192.168.151.111</host>
+                    <port>9000</port>
+                </replica>
+            </shard>
+        </stock_cluster>
+    </remote_servers>
+
+    <!-- 允许远程连接 -->
+    <listen_host>0.0.0.0</listen_host>
+    
+    <!-- 关键：告诉其他副本如何连接我 -->
+    <interserver_http_host>192.168.151.41</interserver_http_host>
+</clickhouse>

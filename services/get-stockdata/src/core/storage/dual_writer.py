@@ -149,7 +149,8 @@ class DualWriter:
                     
                     total_volume=int(get_val('volume', 0)),
                     total_amount=float(get_val('amount', 0)),
-                    # turnover_rate=float(get_val('turnover', 0)) # Mootdx 可能不返回
+                    # turnover_rate=float(get_val('turnover', 0)), # Mootdx 可能不返回
+                    created_at=ts
                 )
                 snapshots.append(snapshot)
             except Exception as e:
@@ -168,5 +169,7 @@ class DualWriter:
 
     def close(self):
         """关闭资源"""
+        logger.info("Closing DualWriter executor...")
         self._executor.shutdown(wait=True)
-        self.clickhouse.close()
+        if self.clickhouse:
+            self.clickhouse.close()

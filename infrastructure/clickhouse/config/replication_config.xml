@@ -1,6 +1,5 @@
 <?xml version="1.0"?>
 <clickhouse>
-    <!-- 宏定义 - 用于复制表路径 -->
     <macros>
         <shard>01</shard>
         <replica>server58</replica>

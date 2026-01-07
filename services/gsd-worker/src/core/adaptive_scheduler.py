@@ -186,7 +186,7 @@ class AdaptiveKLineSyncScheduler:
         
         poll_count = 0
         
-        while datetime.now(CST) < timeout_time:
+        while True:
             poll_count += 1
             signal = await self._check_today_signal()
             
@@ -220,6 +220,10 @@ class AdaptiveKLineSyncScheduler:
             else:
                 logger.info(f"🔍 第{poll_count}次检查: 未发现今日记录")
             
+            # 检查是否超时
+            if datetime.now(CST) >= timeout_time:
+                break
+                
             # 等待下次轮询
             await asyncio.sleep(self.poll_interval_min * 60)
         

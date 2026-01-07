@@ -1,0 +1,29 @@
+[Unit]
+Description=GOST Tunnel Health Check Monitor
+Documentation=https://github.com/ginuerzh/gost
+After=gost-mysql-tunnel.service
+Requires=gost-mysql-tunnel.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/bxgh/microservice-stock/infrastructure/gost
+ExecStart=/home/bxgh/microservice-stock/infrastructure/gost/gost_health_check.sh
+Restart=always
+RestartSec=5s
+
+# 环境变量
+Environment="ALERT_WEBHOOK_URL="
+Environment="PROMETHEUS_PUSHGATEWAY=http://127.0.0.1:9091"
+
+# 日志配置
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=gost-health-check
+
+# 资源限制
+MemoryLimit=128M
+CPUQuota=10%
+
+[Install]
+WantedBy=multi-user.target

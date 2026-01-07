@@ -40,12 +40,18 @@ async def get_quotes(
 @router.get("/tick/{code}")
 async def get_tick(
     code: str,
+    date: Optional[int] = Query(None, description="交易日期 YYYYMMDD（整数）"),
+    start: int = Query(0, description="起始位置"),
+    offset: int = Query(800, ge=1, le=10000, description="获取数量"),
     handler: MootdxHandler = Depends(get_handler)
 ):
     """
     获取分笔成交数据
     
     - **code**: 股票代码
+    - **date**: 交易日期（整数格式 YYYYMMDD，如 20260106）
+    - **start**: 起始位置（默认 0）
+    - **offset**: 获取数量（默认 800）
     
     返回字段 (已标准化):
     - **time**: 时间 (HH:MM)
@@ -53,7 +59,15 @@ async def get_tick(
     - **volume**: 成交量 (单位：股)
     - **type**: 买卖类型 (BUY/SELL/NEUTRAL)
     """
-    df = await handler.get_tick([code], {})
+    params = {}
+    if date is not None:
+        params["date"] = date
+    if start is not None:
+        params["start"] = start
+    if offset is not None:
+        params["offset"] = offset
+    
+    df = await handler.get_tick([code], params)
     return df.to_dict(orient="records")
 
 

@@ -22,19 +22,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-async def main(shard_index: int = 0, total_shards: int = 1, mode: str = 'adaptive'):
+async def main(mode: str = 'adaptive'):
     """
     K线同步主函数
     
     Args:
-        shard_index: 分片索引 (0-based)
-        total_shards: 总分片数
         mode: 'adaptive' (自适应调度) | 'direct' (直接同步，用于测试)
         
     Returns:
         int: 退出码 (0: 成功, 1: 失败)
     """
-    logger.info(f"启动K线同步任务 (模式={mode}, 分片 {shard_index+1}/{total_shards})")
+    logger.info(f"启动K线同步任务 (模式={mode})")
     
     service = KLineSyncService()
     await service.initialize()
@@ -71,15 +69,10 @@ async def main(shard_index: int = 0, total_shards: int = 1, mode: str = 'adaptiv
             # 直接同步模式（用于测试或手动触发）
             logger.info("🔧 使用直接同步模式（跳过云端信号检测）")
         
-        # 执行同步
-        if total_shards > 1:
-            logger.info(f"分片模式: {shard_index+1}/{total_shards}")
-            await service.sync_by_shard(shard_index, total_shards)
-        else:
-            # 单机模式：智能增量同步
-            await service.sync_smart_incremental()
-            # 同步复权因子
-            await service.sync_adjust_factors()
+        # 单机模式：智能增量同步
+        await service.sync_smart_incremental()
+        # 同步复权因子
+        await service.sync_adjust_factors()
         
         # 成功日志由 sync_service 内部记录，这里不需要重复记录，以免重复
         logger.info("✅ K线同步任务完成")
@@ -105,12 +98,10 @@ async def main(shard_index: int = 0, total_shards: int = 1, mode: str = 'adaptiv
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="K线同步任务")
-    parser.add_argument("--shard", type=int, default=0, help="分片索引")
-    parser.add_argument("--total", type=int, default=1, help="总分片数")
     parser.add_argument("--mode", type=str, default="adaptive", 
                        choices=["adaptive", "direct"],
                        help="同步模式: adaptive(自适应调度) 或 direct(直接同步)")
     args = parser.parse_args()
     
-    exit_code = asyncio.run(main(args.shard, args.total, args.mode))
+    exit_code = asyncio.run(main(args.mode))
     sys.exit(exit_code)

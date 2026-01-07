@@ -35,6 +35,7 @@
   - [Database Schema](./database-schema.md)
     - [MySQL 5.7 Schema (元数据存储)](./database-schema.md#mysql-57-schema-元数据存储)
     - [ClickHouse Schema (实时数据存储)](./database-schema.md#clickhouse-schema-实时数据存储)
+    - [ClickHouse 双主复制集群](./clickhouse-replicated-cluster.md)
     - [Redis Data Structures (缓存和消息队列)](./database-schema.md#redis-data-structures-缓存和消息队列)
   - [Frontend Architecture](./frontend-architecture.md)
     - [Component Organization](./frontend-architecture.md#component-organization)

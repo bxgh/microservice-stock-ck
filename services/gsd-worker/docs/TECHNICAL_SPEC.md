@@ -12,7 +12,7 @@
 - K线数据同步 (MySQL → ClickHouse)
 - 数据质量检测
 - 数据修复
-- 支持分片并行执行
+
 
 **不包含**：查询API（由 gsd-api 负责）
 
@@ -30,33 +30,7 @@
 
 ## 3. 运行模式
 
-### 3.1 临时容器模式
 
-```bash
-# 单次执行后自动销毁
-docker run --rm gsd-worker python -m jobs.sync_kline
-
-# 执行流程
-1. 容器启动
-2. 执行任务
-3. 输出日志
-4. 容器销毁
-```
-
-### 3.2 分片并行模式
-
-```bash
-# 4个容器并行同步，每个处理 1/4 股票
-docker run --rm gsd-worker python -m jobs.sync_kline --shard 0 --total 4
-docker run --rm gsd-worker python -m jobs.sync_kline --shard 1 --total 4
-docker run --rm gsd-worker python -m jobs.sync_kline --shard 2 --total 4
-docker run --rm gsd-worker python -m jobs.sync_kline --shard 3 --total 4
-
-# 优势：
-# - 原本 2小时 → 30分钟
-# - 资源按需分配
-# - 失败隔离
-```
 
 ---
 
@@ -95,46 +69,7 @@ async def sync_by_stock_codes(codes: list):
 
 ---
 
-## 5. 分片逻辑实现
 
-### 5.1 分片策略
-
-```python
-# jobs/sync_kline.py
-async def main(shard_index: int = 0, total_shards: int = 1):
-    service = KLineSyncService()
-    await service.initialize()
-    
-    if total_shards > 1:
-        # 获取所有股票列表
-        all_stocks = await get_all_stock_codes()
-        
-        # 按 hash 分片
-        my_stocks = [
-            code for code in all_stocks
-            if hash(code) % total_shards == shard_index
-        ]
-        
-        logger.info(f"分片 {shard_index}/{total_shards}: {len(my_stocks)} 只股票")
-        
-        # 只同步分配给我的股票
-        await service.sync_by_stock_codes(my_stocks)
-    else:
-        # 单机模式
-        await service.sync_smart_incremental()
-```
-
-### 5.2 分片参数传递
-
-```bash
-# 通过命令行参数
-python -m jobs.sync_kline --shard 0 --total 4
-
-# 或通过环境变量
-SHARD_INDEX=0 TOTAL_SHARDS=4 python -m jobs.sync_kline
-```
-
----
 
 ## 6. 数据流转
 
@@ -227,7 +162,7 @@ async def fetch_from_mysql():
 services:
   gsd-worker-sync:
     image: gsd-worker:latest
-    command: python -m jobs.sync_kline --shard 0 --total 4
+    command: python -m jobs.sync_kline
     environment:
       # MySQL (源数据)
       - MYSQL_HOST=192.168.151.18
@@ -278,7 +213,7 @@ logging.basicConfig(
 )
 
 # 关键日志点
-logger.info(f"启动K线同步任务 (分片 {shard_index+1}/{total_shards})")
+logger.info(f"启动K线同步任务")
 logger.info(f"进度: {synced:,}/{total:,} ({progress:.1f}%)")
 logger.info(f"✓ 同步完成，共 {synced:,} 条记录")
 ```
@@ -360,8 +295,8 @@ clickhouse_pool = await asynch.create_pool(
 ## 11. 开发检查清单
 
 ### 任务入口
-- [ ] 支持命令行参数 (--shard, --total)
-- [ ] 实现分片逻辑
+### 任务入口
+- [ ] 支持命令行参数 (--mode)
 - [ ] 返回正确退出码 (0=成功, 1=失败)
 - [ ] 添加详细日志
 

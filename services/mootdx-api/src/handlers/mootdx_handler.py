@@ -3,17 +3,20 @@ Mootdx Handler
 通达信直连数据源处理器
 
 职责:
-- 管理 mootdx 客户端的生命周期
+- 管理 mootdx 客户端连接池的生命周期
 - 提供实时行情、分笔、K线数据获取接口
 - 异步包装同步调用
+- 通过连接池实现负载均衡
 """
 import asyncio
 import logging
+import os
 from typing import List, Dict, Any
 import pandas as pd
 from mootdx.quotes import Quotes
 
 from utils.field_mapper import standardize_mootdx_fields
+from core.tdx_pool import TDXClientPool
 
 # 内联默认值（避免外部依赖）
 DEFAULT_FREQUENCY = "d"
@@ -26,44 +29,69 @@ class MootdxHandler:
     通达信（mootdx）数据源处理器
     
     封装 mootdx 库的调用逻辑，提供异步接口。
-    使用 bestip 自动选择最佳服务器节点。
+    使用连接池实现负载均衡，突破单节点并发限制。
     """
     
-    def __init__(self):
-        self.client: Quotes = None
+    def __init__(self, pool_size: int = None):
+        """
+        初始化 Handler
+        
+        Args:
+            pool_size: 连接池大小，默认从环境变量 TDX_POOL_SIZE 读取，否则为 3
+        """
+        if pool_size is None:
+            pool_size = int(os.getenv("TDX_POOL_SIZE", "3"))
+        self.pool = TDXClientPool(size=pool_size)
         self._lock = asyncio.Lock()
+    
+    
+    async def get_client(self) -> Quotes:
+        """获取连接池中的下一个客户端"""
+        return await self.pool.get_next()
+    
+    @property
+    def client(self) -> Quotes:
+        """
+        兼容旧接口：返回连接池中的下一个客户端
+        
+        Warning: 此属性是同步的，但内部调用异步方法。
+        仅用于向后兼容，不保证线程安全。
+        推荐使用 get_client() 方法。
+        """
+        # 为了向后兼容，使用 run_until_complete
+        # 注意：这不是最佳实践，仅用于兼容现有代码
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # 如果事件循环正在运行，直接返回第一个客户端（不安全但简单）
+                return self.pool.clients[0] if self.pool.clients else None
+            else:
+                return loop.run_until_complete(self.pool.get_next())
+        except Exception:
+            # 降级处理：直接返回第一个客户端
+            return self.pool.clients[0] if self.pool.clients else None
     
     async def initialize(self) -> None:
         """
-        初始化 mootdx 客户端
+        初始化 TDX 连接池
         
-        使用 bestip=True 自动选择最快的通达信服务器节点
+        创建多个 TDX 客户端连接，每个连接自动选择最佳服务器
         """
-        loop = asyncio.get_event_loop()
         async with self._lock:
-            if self.client:
-                return
-                
-            try:
-                self.client = await loop.run_in_executor(
-                    None,
-                    lambda: Quotes.factory(market='std', bestip=True)
-                )
-                logger.info("✓ Mootdx client initialized (auto best server)")
-            except Exception as e:
-                logger.error(f"Failed to initialize mootdx: {e}")
-                self.client = None
+            await self.pool.initialize()
+            logger.info(f"✓ MootdxHandler 就绪 (pool_size={self.pool.size})")
     
     async def close(self) -> None:
         """
-        关闭 mootdx 客户端
-        
-        注意: mootdx 客户端通常不需要显式关闭，此方法仅用于统一接口
+        关闭连接池
         """
         async with self._lock:
-            if self.client:
-                self.client = None
-                logger.info("Mootdx client closed")
+            await self.pool.close()
+            logger.info("MootdxHandler 已关闭")
+    
+    def get_pool_status(self) -> dict:
+        """获取连接池状态"""
+        return self.pool.get_status()
     async def get_quotes(
         self,
         codes: List[str],
@@ -131,15 +159,34 @@ class MootdxHandler:
         if not codes:
             raise ValueError("No code specified for TICK")
         
+        # 提取参数
+        date = params.get("date")
+        start = params.get("start", 0)
+        offset = params.get("offset", 800)
+        
         loop = asyncio.get_event_loop()
         try:
-            data = await loop.run_in_executor(
+            if date is not None:
+                data = await loop.run_in_executor(
+                    None,
+                    lambda: self.client.transactions(
+                        symbol=codes[0],
+                        date=date,
+                        start=start,
+                        offset=offset
+                    )
+                )
+            else:
+                data = await loop.run_in_executor(
                     None,
                     lambda: self.client.transactions(symbol=codes[0])
                 )
+                
             # 集成标准化逻辑
             if data is not None:
                 data = standardize_mootdx_fields(data, data_type='tick')
+                # 修复 NaN 导致 JSON 序列化失败的问题
+                data = data.where(pd.notnull(data), None)
             return data if data is not None else pd.DataFrame()
         except Exception as e:
             logger.error(f"Mootdx get_tick failed: {e}")
