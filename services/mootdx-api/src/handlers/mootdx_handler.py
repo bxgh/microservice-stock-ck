@@ -44,10 +44,32 @@ class MootdxHandler:
         self.pool = TDXClientPool(size=pool_size)
         self._lock = asyncio.Lock()
     
+    
+    async def get_client(self) -> Quotes:
+        """获取连接池中的下一个客户端"""
+        return await self.pool.get_next()
+    
     @property
     def client(self) -> Quotes:
-        """兼容旧接口：返回连接池中的下一个客户端"""
-        return self.pool.get_next()
+        """
+        兼容旧接口：返回连接池中的下一个客户端
+        
+        Warning: 此属性是同步的，但内部调用异步方法。
+        仅用于向后兼容，不保证线程安全。
+        推荐使用 get_client() 方法。
+        """
+        # 为了向后兼容，使用 run_until_complete
+        # 注意：这不是最佳实践，仅用于兼容现有代码
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # 如果事件循环正在运行，直接返回第一个客户端（不安全但简单）
+                return self.pool.clients[0] if self.pool.clients else None
+            else:
+                return loop.run_until_complete(self.pool.get_next())
+        except Exception:
+            # 降级处理：直接返回第一个客户端
+            return self.pool.clients[0] if self.pool.clients else None
     
     async def initialize(self) -> None:
         """

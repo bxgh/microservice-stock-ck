@@ -40,46 +40,59 @@ class TDXClientPool:
         初始化所有 TDX 客户端连接
         
         每个客户端会独立执行 bestip 选择，可能连接到不同的服务器节点
+        
+        使用 double-check locking 模式确保线程安全
         """
+        # Fast path: 不需要锁的快速检查
         if self._initialized:
             return
         
-        loop = asyncio.get_event_loop()
-        
-        logger.info(f"正在初始化 TDX 连接池 (size={self.size})...")
-        
-        for i in range(self.size):
-            try:
-                client = await loop.run_in_executor(
-                    None,
-                    lambda: Quotes.factory(market='std', bestip=True)
-                )
-                self.clients.append(client)
-                logger.info(f"  节点 {i + 1}/{self.size} 已连接")
-            except Exception as e:
-                logger.error(f"  节点 {i + 1} 连接失败: {e}")
-        
-        if len(self.clients) == 0:
-            raise RuntimeError("TDX 连接池初始化失败：没有可用的连接")
-        
-        self._initialized = True
-        logger.info(f"✓ TDX 连接池就绪 ({len(self.clients)}/{self.size} 节点)")
+        # 获取锁进行初始化
+        async with self._lock:
+            # Double-check: 可能其他协程已经初始化完成
+            if self._initialized:
+                return
+            
+            loop = asyncio.get_event_loop()
+            
+            logger.info(f"正在初始化 TDX 连接池 (size={self.size})...")
+            
+            for i in range(self.size):
+                try:
+                    client = await loop.run_in_executor(
+                        None,
+                        lambda: Quotes.factory(market='std', bestip=True)
+                    )
+                    self.clients.append(client)
+                    logger.info(f"  节点 {i + 1}/{self.size} 已连接")
+                except Exception as e:
+                    logger.error(f"  节点 {i + 1} 连接失败: {e}")
+            
+            if len(self.clients) == 0:
+                raise RuntimeError("TDX 连接池初始化失败：没有可用的连接")
+            
+            self._initialized = True
+            logger.info(f"✓ TDX 连接池就绪 ({len(self.clients)}/{self.size} 节点)")
     
-    def get_next(self) -> Quotes:
+    async def get_next(self) -> Quotes:
         """
         Round-Robin 获取下一个客户端
         
-        线程安全地轮询返回连接池中的客户端
+        使用异步锁确保 _index 的原子性读写操作
         
         Returns:
             下一个可用的 Quotes 客户端
+            
+        Raises:
+            RuntimeError: 如果连接池未初始化或为空
         """
         if not self.clients:
             raise RuntimeError("连接池未初始化或为空")
         
-        client = self.clients[self._index]
-        self._index = (self._index + 1) % len(self.clients)
-        return client
+        async with self._lock:
+            client = self.clients[self._index]
+            self._index = (self._index + 1) % len(self.clients)
+            return client
     
     async def close(self) -> None:
         """
@@ -87,9 +100,10 @@ class TDXClientPool:
         
         Note: mootdx 客户端没有显式的关闭方法，这里只是清理引用
         """
-        self.clients.clear()
-        self._initialized = False
-        logger.info("TDX 连接池已关闭")
+        async with self._lock:
+            self.clients.clear()
+            self._initialized = False
+            logger.info("TDX 连接池已关闭")
     
     @property
     def active_count(self) -> int:
