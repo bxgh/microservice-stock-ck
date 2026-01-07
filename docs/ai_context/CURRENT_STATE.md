@@ -10,6 +10,8 @@
 
 | 日期 | 工作内容 | 相关文档 |
 |------|----------|----------|
+| 2026-01-07 | 全市场分笔采集 (SBF 策略) 实现 | [WALKTHROUGH](../reports/WALKTHROUGH_SBF_TICK_20260107.md) |
+| 2026-01-07 | 100% 分笔数据覆盖率优化完成 | [WALKTHROUGH](../reports/WALKTHROUGH_SBF_TICK_20260107.md) |
 | 2026-01-05 | snapshot-recorder QC 完成 | [WALKTHROUGH](../reports/WALKTHROUGH_SNAPSHOT_RECORDER_QC_20260105.md) |
 | 2026-01-04 | ClickHouse Active-Active 集群部署 | [PROGRESS_REPORT](../reports/PROGRESS_REPORT_20260104.md) |
 | 2026-01-04 | task-orchestrator 动态任务注册 | [tasks.yml](../../services/task-orchestrator/config/tasks.yml) |

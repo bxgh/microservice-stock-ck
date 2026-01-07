@@ -10,10 +10,11 @@
 |------|------|--------|
 | [QUICK_START.md](./QUICK_START.md) | AI 必读，1 分钟建立上下文 | ⭐ 必读 |
 | [SERVICE_REGISTRY.md](./SERVICE_REGISTRY.md) | 服务一览表，定位服务和依赖 | ⭐ 必读 |
-| [COMMON_PITFALLS.md](./COMMON_PITFALLS.md) | 常见问题和教训总结 | ⭐ 必读 |
-| [DATA_FLOW.md](./DATA_FLOW.md) | 数据流向图，理解数据路径 | 推荐 |
-| [CURRENT_STATE.md](./CURRENT_STATE.md) | 当前进度和已知问题 | 推荐 |
-| [DECISION_LOG.md](./DECISION_LOG.md) | 关键技术决策 | 参考 |
+| [COMMON_PITFALLS.md](./COMMON_PITFALLS.md) | 常见问题和教训总结 [UPDATED] | ⭐ 必读 |
+| [DATA_FLOW.md](./DATA_FLOW.md) | 数据流向图 (SBF 策略) [UPDATED] | 推荐 |
+| [TICK_DATA_STANDARDS.md](../../services/task-orchestrator/docs/task_scheduling/TICK_DATA_STANDARDS.md) | 分笔采集核心规范 [NEW] | 推荐 |
+| [CURRENT_STATE.md](./CURRENT_STATE.md) | 当前进度 (SBF 全市场完成) [UPDATED] | 推荐 |
+| [DECISION_LOG.md](./DECISION_LOG.md) | 关键技术决策 (SBF 策略等) [UPDATED] | 参考 |
 | [TECH_DEBT.md](./TECH_DEBT.md) | 技术债务清单 | 参考 |
 | [PROMPT_TEMPLATES.md](./PROMPT_TEMPLATES.md) | 新会话提示词模板 | 参考 |
 | [STRATEGY_DATA_REQUIREMENTS.md](./STRATEGY_DATA_REQUIREMENTS.md) | 策略数据需求分析 | 参考 |

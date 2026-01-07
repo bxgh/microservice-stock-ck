@@ -83,24 +83,31 @@ sequenceDiagram
 
 ---
 
-## 数据流 2: K 线日终同步
+## 数据流 2: 盘后分笔数据同步 (SBF 策略)
 
 ```mermaid
 sequenceDiagram
     participant TO as task-orchestrator
     participant GW as gsd-worker
-    participant MOOTDX as mootdx-api
+    participant MAPI as mootdx-api
     participant CH as ClickHouse
     
-    Note over TO: 15:05 触发 daily_kline_sync
-    TO->>GW: 启动容器
-    GW->>MOOTDX: 获取日K线
-    MOOTDX-->>GW: K线数据
-    GW->>CH: INSERT stock_kline_daily
+    Note over TO: 16:00 触发 daily_tick_sync
+    TO->>GW: 启动容器 (jobs.sync_tick)
+    
+    loop 顺序回溯 (SBF)
+        GW->>MAPI: GET /tick/{code} (start=0, offset=800)
+        MAPI-->>GW: 最新分笔数据 (15:00)
+        GW->>MAPI: GET /tick/{code} (start=800, offset=800)
+        MAPI-->>GW: 同步历史数据 (14:30...)
+        Note over GW: 继续回溯直到发现 09:25
+    end
+    
+    GW->>CH: INSERT tick_data (批量写入)
     GW-->>TO: 任务完成
 ```
 
-**关键表**: `stock_data.stock_kline_daily`
+**关键表**: `stock_data.tick_data`
 
 ---
 
@@ -174,6 +181,6 @@ graph LR
 | 表名 | 存储 | 用途 | 数据量级 |
 |------|------|------|----------|
 | `stock_kline_daily` | ClickHouse | 日K线 | ~17M 行 |
-| `tick_data` | ClickHouse | 分笔数据 | 持续增长 |
+| `tick_data` | ClickHouse | 分笔数据 | ~15M/日 (全市场) |
 | `sync_progress` | MySQL (云) | 同步进度 | ~ |
 | `sync_execution_logs` | MySQL (云) | 同步日志 | ~ |

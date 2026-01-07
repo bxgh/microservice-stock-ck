@@ -12,19 +12,26 @@
 - 测试: 必须在 Docker 中运行: docker compose run --rm <service> pytest
 - 端口/IP: 从 .env 或 docker-compose.yml 获取，不要凭记忆
 
-```需求
-整理获取分笔数据的相关代码和任务，需要恢复盘后分笔数据的采集任务。
----
+Critical Engineering Rules for Tick Data:
+- **Strategy**: ALWAYS use **Sequential Batch Fetching (SBF)** moving backwards from 15:00 to 09:25.
+- **Batch Size**: Use `batch_size=800` for stability. Larger batches (2k+) often fail or truncate.
+- **Concurrency**: Set `concurrency=2` for full market sync to avoid IP bans and connection resets.
+- **NaN Handling**: Always apply `df.where(pd.notnull(df), None)` before returning JSON to avoid 500 errors.
+- **Resource Cleanup**: Add `await asyncio.sleep(0.25)` after closing `aiohttp.ClientSession` in `close()` methods.
 
+```需求
+目标: 确保分笔采集任务在全市场(5000+股票)规模下保持 100% 可用数据覆盖和高稳定性。
+1. 使用 SBF 策略取代任何基于固定偏移或二分查找的逻辑。
+2. 实现完善的重试机制 (至少 3 次，带指数退避)。
+3. 确保 09:25 集合竞价数据的完整性。
+```
 
 ## 🔗 核心文档路径
 
 | 文档 | 路径 | 用途 |
 |------|------|------|
-| 快速入门 | `docs/ai_context/QUICK_START.md` | **必读** |
-| 常见问题 | `docs/ai_context/COMMON_PITFALLS.md` | **必读** |
-| 服务注册 | `docs/ai_context/SERVICE_REGISTRY.md` | 查端口/服务 |
-| 数据流向 | `docs/ai_context/DATA_FLOW.md` | 理解数据路径 |
-| 决策日志 | `docs/ai_context/DECISION_LOG.md` | 理解设计意图 |
-| 技术债务 | `docs/ai_context/TECH_DEBT.md` | 避开雷区 |
+| 采集规范 | `services/task-orchestrator/docs/task_scheduling/TICK_DATA_STANDARDS.md` | **必读 (SBF 详情)** |
+| 常见问题 | `docs/ai_context/COMMON_PITFALLS.md` | **必读 (API 限制)** |
+| 进度追踪 | `docs/ai_context/CURRENT_STATE.md` | 检查最近完成项 |
+| 数据流向 | `docs/ai_context/DATA_FLOW.md` | SBF 回溯可视化 |
 | 数据安全 | `docs/ai_collaboration/data_safety_policy.md` | 操作边界 |

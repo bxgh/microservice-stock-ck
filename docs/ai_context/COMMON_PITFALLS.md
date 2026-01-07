@@ -467,11 +467,41 @@ def validate_kline(df: pd.DataFrame) -> list[str]:
 
 ---
 
+### 11. 🛡️ mootdx 数据采集坑点
+
+> **2026-01-07 总结**: 在全市场分笔采集 (SBF 策略) 实践中总结的深度坑点。
+
+| 问题 | 描述 | 症状 | 解决方案 |
+|------|------|------|----------|
+| **NaN 序列化失败** | TDX 返回的数据可能包含空值 (NaN)，默认 JSON 序列化器会报错 (500) | mootdx-api 返回 500，gsd-worker 接收到半截数据 | 在 handler 中使用 `df.where(pd.notnull(df), None)` 预处理 |
+| **单次采集上限** | mootdx API 虽然最大支持 10000，但在 1000+ 以后极不稳定 | 连接被重置 (Connection reset)，数据截断 | **强制建议**: `batch_size=800` 是稳定性的甜点位 |
+| **全市场并发性** | 全市场 5000+ 股票并发采集时，TDX 服务器极易封锁 IP | 大面积请求超时或 500 | `concurrency=2` 是全市场同步的最佳值 |
+| **异步资源泄漏** | `aiohttp.ClientSession.close()` 是异步的，立即退出会导致泄漏警告 | `Unclosed client session` 警告 | 在 `close()` 后增加 `await asyncio.sleep(0.25)` 确保底层连接释放 |
+
+**代码示例 (异步关闭连接池)**:
+```python
+async def close(self):
+    if self.http_session:
+        await self.http_session.close()
+        # ⚠️ 关键：给底层 TCP 连接一点收尾时间
+        await asyncio.sleep(0.25)
+        self.http_session = None
+```
+
+**关键教训**:
+1. **数据源是不完美的**: 永远假设上游返回的数据可能包含非标值 (NaN, Inf)。
+2. **保守的并发策略**: 对于公共行情服务器 (TDX)，高并发往往导致更低的总吞吐量。
+3. **分阶段回溯**: SBF 策略中，宁可多请求几次（小批次），也不要尝试大并发大批量请求。
+
+---
+
 ## 📜 历史问题归档
 
 | 日期 | 问题 | 解决方案 | 相关文档 |
 |------|------|----------|----------|
-| 2026-01-04 | task-orchestrator MySQL 连接失败 | GOST 隧道配置错误 | PROGRESS_REPORT_20260104 |
+| 2026-01-07 | mootdx-api NaN 导致 JSON 失败 | pd.notnull 替换为 None | PROGRESS_REPORT_20260107 |
+| 2026-01-07 | gsd-worker 异步 session 泄漏 | close() 后增加微小延迟 | PROGRESS_REPORT_20260107 |
+| 2026-01-06 | task-orchestrator MySQL 连接失败 | GOST 隧道配置错误 | PROGRESS_REPORT_20260104 |
 | 2026-01-04 | mootdx-api IndentationError | 修复语法错误 | PROGRESS_REPORT_20260104 |
 | 2026-01-05 | snapshot-recorder 无 graceful shutdown | 实现资源清理 | WALKTHROUGH_SNAPSHOT_RECORDER |
 | 2026-01-05 | Docker 镜像拉取失败 (ERR_CANNOT_FORWARD) | 使用 GOST Foreign 隧道 (12346) 而非直接 Squid | EPIC-011 验收报告 |
