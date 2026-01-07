@@ -70,15 +70,19 @@ class GenericTaskRunner:
     @staticmethod
     async def run_http_task(task: TaskDefinition):
         """Generic runner for HTTP tasks"""
-        logger.info(f"▶️ Executing HTTP task: {task.name} ({task.target.method} {task.target.url})")
+        method = task.target.get('method', 'POST')
+        url = task.target.get('url')
+        timeout = task.target.get('timeout_seconds', 30)
         
-        async with httpx.AsyncClient(timeout=task.target.timeout_seconds) as client:
+        logger.info(f"▶️ Executing HTTP task: {task.name} ({method} {url})")
+        
+        async with httpx.AsyncClient(timeout=timeout) as client:
             try:
                 response = await client.request(
-                    method=task.target.method,
-                    url=task.target.url,
-                    headers=task.target.headers,
-                    content=task.target.body
+                    method=method,
+                    url=url,
+                    headers=task.target.get('headers'),
+                    content=task.target.get('body')
                 )
                 response.raise_for_status()
                 logger.info(f"✅ HTTP Task success: {task.name} - Status {response.status_code}")
@@ -94,12 +98,16 @@ class GenericTaskRunner:
             logger.error("❌ Docker client not connected")
             return
 
-        logger.info(f"▶️ Executing Docker task: {task.name} ({task.target.image})")
+        image = task.target.get('image') or settings.WORKER_IMAGE
+        command = task.target.get('command')
+        environment = task.target.get('environment')
+
+        logger.info(f"▶️ Executing Docker task: {task.name} ({image})")
         try:
             container = docker_client.containers.run(
-                image=task.target.image,
-                command=task.target.command,
-                environment=task.target.environment,
+                image=image,
+                command=command,
+                environment=environment,
                 detach=True,
                 remove=True  # Auto-remove after run? Or track status?
             )
@@ -110,56 +118,10 @@ class GenericTaskRunner:
 
 # --- Custom Job Handlers ---
 
-async def job_daily_sync_kline() -> None:
-    """Daily K-Line Sync & Quality Check Workflow (Specialized Logic)"""
-    from executor.docker_executor import DockerExecutor
-    from core.dag_engine import DAGEngine, Workflow, Task
-    
-    if not docker_client:
-        logger.error("❌ Docker client not connected, skipping job")
-        return
-        
-    executor = DockerExecutor(docker_client)
-    engine = DAGEngine(executor)
-    
-    # Define Workflow
-    total_shards = 4 
-    sync_tasks = []
-    
-    # Step 1: Sync Shards
-    for i in range(total_shards):
-        sync_tasks.append(Task(
-            id=f"sync-shard-{i}",
-            name=f"K-Line Sync Shard {i}",
-            command=["jobs.sync_kline", "--shard", str(i), "--total", str(total_shards)],
-            environment={"PYTHONPATH": "/app/src"}
-        ))
-    
-    # Step 2: Quality Check (Depends on ALL shards)
-    quality_task = Task(
-        id="quality-check",
-        name="Data Quality Daily Check",
-        command=["jobs.quality_check", "--deep", "--batch", "100"],
-        dependencies={t.id for t in sync_tasks},
-        environment={"PYTHONPATH": "/app/src"}
-    )
-    
-    # Step 3: Data Repair (Depends on Quality Check)
-    repair_task = Task(
-        id="data-repair",
-        name="Auto Data Repair",
-        command=["jobs.data_repair", "--limit", "20"],
-        dependencies={quality_task.id},
-        environment={"PYTHONPATH": "/app/src"}
-    )
-    
-    workflow = Workflow(
-        name="Daily Market Sync & Quality Check",
-        tasks=sync_tasks + [quality_task, repair_task]
-    )
-    
-    logger.info("🚀 Starting Daily Market Sync workflow...")
-    await engine.run_workflow(workflow)
+# Removed deprecated job_daily_kline_sync function
+# K-line sync now uses single-process mode via generic Docker runner
+# Configuration is in tasks.yml: command: ["jobs.sync_kline"]
+
 
 async def job_weekly_deep_audit() -> None:
     """Weekly Deep Audit Job (Specialized Logic)"""
