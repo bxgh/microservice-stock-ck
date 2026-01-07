@@ -157,6 +157,8 @@ class MootdxHandler:
             # 集成标准化逻辑
             if data is not None:
                 data = standardize_mootdx_fields(data, data_type='tick')
+                # 修复 NaN 导致 JSON 序列化失败的问题
+                data = data.where(pd.notnull(data), None)
             return data if data is not None else pd.DataFrame()
         except Exception as e:
             logger.error(f"Mootdx get_tick failed: {e}")
