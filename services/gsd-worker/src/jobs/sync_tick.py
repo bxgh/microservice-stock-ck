@@ -19,7 +19,13 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-async def main(mode: str = 'incremental', date: str = None, scope: str = "config") -> int:
+async def main(
+    mode: str = 'incremental', 
+    date: str = None, 
+    scope: str = "config",
+    shard_index: int = None,
+    shard_total: int = None
+) -> int:
     """
     分笔数据同步主函数
     
@@ -27,11 +33,14 @@ async def main(mode: str = 'incremental', date: str = None, scope: str = "config
         mode: 'incremental' (增量/今日) | 'full' (全量，仅用于测试)
         date: 指定日期 YYYYMMDD，默认今日
         scope: 'config' (配置文件) | 'all' (全市场)
+        shard_index: 分片索引 (0-based)，用于分布式采集
+        shard_total: 总分片数，用于分布式采集
         
     Returns:
         int: 退出码 (0: 成功, 1: 失败)
     """
-    logger.info(f"启动分笔数据同步任务 (模式={mode}, 日期={date or '今日'}, 范围={scope})")
+    shard_info = f", 分片={shard_index}/{shard_total}" if shard_index is not None else ""
+    logger.info(f"启动分笔数据同步任务 (模式={mode}, 日期={date or '今日'}, 范围={scope}{shard_info})")
     
     service = TickSyncService()
     await service.initialize()
@@ -41,6 +50,19 @@ async def main(mode: str = 'incremental', date: str = None, scope: str = "config
     try:
         # 获取股票池
         stock_codes = await service.get_all_stocks() if scope == "all" else await service.get_stock_pool()
+        
+        # 应用分片过滤 (分布式采集)
+        if shard_index is not None and shard_total is not None:
+            original_count = len(stock_codes)
+            stock_codes = [
+                code for code in stock_codes 
+                if hash(code) % shard_total == shard_index
+            ]
+            logger.info(
+                f"分片过滤: {original_count} 只 → {len(stock_codes)} 只 "
+                f"(Shard {shard_index}/{shard_total})"
+            )
+        
         logger.info(f"待采集股票: {len(stock_codes)} 只")
         
         # 执行同步 (并发6: 3节点 × 2并发/节点)
@@ -91,7 +113,25 @@ if __name__ == "__main__":
         help="指定日期 YYYYMMDD，默认今日"
     )
     parser.add_argument("--scope", type=str, default="config", choices=["config", "all"], help="同步范围: config(配置文件) 或 all(全市场)")
+    parser.add_argument(
+        "--shard-index",
+        type=int,
+        default=None,
+        help="分片索引 (0-based)，用于分布式采集"
+    )
+    parser.add_argument(
+        "--shard-total",
+        type=int,
+        default=None,
+        help="总分片数，用于分布式采集"
+    )
     args = parser.parse_args()
     
-    exit_code = asyncio.run(main(args.mode, args.date, args.scope))
+    exit_code = asyncio.run(main(
+        args.mode, 
+        args.date, 
+        args.scope,
+        args.shard_index,
+        args.shard_total
+    ))
     sys.exit(exit_code)
