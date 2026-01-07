@@ -43,11 +43,11 @@ async def main(mode: str = 'incremental', date: str = None, scope: str = "config
         stock_codes = await service.get_all_stocks() if scope == "all" else await service.get_stock_pool()
         logger.info(f"待采集股票: {len(stock_codes)} 只")
         
-        # 执行同步
+        # 执行同步 (并发6: 3节点 × 2并发/节点)
         results = await service.sync_stocks(
             stock_codes=stock_codes,
             trade_date=date,
-            concurrency=2
+            concurrency=6
         )
         
         duration = (datetime.now() - start_time).total_seconds()
