@@ -56,6 +56,9 @@ create_directories() {
         "./data/prometheus"
         "./data/grafana"
         "./data/nginx/logs"
+        "./data/gitlab/config"
+        "./data/gitlab/logs"
+        "./data/gitlab/data"
         "./logs"
     )
 
@@ -122,6 +125,25 @@ start_gateway_services() {
         log_success "Nginx 网关启动成功"
     else
         log_error "Nginx 网关启动失败"
+        return 1
+    fi
+}
+
+# 启动GitLab服务
+start_gitlab_service() {
+    log_info "启动 GitLab 服务..."
+
+    if [ ! -f "./gitlab/docker-compose.yml" ]; then
+        log_error "GitLab 配置文件不存在"
+        return 1
+    fi
+
+    if cd ./gitlab && docker compose up -d; then
+        log_success "GitLab 启动成功"
+        cd ..
+    else
+        log_error "GitLab 启动失败"
+        cd ..
         return 1
     fi
 }
@@ -225,7 +247,7 @@ show_services_info() {
 check_services_status() {
     log_info "检查服务运行状态..."
 
-    services=("nacos" "redis" "clickhouse" "rabbitmq" "prometheus" "grafana" "nginx")
+    services=("nacos" "redis" "clickhouse" "rabbitmq" "prometheus" "grafana" "nginx" "gitlab")
 
     echo "服务状态:"
     echo "----------"
@@ -340,6 +362,7 @@ main() {
             start_monitoring_services
             start_message_services
             start_gateway_services
+            start_gitlab_service
             wait_for_services nacos redis clickhouse
             show_services_info
             ;;

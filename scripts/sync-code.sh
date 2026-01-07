@@ -13,13 +13,16 @@ echo "Starting sync to $TARGET_HOST..."
 # Usually, syncing .git is better if .41 is a mirror/backup.
 # But for now, we follow the plan to exclude it to avoid conflicts.
 
-rsync -avz --delete \
-    --exclude='.git' \
-    --exclude='data' \
-    --exclude='logs' \
-    --exclude='venv' \
-    --exclude='__pycache__' \
-    --exclude='*.pyc' \
+# WARNING: --delete will remove files on the target that don't exist in the source.
+# Use it with caution. For safety, it is commented out by default.
+rsync -avz "$@" \
+    --exclude='.git/' \
+    --exclude='**/data/' \
+    --exclude='**/logs/' \
+    --exclude='**/*/venv/' \
+    --exclude='**/*/.venv/' \
+    --exclude='**/__pycache__/' \
+    --exclude='**/*.pyc' \
     $SOURCE_DIR/ bxgh@$TARGET_HOST:$TARGET_DIR/
 
 echo "Sync completed at $(date)"

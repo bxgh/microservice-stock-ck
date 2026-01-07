@@ -30,7 +30,7 @@ tasks:
   - id: daily_kline_sync
     name: K线每日同步
     type: docker
-    enabled: true
+    enabled: false
     schedule:
       type: trading_cron
       expression: "30 17 * * *"
@@ -235,7 +235,7 @@ tasks:
   - id: weekly_deep_audit
     name: 每周深度审计
     type: docker
-    enabled: true
+    enabled: false
     schedule:
       type: cron
       expression: "0 2 * * 0"  # 周日 02:00
