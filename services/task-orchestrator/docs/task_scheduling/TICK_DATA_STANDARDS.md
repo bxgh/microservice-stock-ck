@@ -1,7 +1,7 @@
 # 📊 分笔数据采集开发规范
 
-> **版本**: 1.0  
-> **更新日期**: 2026-01-06  
+> **版本**: 1.1  
+> **更新日期**: 2026-01-07  
 > **维护者**: AI Agent
 
 ---
@@ -66,7 +66,7 @@
 
 ```python
 # ⚠️ 关键参数
-CONCURRENCY = 3  # 最大并发股票数
+CONCURRENCY = 2  # 最大并发股票数（全市场同步建议保持较低并发）
 
 # 使用 asyncio.Semaphore 控制
 semaphore = asyncio.Semaphore(concurrency)
@@ -76,8 +76,8 @@ async with semaphore:
 
 **理由**:
 - mootdx 服务器压力敏感
-- 过高并发导致连接拒绝或数据不完整
-- 保守值 3 已验证稳定
+- 过高并发导致连接拒绝、500错误或数据不完整
+- 经验证，`concurrency=2` 是全市场数千支股票同步时的最佳稳定值
 
 ---
 
@@ -152,12 +152,21 @@ class TickSyncService:
     async def close(self) -> None:
         """关闭连接池（必须在 finally 中调用）"""
         
+    async def fetch_tick_data_sequential(
+        self,
+        stock_code: str,
+        trade_date: str,
+        target_time: str = "09:25",
+        batch_size: int = 800
+    ) -> List[Dict[str, Any]]:
+        """顺序批次回溯策略获取分笔数据 (推荐主策略)"""
+
     async def fetch_tick_data_smart(
         self, 
         stock_code: str, 
         trade_date: str
     ) -> List[Dict]:
-        """智能策略获取分笔数据"""
+        """智能搜索矩阵策略获取分笔数据 (兜底/次要策略)"""
         
     async def sync_stock(
         self, 
@@ -170,9 +179,12 @@ class TickSyncService:
         self, 
         stock_codes: List[str],
         trade_date: Optional[str] = None,
-        concurrency: int = 3
+        concurrency: int = 2
     ) -> Dict[str, Any]:
         """批量同步，返回统计结果"""
+
+    async def get_all_stocks(self) -> List[str]:
+        """获取全市场 A股 股票列表"""
         
     async def get_stock_pool(self) -> List[str]:
         """获取待采集股票池（默认 HS300）"""
@@ -184,7 +196,8 @@ class TickSyncService:
 # ✅ 正确：捕获并记录，不中断整体流程
 async def sync_stock(self, code: str, date: str) -> int:
     try:
-        data = await self.fetch_tick_data_smart(code, date)
+        # 使用 SBF 策略确保覆盖
+        data = await self.fetch_tick_data_sequential(code, date)
         if not data:
             logger.warning(f"{code} 无分笔数据")
             return 0
@@ -216,20 +229,20 @@ finally:
 ### 5.1 tasks.yml 配置
 
 ```yaml
-- id: daily_tick_sync
-  name: 盘后分笔采集
-  type: docker
-  enabled: true
-  schedule:
-    type: trading_cron
-    expression: "30 17 * * 1-5"  # 17:30 交易日
-  target:
-    command: ["jobs.sync_tick"]
-    network_mode: "host"
-    environment:
-      MOOTDX_API_URL: "http://127.0.0.1:8000"
-      CLICKHOUSE_HOST: "127.0.0.1"
-      CLICKHOUSE_PORT: "9000"
+  - id: daily_tick_sync
+    name: 盘后分笔采集
+    type: docker
+    enabled: true
+    schedule:
+      type: trading_cron
+      expression: "0 16 * * 1-5"  # 16:00 交易日
+    target:
+      command: ["jobs.sync_tick"]
+      network_mode: "host"
+      environment:
+        MOOTDX_API_URL: "http://127.0.0.1:8003"
+        CLICKHOUSE_HOST: "127.0.0.1"
+        CLICKHOUSE_PORT: "9000"
   dependencies:
     - daily_kline_sync   # 依赖 K 线同步完成
   retry:
@@ -241,8 +254,8 @@ finally:
 
 | 参数 | 值 | 说明 |
 |------|------|------|
-| 执行时间 | 17:30 | 确保盘后数据稳定 |
-| 并发数 | 3 | 避免压垮 mootdx |
+| 执行时间 | 16:00 | 确保盘后数据稳定 |
+| 并发数 | 2 | 避免压垮 mootdx，全市场同步推荐值 |
 | 重试次数 | 2 | 网络波动容错 |
 | 重试间隔 | 600s | 10 分钟后重试 |
 
@@ -262,8 +275,8 @@ finally:
 
 | 异常 | 原因 | 处理 |
 |------|------|------|
-| 09:25 缺失 | 搜索矩阵未覆盖 | 扩展矩阵范围 |
-| 大量股票为 0 | mootdx 服务异常 | 检查服务状态，重试 |
+| 09:25 缺失 | SBF 回溯深度不足或源端缺失 | 增加回溯批次或核实源端 |
+| 大量股票为 0 | API 限制/NaN 序列化错误 | 检查 mootdx-api 日志 |
 | 重复数据 | 多次采集 | `ReplacingMergeTree` 自动去重 |
 
 ---
@@ -289,7 +302,7 @@ logger.info(f"✅ 分笔采集完成: 成功 {success}/{total}, 总记录 {total
 |------|------|------|
 | 成功率 < 95% | ⚠️ Warning | 发送告警 |
 | 成功率 < 50% | 🔴 Critical | 停止任务 + 人工介入 |
-| 09:25 覆盖率 < 95% | 🔴 Critical | 检查搜索矩阵 |
+| 09:25 覆盖率 < 95% | 🔴 Critical | 检查 SBF 策略与源端数据 |
 
 ---
 
@@ -297,7 +310,7 @@ logger.info(f"✅ 分笔采集完成: 成功 {success}/{total}, 总记录 {total
 
 ### Q1: 为什么使用搜索矩阵而不是固定偏移？
 
-> 不同股票的分笔数据量差异巨大（低活跃股 ~1000 条，高活跃股 ~5000+ 条），09:25 数据位置不可预测。
+> 不同股票的分笔数据量差异巨大（低活跃股 ~1000 条，高活跃股 ~5000+ 条），传统矩阵搜索难以兼顾性能与 100% 覆盖。SBF 顺序回溯完美解决了此问题。
 
 ### Q2: 为什么并发数设为 3？
 
@@ -314,6 +327,7 @@ logger.info(f"✅ 分笔采集完成: 成功 {success}/{total}, 总记录 {total
 | 版本 | 日期 | 变更内容 |
 |------|------|----------|
 | 1.0 | 2026-01-06 | 初版发布 |
+| 1.1 | 2026-01-07 | 升级 SBF 策略，全面支持全市场同步 |
 
 ---
 
