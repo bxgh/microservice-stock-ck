@@ -30,7 +30,7 @@ run_worker() {
         -e CLICKHOUSE_HOST=$server \
         -e CLICKHOUSE_PORT=9000 \
         -e MOOTDX_API_URL=http://$server:8003 \
-        -v /home/bxgh/microservice-stock/config:/app/config:ro \
+        -v /home/bxgh/microservice-stock/services/gsd-worker/config:/app/config:ro \
         gsd-worker:latest \
         python -m jobs.sync_tick --scope $SCOPE --date $DATE \
         --shard-index $shard_index --shard-total $SHARD_TOTAL" \
