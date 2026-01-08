@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
 import yaml
 import pytz
+import redis.asyncio as redis
+from redis.asyncio.cluster import RedisCluster, ClusterNode
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +56,11 @@ class TickSyncService:
         self.clickhouse_pool = None
         self.http_session: Optional[aiohttp.ClientSession] = None
         self.mootdx_api_url = os.getenv("MOOTDX_API_URL", "http://mootdx-api:8000")
+        self.redis_cluster: Optional[RedisCluster] = None
+        self.redis_nodes = os.getenv(
+            "REDIS_NODES", 
+            "192.168.151.41:6379,192.168.151.58:6379,192.168.151.111:6379"
+        )
         self._lock = asyncio.Lock()
     
     async def initialize(self) -> None:
@@ -77,6 +84,27 @@ class TickSyncService:
                 timeout = aiohttp.ClientTimeout(total=120)
                 self.http_session = aiohttp.ClientSession(timeout=timeout)
                 logger.info(f"✓ HTTP 会话初始化完成: {self.mootdx_api_url}")
+            
+            # Redis Cluster 连接
+            if self.redis_cluster is None:
+                try:
+                    nodes = []
+                    for node_str in self.redis_nodes.split(","):
+                        host, port = node_str.split(":")
+                        nodes.append(ClusterNode(host, int(port)))
+                    
+                    self.redis_cluster = RedisCluster(
+                        startup_nodes=nodes,
+                        decode_responses=True,
+                        socket_timeout=5,
+                        cluster_error_retry_attempts=3
+                    )
+                    # 验证连接
+                    await self.redis_cluster.ping()
+                    logger.info(f"✓ Redis Cluster 连接初始化完成: {len(nodes)} 个起始节点")
+                except Exception as e:
+                    logger.warning(f"⚠️ Redis Cluster 初始化失败 (任务订阅可能不可用): {e}")
+                    self.redis_cluster = None
     
     async def close(self) -> None:
         """关闭连接池和会话"""
@@ -89,9 +117,146 @@ class TickSyncService:
                 await self.http_session.close()
                 await asyncio.sleep(0.25)  # 等待连接完全关闭
                 self.http_session = None
+            if self.redis_cluster:
+                await self.redis_cluster.aclose()
+                self.redis_cluster = None
             logger.info("连接池和会话已关闭")
 
     async def get_all_stocks(self) -> List[str]:
+        """
+        从 mootdx-api 获取全市场股票代码 (A股)
+        
+        过滤规则: 60/68 (沪), 00/30 (深)
+        """
+        logger.info("正在获取全市场股票列表...")
+        all_codes = []
+        
+        try:
+            # 获取深圳市场 (0) 和 上海市场 (1)
+            for market in [0, 1]:
+                url = f"{self.mootdx_api_url}/api/v1/stocks"
+                params = {"market": market}
+                
+                async with self.http_session.get(url, params=params) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        if data:
+                            # 过滤 A 股代码
+                            # 60xxxx: 沪市主板
+                            # 68xxxx: 科创板
+                            # 00xxxx: 深市主板
+                            # 30xxxx: 创业板
+                            market_codes = [
+                                item['code'] for item in data 
+                                if item.get('code', '').startswith(('60', '68', '00', '30'))
+                            ]
+                            all_codes.extend(market_codes)
+                            logger.info(f"市场 {market} 获取到 {len(market_codes)} 只 A股股票")
+                    else:
+                        logger.error(f"获取市场 {market} 股票失败: {response.status}")
+                        
+            # 去重并排序
+            all_codes = sorted(list(set(all_codes)))
+            logger.info(f"全市场 A股总数: {len(all_codes)}")
+            return all_codes
+            
+        except Exception as e:
+            logger.error(f"获取全市场股票失败: {e}")
+            return []
+
+    async def push_tasks_to_redis(
+        self, 
+        stock_codes: List[str], 
+        queue_name: str = "{gsd:tick}:tasks"
+    ) -> int:
+        """
+        [Producer] 将股票代码推入 Redis 任务队列
+        """
+        if not self.redis_cluster:
+            raise RuntimeError("Redis Cluster 未初始化")
+            
+        try:
+            # 清空旧队列
+            await self.redis_cluster.delete(queue_name)
+            
+            # 批量推送
+            if stock_codes:
+                await self.redis_cluster.lpush(queue_name, *stock_codes)
+                logger.info(f"📤 已向 Redis 队列 {queue_name} 推送 {len(stock_codes)} 个任务")
+                return len(stock_codes)
+            return 0
+        except Exception as e:
+            logger.error(f"❌ 推送 Redis 任务失败: {e}")
+            raise
+
+    async def consume_task_from_redis(
+        self,
+        queue_name: str = "{gsd:tick}:tasks",
+        node_id: str = None
+    ) -> Optional[str]:
+        """
+        [Consumer] 从 Redis 队列获取一个新任务
+        """
+        if not self.redis_cluster:
+            return None
+            
+        if node_id is None:
+            node_id = os.getenv("HOSTNAME", "default-node")
+            
+        processing_queue = f"{{gsd:tick}}:processing:{node_id}"
+        
+        try:
+            # 直接获取新任务
+            task = await self.redis_cluster.brpoplpush(queue_name, processing_queue, timeout=5)
+            return task
+        except Exception as e:
+            logger.error(f"❌ 获取 Redis 任务失败: {e}")
+            return None
+
+    async def recover_processing_tasks(self, node_id: str = None) -> List[str]:
+        """
+        [Consumer] 启动时恢复上次意外中断的任务
+        """
+        if not self.redis_cluster:
+            return []
+            
+        if node_id is None:
+            node_id = os.getenv("HOSTNAME", "default-node")
+            
+        processing_queue = f"{{gsd:tick}}:processing:{node_id}"
+        
+        try:
+            # 获取所有处理中任务
+            tasks = await self.redis_cluster.lrange(processing_queue, 0, -1)
+            if tasks:
+                logger.info(f"♻️ 发现 {len(tasks)} 个未完成任务，准备恢复")
+            return tasks
+        except Exception as e:
+            logger.error(f"❌ 恢复 Redis 任务失败: {e}")
+            return []
+
+    async def ack_task_in_redis(
+        self,
+        stock_code: str,
+        node_id: str = None
+    ) -> bool:
+        """
+        [Consumer] 任务完成确认，从处理中队列移除
+        """
+        if not self.redis_cluster:
+            return False
+            
+        if node_id is None:
+            node_id = os.getenv("HOSTNAME", "default-node")
+            
+        processing_queue = f"{{gsd:tick}}:processing:{node_id}"
+        
+        try:
+            await self.redis_cluster.lrem(processing_queue, 1, stock_code)
+            return True
+        except Exception as e:
+            logger.error(f"❌ 确认 Redis 任务失败 ({stock_code}): {e}")
+            return False
         """
         从 mootdx-api 获取全市场股票代码 (A股)
         
@@ -138,7 +303,7 @@ class TickSyncService:
         stock_code: str,
         trade_date: str,
         target_time: str = "09:25",
-        batch_size: int = 800
+        batch_size: int = 1000  # 从 2000 降回 1000 保持稳定
     ) -> List[Dict[str, Any]]:
         """
         使用顺序批次回溯策略获取分笔数据，增加重试机制和稳定性
@@ -148,7 +313,7 @@ class TickSyncService:
         all_data = []
         start = 0
         found_target = False
-        max_batches = 25  # 800 * 25 = 20000
+        max_batches = 30  # 1000 * 30 = 30000, 足够全天数据
         
         for batch_idx in range(max_batches):
             retry_count = 0
@@ -195,7 +360,7 @@ class TickSyncService:
                 logger.info(f"🎯 {stock_code}: 已找齐全天数据 (共 {len(all_data)} 条)")
                 break
                 
-            await asyncio.sleep(0.1)
+            # 移除无意义的 sleep(0.1)
             
         return all_data
     async def fetch_tick_data_smart(
