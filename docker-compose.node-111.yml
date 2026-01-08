@@ -21,13 +21,16 @@ services:
       - PORT=8003
       - HOST=0.0.0.0
       - TDX_POOL_SIZE=3
+      - LOG_LEVEL=INFO
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
     volumes:
       - ./logs/mootdx-api:/app/logs
+      - mootdx_config:/root/.mootdx
+      - ./services/mootdx-api/src:/app/src  # 开发模式挂载源码
 
   mootdx-source:
     build:
@@ -38,9 +41,23 @@ services:
     network_mode: host
     restart: unless-stopped
     environment:
-      - GRPC_PORT=50051
+      - SERVICE_NAME=mootdx-source
+      - SERVICE_HOST=127.0.0.1
+      - SERVICE_PORT=50051
+      - NACOS_SERVER_ADDR=127.0.0.1:8848
+      - LOG_LEVEL=INFO
+      - MOOTDX_API_URL=http://127.0.0.1:8003
+      # 网络代理配置
+      - HTTP_PROXY=http://192.168.151.18:3128
+      - HTTPS_PROXY=http://192.168.151.18:3128
+      - NO_PROXY=localhost,127.0.0.1,0.0.0.0,::1
+      # 云端 API URLs
+      - AKSHARE_API_URL=http://124.221.80.250:8003
+      - BAOSTOCK_API_URL=http://124.221.80.250:8001
+      - PYWENCAI_API_URL=http://124.221.80.250:8002
     volumes:
       - ./logs/mootdx-source:/app/logs
+      - ./services/mootdx-source/src:/app/src
 
   # ---------------------------------------------------------------------------
   # 分片采集 Worker (按需运行)
@@ -58,9 +75,33 @@ services:
       - SHARD_TOTAL=3
       - CLICKHOUSE_HOST=192.168.151.111
       - MOOTDX_API_URL=http://localhost:8003
+      # 网络代理配置
+      - HTTP_PROXY=http://192.168.151.18:3128
+      - HTTPS_PROXY=http://192.168.151.18:3128
+      - NO_PROXY=localhost,127.0.0.1,192.168.151.111
+      - ENVIRONMENT=development
+      # MySQL 配置
+      - GSD_DB_HOST=${GSD_DB_HOST:-127.0.0.1}
+      - GSD_DB_PORT=${GSD_DB_PORT:-36301}
+      - GSD_DB_NAME=${GSD_DB_NAME:-alwaysup}
+      - GSD_DB_USER=${GSD_DB_USER:-root}
+      - GSD_DB_PASSWORD=${GSD_DB_PASSWORD:-alwaysup@888}
+      # ClickHouse 配置
+      - CLICKHOUSE_HOST=${CLICKHOUSE_HOST:-127.0.0.1}
+      - CLICKHOUSE_PORT=${CLICKHOUSE_PORT:-9000}
+      - CLICKHOUSE_USER=${CLICKHOUSE_USER:-admin}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-admin123}
+      - CLICKHOUSE_DB=${CLICKHOUSE_DB:-stock_data}
+      # Redis 配置
+      - REDIS_HOST=${REDIS_HOST:-127.0.0.1}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-redis123}
+      - REDIS_DB=${REDIS_DB:-1}
     volumes:
       - ./libs/gsd-shared:/app/libs/gsd-shared:ro
       - ./logs/gsd-worker:/app/logs
+      - ./services/gsd-worker/src:/app/src
+      - ./services/gsd-worker/config:/app/config
 
 # =============================================================================
 # 使用说明
@@ -75,7 +116,13 @@ services:
 # 查看日志:
 #   docker-compose -f docker-compose.node-111.yml logs -f mootdx-api
 #
-# 注意: 
-#   - ClickHouse 使用系统服务 (systemctl)，不在此配置中
-#   - CLICKHOUSE_HOST 必须使用 IP (192.168.151.111)，不能用 localhost
 # =============================================================================
+# 共享资源定义
+# =============================================================================
+volumes:
+  mootdx_config:
+
+networks:
+  default:
+    name: microservice-stock-network
+
