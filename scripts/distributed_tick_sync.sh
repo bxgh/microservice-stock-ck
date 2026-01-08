@@ -32,7 +32,7 @@ run_worker() {
         -e MOOTDX_API_URL=http://$server:8003 \
         -v /home/bxgh/microservice-stock/services/gsd-worker/config:/app/config:ro \
         gsd-worker:latest \
-        python -m jobs.sync_tick --scope $SCOPE --date $DATE \
+        jobs.sync_tick --scope $SCOPE --date $DATE \
         --shard-index $shard_index --shard-total $SHARD_TOTAL" \
     > /tmp/shard_${shard_index}.log 2>&1 &
     
