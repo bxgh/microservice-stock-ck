@@ -114,6 +114,23 @@ shard_index = hash(stock_code) % 3
 
 ---
 
+## 任务编排与执行
+
+采用 **集中式编排 (Centralized Orchestration)** 模式：
+
+- **发起者**: Server 41 (主控节点) 上的 `task-orchestrator` 或运维脚本。
+- **执行方式**: 通过 **SSH** 远程连接到 Server 58 和 Server 111。
+- **控制流**:
+  ```mermaid
+  graph LR
+      Orchestrator[Server 41\nTask Orchestrator] -- SSH --> Worker41[Server 41\nWorker 容器]
+      Orchestrator -- SSH --> Worker58[Server 58\nWorker 容器]
+      Orchestrator -- SSH --> Worker111[Server 111\nWorker 容器]
+  ```
+- **优势**: 统一调度、集中日志、配置一致性。
+
+---
+
 ## 网络端口
 
 | 端口 | 协议 | 用途 |
