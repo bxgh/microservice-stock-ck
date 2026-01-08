@@ -13,6 +13,8 @@ from pathlib import Path
 from config.settings import settings
 from config.task_loader import TaskLoader, TaskConfig, ScheduleType, TaskDefinition, TaskType
 from core.logger_service import TaskLogger
+from core.dag_engine import DAGEngine, Workflow, Task as DagTask
+from executor.docker_executor import DockerExecutor
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -139,6 +141,57 @@ class GenericTaskRunner:
             logger.error(f"❌ Docker Task failed: {task.name} - {e}")
             raise
 
+    @staticmethod
+    async def run_workflow_task(task: TaskDefinition):
+        """Generic runner for Workflow tasks"""
+        if not docker_client:
+            logger.error("❌ Docker client not connected")
+            return
+
+        executor = DockerExecutor(docker_client)
+        engine = DAGEngine(executor)
+        
+        # Convert TaskDefinition workflow steps to DAG Engine Tasks
+        dag_tasks = []
+        for step in task.workflow:
+            # If step has 'tasks' list (parallel group), we need to flatten/expand it? 
+            # DAGEngine supports simple list of tasks with deps.
+            # The TaskLoader defines: workflow: Optional[List[WorkflowStep]]
+            # WorkflowStep: id, command, parallel, tasks(list of dicts)
+            
+            if step.parallel and step.tasks:
+                # Expand parallel tasks
+                for sub_task in step.tasks:
+                    sub_id = sub_task.get('id')
+                    sub_cmd = sub_task.get('command')
+                    
+                    # Merge environment
+                    env = {}
+                    # Inherit workflow global env if any (not on task def currently, but maybe in future)
+                    
+                    dt = DagTask(
+                        id=f"{task.id}-{step.id}-{sub_id}", # Unique global ID
+                        name=f"{task.name}-{sub_id}",
+                        command=sub_cmd,
+                        dependencies=set([f"{task.id}-{d}" for d in step.depends_on]) if step.depends_on else set()
+                    )
+                    dag_tasks.append(dt)
+            else:
+                # Single step task
+                dt = DagTask(
+                    id=f"{task.id}-{step.id}",
+                    name=f"{task.name}-{step.id}",
+                    command=step.command,
+                    dependencies=set([f"{task.id}-{d}" for d in step.depends_on]) if step.depends_on else set()
+                )
+                dag_tasks.append(dt)
+
+        workflow = Workflow(name=task.name, tasks=dag_tasks)
+        success = await engine.run_workflow(workflow)
+        
+        if not success:
+            raise Exception(f"Workflow {task.name} failed")
+
 # --- Custom Job Handlers ---
 
 # Removed deprecated job_daily_kline_sync function
@@ -230,6 +283,12 @@ async def register_jobs() -> None:
                         await GenericTaskRunner.run_docker_task(t)
                     job_func = docker_wrapper
                     logger.info(f"  • {task_def.id}: Using Generic Docker Runner")
+
+                elif task_def.type == TaskType.WORKFLOW:
+                    async def workflow_wrapper(t=task_def):
+                        await GenericTaskRunner.run_workflow_task(t)
+                    job_func = workflow_wrapper
+                    logger.info(f"  • {task_def.id}: Using Generic Workflow Runner")
                 
                 else:
                     logger.warning(f"Skipping task {task_def.id}: unsupported task type {task_def.type}")
