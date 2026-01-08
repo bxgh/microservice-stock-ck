@@ -22,6 +22,7 @@
 | [clickhouse-replicated-cluster.md](infrastructure/clickhouse-replicated-cluster.md) | ClickHouse 三节点复制集群 ⭐ |
 | [database-schema.md](infrastructure/database-schema.md) | 数据库表结构 |
 | [internal-network-setup.md](infrastructure/internal-network-setup.md) | 内网配置 |
+| [SERVER_HARDWARE_ARCHITECTURE.md](infrastructure/SERVER_HARDWARE_ARCHITECTURE.md) | 服务器硬件架构 ⭐ |
 
 ### 服务架构 (`services/`)
 
