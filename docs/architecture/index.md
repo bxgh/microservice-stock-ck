@@ -1,87 +1,86 @@
-# microservice-stock Fullstack Architecture Document
+# microservice-stock 架构文档
 
-## Table of Contents
+> **更新时间**: 2026-01-08  
+> **当前架构**: 三节点集群 (Server 41/58/111)
 
-- [microservice-stock Fullstack Architecture Document](#table-of-contents)
-  - [Introduction](./introduction.md)
-  - [High Level Architecture](./high-level-architecture.md)
-    - [Technical Summary](./high-level-architecture.md#technical-summary)
-    - [Platform and Infrastructure Choice](./high-level-architecture.md#platform-and-infrastructure-choice)
-    - [Repository Structure](./high-level-architecture.md#repository-structure)
-    - [High Level Architecture Diagram](./high-level-architecture.md#high-level-architecture-diagram)
-    - [Architectural Patterns](./high-level-architecture.md#architectural-patterns)
-  - [Tech Stack](./tech-stack.md)
-  - [Data Models](./data-models.md)
-    - [Task (任务模型)](./data-models.md#task-任务模型)
-      - [TypeScript Interface](./data-models.md#typescript-interface)
-    - [TaskExecution (任务执行记录)](./data-models.md#taskexecution-任务执行记录)
-      - [TypeScript Interface](./data-models.md#typescript-interface)
-    - [DataSource (数据源模型)](./data-models.md#datasource-数据源模型)
-      - [TypeScript Interface](./data-models.md#typescript-interface)
-  - [API Specification](./api-specification.md)
-    - [REST API Specification](./api-specification.md#rest-api-specification)
-  - [Components](./components.md)
-    - [TaskScheduler Service (核心调度服务)](./components.md#taskscheduler-service-核心调度服务)
-    - [DataCollector Service (数据采集服务)](./components.md#datacollector-service-数据采集服务)
-    - [Monitor Service (监控服务)](./components.md#monitor-service-监控服务)
-    - [API Gateway (API 网关)](./components.md#api-gateway-api-网关)
-    - [Web UI (管理界面)](./components.md#web-ui-管理界面)
-  - [External APIs](./external-apis.md)
-    - [External Database APIs](./external-apis.md#external-database-apis)
-    - [Proxy Configuration APIs](./external-apis.md#proxy-configuration-apis)
-  - [Core Workflows](./core-workflows.md)
-    - [Task Creation and Scheduling Workflow](./core-workflows.md#task-creation-and-scheduling-workflow)
-    - [Error Handling and Recovery Workflow](./core-workflows.md#error-handling-and-recovery-workflow)
-  - [Database Schema](./database-schema.md)
-    - [MySQL 5.7 Schema (元数据存储)](./database-schema.md#mysql-57-schema-元数据存储)
-    - [ClickHouse Schema (实时数据存储)](./database-schema.md#clickhouse-schema-实时数据存储)
-    - [ClickHouse 双主复制集群](./clickhouse-replicated-cluster.md)
-    - [Redis Data Structures (缓存和消息队列)](./database-schema.md#redis-data-structures-缓存和消息队列)
-  - [Frontend Architecture](./frontend-architecture.md)
-    - [Component Organization](./frontend-architecture.md#component-organization)
-    - [State Management Structure](./frontend-architecture.md#state-management-structure)
-  - [Backend Architecture](./backend-architecture.md)
-    - [Service Organization](./backend-architecture.md#service-organization)
-    - [Controller Template](./backend-architecture.md#controller-template)
-  - [Unified Project Structure](./unified-project-structure.md)
-  - [Development Workflow](./development-workflow.md)
-    - [Local Development Setup](./development-workflow.md#local-development-setup)
-      - [Prerequisites](./development-workflow.md#prerequisites)
-      - [Initial Setup](./development-workflow.md#initial-setup)
-      - [Development Commands](./development-workflow.md#development-commands)
-    - [Environment Configuration](./development-workflow.md#environment-configuration)
-      - [Required Environment Variables](./development-workflow.md#required-environment-variables)
-  - [Deployment Architecture](./deployment-architecture.md)
-    - [Deployment Strategy](./deployment-architecture.md#deployment-strategy)
-    - [Environments](./deployment-architecture.md#environments)
-    - [Production Docker Compose Configuration](./deployment-architecture.md#production-docker-compose-configuration)
-  - [Security and Performance](./security-and-performance.md)
-    - [Security Requirements](./security-and-performance.md#security-requirements)
-    - [Performance Optimization](./security-and-performance.md#performance-optimization)
-  - [Testing Strategy](./testing-strategy.md)
-    - [Testing Pyramid](./testing-strategy.md#testing-pyramid)
-    - [Test Organization](./testing-strategy.md#test-organization)
-  - [Coding Standards](./coding-standards.md)
-    - [Critical Fullstack Rules](./coding-standards.md#critical-fullstack-rules)
-    - [Naming Conventions](./coding-standards.md#naming-conventions)
-  - [Error Handling Strategy](./error-handling-strategy.md)
-    - [Error Response Format](./error-handling-strategy.md#error-response-format)
-    - [Frontend Error Handling](./error-handling-strategy.md#frontend-error-handling)
-    - [Backend Error Handling](./error-handling-strategy.md#backend-error-handling)
-  - [Monitoring and Observability](./monitoring-and-observability.md)
-    - [Monitoring Stack](./monitoring-and-observability.md#monitoring-stack)
-    - [Key Metrics](./monitoring-and-observability.md#key-metrics)
-  - [Checklist Results Report](./checklist-results-report.md)
-    - [Architecture Document Summary](./checklist-results-report.md#architecture-document-summary)
-    - [Architecture Checklist Validation](./checklist-results-report.md#architecture-checklist-validation)
-      - [1. REQUIREMENTS ALIGNMENT ✅ 95%](./checklist-results-report.md#1-requirements-alignment-95)
-      - [2. ARCHITECTURE FUNDAMENTALS ✅ 90%](./checklist-results-report.md#2-architecture-fundamentals-90)
-      - [3. TECHNICAL STACK & DECISIONS ✅ 95%](./checklist-results-report.md#3-technical-stack-decisions-95)
-      - [4. FRONTEND DESIGN & IMPLEMENTATION ✅ 90%](./checklist-results-report.md#4-frontend-design-implementation-90)
-      - [5. RESILIENCE & OPERATIONAL READINESS ✅ 85%](./checklist-results-report.md#5-resilience-operational-readiness-85)
-      - [6. SECURITY & COMPLIANCE ✅ 80%](./checklist-results-report.md#6-security-compliance-80)
-      - [7. IMPLEMENTATION GUIDANCE ✅ 95%](./checklist-results-report.md#7-implementation-guidance-95)
-      - [8. DEPENDENCY & INTEGRATION MANAGEMENT ✅ 90%](./checklist-results-report.md#8-dependency-integration-management-90)
-      - [9. AI AGENT IMPLEMENTATION SUITABILITY ✅ 95%](./checklist-results-report.md#9-ai-agent-implementation-suitability-95)
-    - [Final Assessment](./checklist-results-report.md#final-assessment)
-    - [Recommendation](./checklist-results-report.md#recommendation)
+---
+
+## 📚 文档索引
+
+### 系统概览 (`overview/`)
+
+| 文档 | 说明 |
+|------|------|
+| [high-level-architecture.md](overview/high-level-architecture.md) | 高层架构图 |
+| [tech-stack.md](overview/tech-stack.md) | 技术栈选型 |
+| [deployment-architecture.md](overview/deployment-architecture.md) | 部署架构 |
+
+### 基础设施 (`infrastructure/`)
+
+| 文档 | 说明 |
+|------|------|
+| [clickhouse-replicated-cluster.md](infrastructure/clickhouse-replicated-cluster.md) | ClickHouse 三节点复制集群 ⭐ |
+| [database-schema.md](infrastructure/database-schema.md) | 数据库表结构 |
+| [internal-network-setup.md](infrastructure/internal-network-setup.md) | 内网配置 |
+
+### 服务架构 (`services/`)
+
+| 文档 | 说明 |
+|------|------|
+| [get-stockdata-architecture.md](services/get-stockdata-architecture.md) | get-stockdata 核心服务 |
+| [mootdx-source.md](services/mootdx-source.md) | Mootdx 数据源 |
+| [akshare-source.md](services/akshare-source.md) | AKShare 数据源 |
+
+### 领域模型 (`domain/`)
+
+| 文档 | 说明 |
+|------|------|
+| [domain-tick.md](domain/domain-tick.md) | 分笔数据领域 |
+| [domain-kline.md](domain/domain-kline.md) | K线数据领域 |
+| [domain-finance.md](domain/domain-finance.md) | 财务数据领域 |
+| [domain-strategy.md](domain/domain-strategy.md) | 策略领域 |
+
+### 开发规范 (`standards/`)
+
+| 文档 | 说明 |
+|------|------|
+| [coding-standards.md](standards/coding-standards.md) | 编码规范 |
+| [error-handling-strategy.md](standards/error-handling-strategy.md) | 错误处理策略 |
+| [ADR-001-data-source-microservices.md](standards/ADR-001-data-source-microservices.md) | 架构决策记录 |
+
+### 归档文档 (`archive/`)
+
+历史版本和暂未实现的设计文档，详见 [archive/README.md](archive/README.md)
+
+---
+
+## 🏗️ 当前架构概览
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         三节点集群架构                                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   Server 41 (主控)          Server 58 (计算)        Server 111 (计算)       │
+│   ┌───────────────┐         ┌───────────────┐       ┌───────────────┐       │
+│   │ ClickHouse    │◄───────►│ ClickHouse    │◄─────►│ ClickHouse    │       │
+│   │ Keeper ID:1   │         │ Keeper ID:2   │       │ Keeper ID:3   │       │
+│   │               │         │               │       │               │       │
+│   │ task-orch     │         │ GitLab        │       │               │       │
+│   │ quant-strategy│         │               │       │               │       │
+│   │ gsd-worker    │         │ gsd-worker    │       │ gsd-worker    │       │
+│   └───────────────┘         └───────────────┘       └───────────────┘       │
+│        SHARD=0                  SHARD=1                 SHARD=2             │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 📋 相关文档
+
+| 类型 | 位置 |
+|------|------|
+| 运维文档 | [docs/operations/](../operations/) |
+| AI 上下文 | [docs/ai_context/](../ai_context/) |
+| 进度报告 | [docs/reports/](../reports/) |

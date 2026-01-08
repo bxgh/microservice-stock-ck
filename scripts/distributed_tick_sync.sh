@@ -27,9 +27,9 @@ run_worker() {
         docker run --rm --network host \
         -e SHARD_INDEX=$shard_index \
         -e SHARD_TOTAL=$SHARD_TOTAL \
-        -e CLICKHOUSE_HOST=localhost \
+        -e CLICKHOUSE_HOST=$server \
         -e CLICKHOUSE_PORT=9000 \
-        -e MOOTDX_API_URL=http://localhost:8003 \
+        -e MOOTDX_API_URL=http://$server:8003 \
         -v /home/bxgh/microservice-stock/config:/app/config:ro \
         gsd-worker:latest \
         python -m jobs.sync_tick --scope $SCOPE --date $DATE \
