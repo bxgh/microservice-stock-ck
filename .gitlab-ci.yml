@@ -1,0 +1,15 @@
+stages:
+  - sync
+
+sync-nodes:
+  stage: sync
+  script:
+    - echo "Synchronizing $CI_PROJECT_NAME on $(hostname)..."
+    - cd /home/bxgh/microservice-stock
+    - git fetch origin
+    - git reset --hard origin/feature/quant-strategy
+    - echo "Successfully synced to latest commit: $(git rev-parse HEAD)"
+  tags:
+    - code-sync
+  rules:
+    - if: $CI_COMMIT_BRANCH == "feature/quant-strategy"
