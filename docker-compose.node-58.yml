@@ -1,0 +1,106 @@
+# =============================================================================
+# Server 58 (计算节点) Docker Compose 配置
+# =============================================================================
+# 运行: docker-compose -f docker-compose.node-58.yml up -d
+# 设计为: 计算节点 + GitLab
+
+services:
+  # ---------------------------------------------------------------------------
+  # 核心服务 (必须运行)
+  # ---------------------------------------------------------------------------
+  
+  mootdx-api:
+    build:
+      context: ./services/mootdx-api
+      dockerfile: Dockerfile
+    image: microservice-stock-mootdx-api:latest
+    container_name: microservice-stock-mootdx-api
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      - PORT=8003
+      - HOST=0.0.0.0
+      - TDX_POOL_SIZE=3
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - ./logs/mootdx-api:/app/logs
+
+  mootdx-source:
+    build:
+      context: ./services/mootdx-source
+      dockerfile: Dockerfile
+    image: microservice-stock-mootdx-source:latest
+    container_name: microservice-stock-mootdx-source
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      - GRPC_PORT=50051
+    volumes:
+      - ./logs/mootdx-source:/app/logs
+
+  # ---------------------------------------------------------------------------
+  # GitLab (仅 58 运行)
+  # ---------------------------------------------------------------------------
+  
+  gitlab:
+    image: gitlab/gitlab-ce:latest
+    container_name: microservice-stock-gitlab
+    hostname: gitlab.local
+    restart: unless-stopped
+    ports:
+      - "8800:80"
+      - "8843:443"
+      - "8822:22"
+    volumes:
+      - gitlab_config:/etc/gitlab
+      - gitlab_logs:/var/log/gitlab
+      - gitlab_data:/var/opt/gitlab
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://192.168.151.58:8800'
+        gitlab_rails['gitlab_shell_ssh_port'] = 8822
+
+  # ---------------------------------------------------------------------------
+  # 分片采集 Worker (按需运行)
+  # ---------------------------------------------------------------------------
+  # docker-compose -f docker-compose.node-58.yml run --rm gsd-worker python -m jobs.sync_tick
+  
+  gsd-worker:
+    build:
+      context: .
+      dockerfile: services/gsd-worker/Dockerfile
+    image: gsd-worker:latest
+    network_mode: host
+    environment:
+      - SHARD_INDEX=1
+      - SHARD_TOTAL=3
+      - CLICKHOUSE_HOST=localhost
+      - MOOTDX_API_URL=http://localhost:8003
+    volumes:
+      - ./libs/gsd-shared:/app/libs/gsd-shared:ro
+      - ./logs/gsd-worker:/app/logs
+
+volumes:
+  gitlab_config:
+  gitlab_logs:
+  gitlab_data:
+
+# =============================================================================
+# 使用说明
+# =============================================================================
+# 
+# 启动所有服务:
+#   docker-compose -f docker-compose.node-58.yml up -d
+#
+# 运行分片采集:
+#   docker-compose -f docker-compose.node-58.yml run --rm gsd-worker python -m jobs.sync_tick --scope all
+#
+# 查看日志:
+#   docker-compose -f docker-compose.node-58.yml logs -f mootdx-api
+#
+# 注意: ClickHouse 使用系统服务 (systemctl)，不在此配置中
+# =============================================================================

@@ -5,6 +5,30 @@
 
 ---
 
+## 节点专属配置文件
+
+每个节点有独立的 `docker-compose.node-XX.yml` 文件：
+
+| 节点 | 配置文件 | 服务数 |
+|:----:|----------|:------:|
+| 41 | `docker-compose.node-41.yml` | 8 |
+| 58 | `docker-compose.node-58.yml` | 4 |
+| 111 | `docker-compose.node-111.yml` | 3 |
+
+**使用方法**:
+```bash
+# Server 41
+docker-compose -f docker-compose.node-41.yml up -d
+
+# Server 58
+docker-compose -f docker-compose.node-58.yml up -d
+
+# Server 111
+docker-compose -f docker-compose.node-111.yml up -d
+```
+
+---
+
 ## 容器部署矩阵
 
 | 容器 | Server 41 | Server 58 | Server 111 | 说明 |
