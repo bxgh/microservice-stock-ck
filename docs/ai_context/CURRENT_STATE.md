@@ -2,7 +2,7 @@
 
 > **目的**: 记录系统当前进度，帮助 AI 了解已完成/进行中的工作。
 > 
-> **更新时间**: 2026-01-05
+> **更新时间**: 2026-01-08
 
 ---
 
@@ -10,14 +10,14 @@
 
 | 日期 | 工作内容 | 相关文档 |
 |------|----------|----------|
+| 2026-01-08 | 架构文档整理归档 | [index.md](../architecture/index.md) |
+| 2026-01-07 | **ClickHouse 3节点集群扩容** | [clickhouse-replicated-cluster.md](../architecture/infrastructure/clickhouse-replicated-cluster.md) |
 | 2026-01-07 | 全市场分笔采集 (SBF 策略) 实现 | [WALKTHROUGH](../reports/WALKTHROUGH_SBF_TICK_20260107.md) |
 | 2026-01-07 | 100% 分笔数据覆盖率优化完成 | [WALKTHROUGH](../reports/WALKTHROUGH_SBF_TICK_20260107.md) |
 | 2026-01-05 | snapshot-recorder QC 完成 | [WALKTHROUGH](../reports/WALKTHROUGH_SNAPSHOT_RECORDER_QC_20260105.md) |
 | 2026-01-04 | ClickHouse Active-Active 集群部署 | [PROGRESS_REPORT](../reports/PROGRESS_REPORT_20260104.md) |
 | 2026-01-04 | task-orchestrator 动态任务注册 | [tasks.yml](../../services/task-orchestrator/config/tasks.yml) |
 | 2026-01-04 | GOST MySQL 隧道修复 | [PROGRESS_REPORT](../reports/PROGRESS_REPORT_20260104.md) |
-| 2026-01-03 | 数据一致性审计机制 | Weekly Deep Audit |
-| 2026-01-02 | gsd-worker 代码质量控制 | [QC_REPORT](../reports/CODE_QUALITY_REPORT_20251216.md) |
 
 ---
 
@@ -50,7 +50,7 @@ microservice-stock-nacos               Up 15 hours (healthy)
 
 | 优先级 | 问题 | 影响 | 状态 |
 |--------|------|------|------|
-| 🔴 高 | ClickHouse Keeper 只有2节点 | 单点故障风险 | 待处理 |
+| 🟡 中 | Server 111 gsd-worker 连接问题 | 分片采集无法工作 | 待修复 (.env) |
 | 🟡 中 | 部分服务缺少标准化 README | 文档不完整 | 进行中 |
 | 🟡 中 | 部分任务未实现 | 功能不完整 | 待开发 |
 

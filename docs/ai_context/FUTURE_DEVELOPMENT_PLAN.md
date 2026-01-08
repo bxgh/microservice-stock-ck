@@ -9,7 +9,7 @@
 
 | 阶段 | 周次 | 关键任务 | 产出 | 依赖 |
 |------|------|----------|------|------|
-| **准备阶段** | W1‑W2 | - 部署 ClickHouse 双主集群<br>- 搭建 SSH‑Tunnel (GOST)<br>- 配置 Redis | 集群部署文档、隧道配置、Redis 实例 | 2 台服务器 (8CPU/64GB/2TB) |
+| **准备阶段** | W1‑W2 | - ✅ 部署 ClickHouse 三节点集群<br>- ✅ 搭建 SSH‑Tunnel (GOST)<br>- ✅ 配置 Redis | 集群部署文档、隧道配置、Redis 实例 | 3 台服务器 (8CPU/64GB/2TB) |
 | **增量同步实现** | W3‑W4 | - 开发 `daily_kline_sync` 增量脚本<br>- 实现 Write‑After‑Verify 与自愈逻辑<br>- 实现 Graceful Shutdown (TD-002)<br>- 添加 Prometheus 指标 | Docker 镜像、CI 测试、监控仪表盘 | gsd-worker 镜像 |
 | **实时行情落库** | W5 | - 实现 `realtime_quote_sync`（Redis 缓存 + ClickHouse 落库）<br>- 编写秒级落库批处理 | 代码、性能基准报告 | Redis 实例 |
 | **财务/估值同步** | W6‑W7 | - 完成 `financial_sync`（每日全量/增量）<br>- **实现 `major_shareholder_pledge_ratio` 采集 + API**<br>- 将最新快照写入 MySQL `stock_financial_latest` | MySQL 表结构、同步脚本、文档更新 | Baostock API |
@@ -25,9 +25,9 @@
 ### 硬件资源
 | 资源 | 配置 | 用途 |
 |------|------|------|
-| **ClickHouse 集群** | 2 台物理服务器，8 核 CPU，64GB 内存，2TB NVMe SSD | 双主复制，存储历史行情、财务和估值数据 |
-| **MySQL 数据库** | 1 台虚拟机，4 核 CPU，16GB 内存，500GB SSD | 只读复制节点，存储最新快照 |
-| **GOST 隧道服务器** | 1 台虚拟机，2 核 CPU，4GB 内存 | SSH 隧道，保障数据传输安全 |
+| **ClickHouse 集群** | 3 台物理服务器 (41/58/111)，8 核 CPU，64GB 内存，2TB NVMe SSD | 三节点复制集群，存储历史行情、财务和估值数据 |
+| **MySQL 数据库** | 1 台腾讯云虚拟机，4 核 CPU，16GB 内存，500GB SSD | 云端数据采集节点 |
+| **GOST 隧道服务器** | 集成于 Server 41 | SSH 隧道，本地 36301 → 云端 26300 |
 | **Redis 缓存** | 1 台虚拟机，4GB 内存 | 实时行情缓存、异步任务队列 |
 
 ### 网络与安全
@@ -46,7 +46,7 @@
 
 | 风险 | 影响 | 缓解措施 | 关联 |
 |------|------|----------|------|
-| **ClickHouse Keeper 仅 2 节点** | 单节点故障时无法选举 Leader，集群进入只读模式 | 1. 监控 `is_session_expired` 指标，故障时人工介入<br>2. 每日快照写入对象存储<br>3. **长期计划**：待资源允许扩容至 3 节点 | TD-001 |
+| ~~ClickHouse Keeper 仅 2 节点~~ | ✅ **已解决** (2026-01-07 扩容至 3 节点) | Raft 2/3 多数派，任意 1 节点故障可自动切换 | ~~TD-001~~ |
 | 云端 MySQL 不可达 | 同步中断，策略失去最新 K 线 | 双通道（MySQL + Baostock API）备份；任务超时自动回滚 | - |
 | ClickHouse 磁盘耗尽 | 写入失败，数据不完整 | 预留 30% 余量，TTL 自动清理 180 天前数据 | - |
 | SSH 隧道不稳定 | 延迟增大、任务超时 | GOST 自动重连 + 指数退避；超时告警 | TD-003 |
@@ -56,9 +56,9 @@
 
 ## 已知限制
 
-| 限制 | 影响 | 长期规划 |
-|------|------|----------|
-| ClickHouse Keeper 仅 2 节点 | 无法满足 Raft 多数派，单点故障风险 | 待资源允许时扩容至 3 节点 |
+| 限制 | 影响 | 状态 |
+|------|------|------|
+| ~~ClickHouse Keeper 仅 2 节点~~ | ~~无法满足 Raft 多数派~~ | ✅ **已解决** (2026-01-07) |
 
 ## 交付物清单
 
@@ -85,9 +85,9 @@
 | [TECH_DEBT.md](./TECH_DEBT.md) | 技术债务清单（TD-001、TD-002、TD-003） |
 | [CURRENT_STATE.md](./CURRENT_STATE.md) | 项目当前状态 |
 | [STRATEGY_DATA_REQUIREMENTS.md](./STRATEGY_DATA_REQUIREMENTS.md) | 策略数据需求与缺口分析 |
-| [clickhouse-replicated-cluster.md](../architecture/clickhouse-replicated-cluster.md) | ClickHouse 双主架构 |
+| [clickhouse-replicated-cluster.md](../architecture/infrastructure/clickhouse-replicated-cluster.md) | ClickHouse 三节点集群架构 |
 | [tasks.yml](../../services/task-orchestrator/config/tasks.yml) | 任务调度配置 |
 
 ---
 
-*更新时间: 2026-01-05*
+*更新时间: 2026-01-08*

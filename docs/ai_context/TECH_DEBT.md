@@ -8,7 +8,6 @@
 
 | ID | 描述 | 影响 | 服务 | 预估工作量 |
 |----|------|------|------|-----------|
-| **TD-001** | ClickHouse Keeper 只有 2 节点 | 单节点故障时无法达成共识，服务中断 | infra | 2h (添加第3节点) |
 | **TD-002** | 部分服务缺少 graceful shutdown | 强制停止可能导致数据丢失 | all | 4h |
 | **TD-003** | 云端 MySQL 连接依赖 SSH 隧道 | 隧道断开时任务失败 | gsd-worker | 2h (添加重连机制) |
 
@@ -40,6 +39,7 @@
 
 | ID | 描述 | 解决日期 | 解决方案 |
 |----|------|----------|----------|
+| ~~TD-001~~ | ClickHouse Keeper 只有 2 节点 | 2026-01-07 | 扩容至 3 节点 (41/58/111) |
 | ~~TD-020~~ | task-scheduler 配置硬编码 | 2026-01-04 | 重构为 task-orchestrator + tasks.yml |
 | ~~TD-021~~ | snapshot-recorder 无资源清理 | 2026-01-05 | 实现 graceful shutdown |
 | ~~TD-022~~ | mootdx-api IndentationError | 2026-01-04 | 修复语法错误 |
