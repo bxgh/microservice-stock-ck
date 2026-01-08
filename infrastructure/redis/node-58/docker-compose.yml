@@ -9,3 +9,13 @@ services:
       - ./data:/data
     command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
     restart: always
+
+  redis-slave-node-58:
+    image: redis:7.2-alpine
+    container_name: redis-slave-node-58
+    network_mode: host
+    volumes:
+      - ./redis-slave.conf:/usr/local/etc/redis/redis.conf
+      - ./data-slave:/data
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+    restart: always
