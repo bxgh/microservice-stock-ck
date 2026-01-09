@@ -1,21 +1,17 @@
 version: '3.8'
-services:
-  redis-node-58:
-    image: redis:7.2-alpine
-    container_name: redis-cluster-node-58
-    network_mode: host
-    volumes:
-      - ./redis.conf:/usr/local/etc/redis/redis.conf
-      - ./data:/data
-    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
-    restart: always
 
-  redis-slave-node-58:
-    image: redis:7.2-alpine
-    container_name: redis-slave-node-58
+services:
+  redis:
+    image: redis:7.0-alpine
+    container_name: microservice-stock-redis
+    restart: unless-stopped
     network_mode: host
+    command: redis-server /usr/local/etc/redis/redis.conf
     volumes:
-      - ./redis-slave.conf:/usr/local/etc/redis/redis.conf
-      - ./data-slave:/data
-    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
-    restart: always
+      - ./data:/data
+      - ./redis.conf:/usr/local/etc/redis/redis.conf:ro
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "16379", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3

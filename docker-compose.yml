@@ -24,21 +24,6 @@ services:
     environment:
       - CONSUL_BIND_INTERFACE=eth0
 
-  # 基础设施服务
-  redis:
-    image: redis:7.0-alpine
-    container_name: microservice-stock-redis
-    restart: unless-stopped
-    command: redis-server --appendonly yes
-    volumes:
-      - redis_data:/data
-      - ./infrastructure/redis/config/redis.conf:/usr/local/etc/redis/redis.conf
-    ports:
-      - "6379:6379"
-    networks:
-      - microservice-stock
-    depends_on:
-      - consul
 
   # ClickHouse 集群由独立脚本管理，不在此 docker-compose 中定义
   # 部署方式: infrastructure/clickhouse/scripts/full_redeploy_cluster.sh
@@ -85,8 +70,6 @@ services:
 
 volumes:
   consul_data:
-    driver: local
-  redis_data:
     driver: local
 
 networks:
