@@ -1,80 +1,62 @@
 # microservice-stock 架构文档
 
-> **更新时间**: 2026-01-08  
-> **当前架构**: 三节点集群 (Server 41/58/111)
+> **更新时间**: 2026-01-09  
+> **当前架构**: 3-Shard 高性能并行集群 (Server 41/58/111)
+
+---
+
+## 🏗️ 架构概览 (v3.0)
+
+本项目采用 **3节点全并行分片架构**，旨在最大化数据采集与即时分析的吞吐量。
+
+```mermaid
+graph TD
+    Client[客户端/应用] -->|写入/查询| CK_Dist[ClickHouse 分布式表]
+    Client -->|缓存读写| Redis_Cls[Redis Cluster]
+
+    subgraph "Server 41 (Shard 1)"
+        CK_1[ClickHouse Node 1]
+        Redis_1[Redis Master 1]
+        Worker_1[gsd-worker 1]
+    end
+
+    subgraph "Server 58 (Shard 2)"
+        CK_2[ClickHouse Node 2]
+        Redis_2[Redis Master 2]
+        Worker_2[gsd-worker 2]
+    end
+
+    subgraph "Server 111 (Shard 3)"
+        CK_3[ClickHouse Node 3]
+        Redis_3[Redis Master 3]
+        Worker_3[gsd-worker 3]
+    end
+
+    CK_Dist -.->|自动分片| CK_1
+    CK_Dist -.->|自动分片| CK_2
+    CK_Dist -.->|自动分片| CK_3
+
+    Redis_Cls -.->|Slot 0-5460| Redis_1
+    Redis_Cls -.->|Slot 5461-10922| Redis_2
+    Redis_Cls -.->|Slot 10923-16383| Redis_3
+```
+
+### 核心特性
+- **ClickHouse**: 3-Shard 无副本架构 (Shard 01/02/03)，数据按 `stock_code` Hash 分片。
+- **Redis**: 3-Master 集群 (Port 16379)，Slots 平均分配。
+- **并行计算**: 3个 Worker 节点并行处理，性能提升 300%。
 
 ---
 
 ## 📚 文档索引
 
-### 系统概览 (`overview/`)
-
-| 文档 | 说明 |
-|------|------|
-| [high-level-architecture.md](overview/high-level-architecture.md) | 高层架构图 |
-| [tech-stack.md](overview/tech-stack.md) | 技术栈选型 |
-| [deployment-architecture.md](overview/deployment-architecture.md) | 部署架构 |
-
 ### 基础设施 (`infrastructure/`)
 
-| 文档 | 说明 |
-|------|------|
-| [clickhouse-replicated-cluster.md](infrastructure/clickhouse-replicated-cluster.md) | ClickHouse 三节点复制集群 ⭐ |
-| [database-schema.md](infrastructure/database-schema.md) | 数据库表结构 |
-| [internal-network-setup.md](infrastructure/internal-network-setup.md) | 内网配置 |
-| [SERVER_HARDWARE_ARCHITECTURE.md](infrastructure/SERVER_HARDWARE_ARCHITECTURE.md) | 服务器硬件架构 ⭐ |
-
-### 服务架构 (`services/`)
-
-| 文档 | 说明 |
-|------|------|
-| [get-stockdata-architecture.md](services/get-stockdata-architecture.md) | get-stockdata 核心服务 |
-| [mootdx-source.md](services/mootdx-source.md) | Mootdx 数据源 |
-| [akshare-source.md](services/akshare-source.md) | AKShare 数据源 |
-
-### 领域模型 (`domain/`)
-
-| 文档 | 说明 |
-|------|------|
-| [domain-tick.md](domain/domain-tick.md) | 分笔数据领域 |
-| [domain-kline.md](domain/domain-kline.md) | K线数据领域 |
-| [domain-finance.md](domain/domain-finance.md) | 财务数据领域 |
-| [domain-strategy.md](domain/domain-strategy.md) | 策略领域 |
-
-### 开发规范 (`standards/`)
-
-| 文档 | 说明 |
-|------|------|
-| [coding-standards.md](standards/coding-standards.md) | 编码规范 |
-| [error-handling-strategy.md](standards/error-handling-strategy.md) | 错误处理策略 |
-| [ADR-001-data-source-microservices.md](standards/ADR-001-data-source-microservices.md) | 架构决策记录 |
-
-### 归档文档 (`archive/`)
-
-历史版本和暂未实现的设计文档，详见 [archive/README.md](archive/README.md)
-
----
-
-## 🏗️ 当前架构概览
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         三节点集群架构                                       │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│   Server 41 (主控)          Server 58 (计算)        Server 111 (计算)       │
-│   ┌───────────────┐         ┌───────────────┐       ┌───────────────┐       │
-│   │ ClickHouse    │◄───────►│ ClickHouse    │◄─────►│ ClickHouse    │       │
-│   │ Keeper ID:1   │         │ Keeper ID:2   │       │ Keeper ID:3   │       │
-│   │               │         │               │       │               │       │
-│   │ task-orch     │         │ GitLab        │       │               │       │
-│   │ quant-strategy│         │               │       │               │       │
-│   │ gsd-worker    │         │ gsd-worker    │       │ gsd-worker    │       │
-│   └───────────────┘         └───────────────┘       └───────────────┘       │
-│        SHARD=0                  SHARD=1                 SHARD=2             │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+| 文档 | 说明 | 状态 |
+|------|------|------|
+| [clickhouse-3shard-cluster.md](infrastructure/clickhouse-3shard-cluster.md) | ClickHouse 3分片架构详解 | ✅ v3.0 |
+| [redis-3shard-cluster.md](infrastructure/redis-3shard-cluster.md) | Redis 3分片架构详解 | ✅ v3.0 |
+| [server-hardware.md](infrastructure/SERVER_HARDWARE_ARCHITECTURE.md) | 服务器硬件架构 | ✅ v3.0 |
 
 ---
 
