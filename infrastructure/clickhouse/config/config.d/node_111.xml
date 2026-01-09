@@ -30,6 +30,10 @@
         <node index="3"><host>192.168.151.111</host><port>9181</port></node>
     </zookeeper>
 
+    <distributed_ddl>
+        <path>/clickhouse/task_queue/ddl</path>
+    </distributed_ddl>
+
     <remote_servers>
         <stock_cluster>
             <shard>
