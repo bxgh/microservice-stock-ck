@@ -20,10 +20,11 @@
 
 ## 2. 任务清单
 
-| 任务 | 入口文件 | 功能 | 执行频率 |
+| 任务 | 入口文件 | 功能 | 频率 |
 |:-----|:---------|:-----|:---------|
-| **K线同步** | `jobs/sync_kline.py` | MySQL → ClickHouse 增量同步 | 每日 18:00 |
-| **质量检测** | `jobs/quality_check.py` | 数据完整性、一致性检查 | 每日 19:00 |
+| **股票采集** | `jobs/daily_stock_collection.py` | 云端 API 采集 & Redis 分片缓存 | 每日 09:05 |
+| **K线同步** | `jobs/sync_kline.py` | 3 分片并行同步 (MySQL → ClickHouse) | 每日 17:30 |
+| **质量检测** | `jobs/quality_check.py` | 数据完整性、一致性检查 (Verify-After-Write) | 每日 19:00 |
 | **数据修复** | `jobs/repair_data.py` | 修复缺失/异常数据 | 按需触发 |
 
 ---
@@ -48,8 +49,11 @@
 
 **关键方法**:
 ```python
-async def sync_smart_incremental():
-    """智能增量同步 - 默认模式"""
+async def sync_smart_incremental(shard_index: int = None):
+    """智能增量同步 (支持分片过滤)"""
+    
+async def _get_stock_codes_from_redis(shard_index: int = None):
+    """从 Redis 读取分片股票列表"""
     
 async def sync_full():
     """全量同步 - 初始化用"""
@@ -75,14 +79,21 @@ async def sync_by_stock_codes(codes: list):
 
 ### 6.1 同步流程
 
-```
-1. MySQL 查询
+1. Redis 分片准备 (Daily Stock Collection)
    ↓
-   SELECT code, trade_date, open, high, low, close, volume, amount
-   FROM stock_kline_daily
-   WHERE trade_date > (ClickHouse 最大日期)
+   metadata:stock_codes:shard:{0,1,2}
    
-2. 数据转换
+2. 并行分片同步 (3 Nodes)
+   ↓
+   shard-0: sync_kline --shard-index 0
+   shard-1: sync_kline --shard-index 1
+   shard-2: sync_kline --shard-index 2
+
+3. MySQL 查询 (分片过滤)
+   ↓
+   SELECT ... FROM stock_kline_daily
+   WHERE trade_date > (ClickHouse 最大日期)
+     AND code IN (分片股票列表)
    ↓
    from gsd_shared.models import KLineRecord
    records = [KLineRecord.from_mysql(row) for row in rows]

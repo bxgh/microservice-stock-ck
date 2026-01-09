@@ -22,17 +22,19 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-async def main(mode: str = 'adaptive'):
+async def main(mode: str = 'adaptive', shard_index: int = None):
     """
     K线同步主函数
     
     Args:
         mode: 'adaptive' (自适应调度) | 'direct' (直接同步，用于测试)
+        shard_index: 分片索引 (0/1/2)，None 表示全量同步
         
     Returns:
         int: 退出码 (0: 成功, 1: 失败)
     """
-    logger.info(f"启动K线同步任务 (模式={mode})")
+    shard_info = f" (Shard {shard_index})" if shard_index is not None else ""
+    logger.info(f"启动K线同步任务 (模式={mode}{shard_info})")
     
     service = KLineSyncService()
     await service.initialize()
@@ -69,8 +71,8 @@ async def main(mode: str = 'adaptive'):
             # 直接同步模式（用于测试或手动触发）
             logger.info("🔧 使用直接同步模式（跳过云端信号检测）")
         
-        # 单机模式：智能增量同步
-        await service.sync_smart_incremental()
+        # 单机模式：智能增量同步 (支持分片)
+        await service.sync_smart_incremental(shard_index=shard_index)
         # 同步复权因子
         await service.sync_adjust_factors()
         
@@ -101,7 +103,9 @@ if __name__ == "__main__":
     parser.add_argument("--mode", type=str, default="adaptive", 
                        choices=["adaptive", "direct"],
                        help="同步模式: adaptive(自适应调度) 或 direct(直接同步)")
+    parser.add_argument("--shard-index", type=int, default=None,
+                       help="分片索引 (0/1/2)，不指定则全量同步")
     args = parser.parse_args()
     
-    exit_code = asyncio.run(main(args.mode))
+    exit_code = asyncio.run(main(args.mode, args.shard_index))
     sys.exit(exit_code)

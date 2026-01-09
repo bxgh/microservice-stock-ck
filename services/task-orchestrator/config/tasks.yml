@@ -25,27 +25,46 @@ global:
 tasks:
   # ========== 数据同步任务 ==========
   
-  # K线每日同步 - 本地模式 (P0)
-  # 本地单进程执行，调用 Mootdx 获取数据
+  # 每日股票代码采集 (P0)
+  # 09:05 执行，从云端拉取并分片缓存
+  - id: daily_stock_collection
+    name: 每日股票代码采集
+    type: docker
+    enabled: true
+    schedule:
+      type: cron
+      expression: "5 9 * * *"
+    target:
+      command: ["jobs.daily_stock_collection"]
+      network_mode: "host"
+      environment:
+        REDIS_HOST: "127.0.0.1"
+        REDIS_PORT: "16379"
+        HTTP_PROXY: "http://192.168.151.18:3128"
+        CLOUD_API_URL: "http://124.221.80.250:8000/api/v1/stocks/all"
+    retry:
+      max_attempts: 3
+      backoff_seconds: 300
+
+  # K线每日同步 - 分片模式 (P0)
+  # 17:30 执行，3分片并行下载
   - id: daily_kline_sync
     name: K线每日同步
-    type: docker
+    type: workflow
     enabled: true
     schedule:
       type: trading_cron
       expression: "30 17 * * *"
-    target:
-      command: ["jobs.sync_kline"]
-      network_mode: "host"
-      environment:
-        MYSQL_HOST: "127.0.0.1"
-        MYSQL_PORT: "36301"
-        MYSQL_USER: "root"
-        MYSQL_PASSWORD: "alwaysup@888"
-        MYSQL_DATABASE: "alwaysup"
-        KLINE_SYNC_TIMEOUT_TIME: "21:00"
-        CLICKHOUSE_HOST: "127.0.0.1"
-        CLICKHOUSE_PORT: "9000"
+    workflow:
+      - id: sync-shards
+        parallel: true
+        tasks:
+          - id: shard-0
+            command: ["jobs.sync_kline", "--mode", "adaptive", "--shard-index", "0"]
+          - id: shard-1
+            command: ["jobs.sync_kline", "--mode", "adaptive", "--shard-index", "1"]
+          - id: shard-2
+            command: ["jobs.sync_kline", "--mode", "adaptive", "--shard-index", "2"]
     retry:
       max_attempts: 2
       backoff_seconds: 600
