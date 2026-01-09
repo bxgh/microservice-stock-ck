@@ -120,13 +120,26 @@ async def main(
                 # 启动 workers (先启动消费者，防止队列满导致死锁)
                 workers = [asyncio.create_task(worker()) for _ in range(10)]
 
-                # 1. 恢复上次未完成的任务
+                # 1. 获取恢复任务列表（不立即入队，避免死锁）
                 recovered_tasks = await service.recover_processing_tasks()
-                for task in recovered_tasks:
-                    await queue.put(task)
+                recovered_iter = iter(recovered_tasks)
+                recovery_mode = bool(recovered_tasks)
                 
-                # Feeder loop
+                logger.info(f"🔄 准备恢复 {len(recovered_tasks)} 个未完成任务")
+                
+                # Feeder loop (优先恢复任务，再消费 Redis)
                 while True:
+                    # 优先处理恢复任务
+                    if recovery_mode:
+                        try:
+                            task_code = next(recovered_iter)
+                            await queue.put(task_code)
+                            continue
+                        except StopIteration:
+                            recovery_mode = False
+                            logger.info("✅ 恢复任务已全部入队，切换到正常消费模式")
+                    
+                    # 正常消费 Redis
                     task_code = await service.consume_task_from_redis()
                     if task_code:
                         await queue.put(task_code)
