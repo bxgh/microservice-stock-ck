@@ -1,128 +1,131 @@
-# ClickHouse 集群运维速查表
+# ClickHouse 集群快速参考
 
-## 🎯 核心理念
+## 一键命令
 
-**一个原则**: 所有配置修改都在 Server 41 完成，然后自动同步到其他节点
-
-**三个脚本**: 
-- `deploy_cluster_compose.sh` - 完整部署
-- `update_config.sh` - 更新配置
-- `stop_cluster_compose.sh` - 停止集群
-
----
-
-## 📋 常用操作
-
-### 启动集群
 ```bash
+# 启动集群
 ./infrastructure/clickhouse/scripts/deploy_cluster_compose.sh
-```
 
-### 停止集群
-```bash
+# 停止集群
 ./infrastructure/clickhouse/scripts/stop_cluster_compose.sh
-```
 
-### 更新配置（如添加用户）
-```bash
-# 1. 编辑配置
-vim infrastructure/clickhouse/config/users.xml
+# 更新配置
+./infrastructure/clickhouse/scripts/update_config.sh <配置文件名>
 
-# 2. 一键同步并重启
-./infrastructure/clickhouse/scripts/update_config.sh users.xml
-```
-
-### 查看集群状态
-```bash
+# 健康检查
 echo mntr | nc -w 2 127.0.0.1 9181
 ```
 
-### 查看日志
-```bash
-docker logs -f microservice-stock-clickhouse
+---
+
+## 连接信息
+
+| 项目 | 值 |
+|------|-----|
+| 主机 | 192.168.151.41（任意节点均可） |
+| 端口 | 9000 (TCP) / 8123 (HTTP) |
+| 用户 | admin |
+| 密码 | admin123 |
+| 数据库 | stock_data |
+
+**连接字符串**：
+```
+clickhouse://admin:admin123@192.168.151.41:9000/stock_data
 ```
 
 ---
 
-## 🔑 凭证信息
+## 表使用
 
-**管理员**: `admin` / `admin123`  
-**默认用户**: `default` / (无密码)
-
-**连接示例**:
-```bash
-clickhouse-client --user admin --password admin123
+### 写入数据
+```sql
+-- 使用分布式表（自动分片）
+INSERT INTO stock_data.tick_data VALUES 
+  ('000001', '2026-01-09', '09:30:00', 10.5, 1000, 10500, 0, now());
 ```
+
+### 查询数据
+```sql
+-- 使用分布式表（自动汇总）
+SELECT * FROM stock_data.tick_data 
+WHERE stock_code = '000001' 
+ORDER BY trade_date, tick_time;
+```
+
+### 表列表
+| 表名 | 类型 | 用途 |
+|------|------|------|
+| `tick_data` | 分布式 | **应用程序使用此表** |
+| `tick_data_local` | 本地 | 内部存储，勿直接使用 |
+| `stock_kline_daily` | 分布式 | **应用程序使用此表** |
+| `stock_kline_daily_local` | 本地 | 内部存储，勿直接使用 |
 
 ---
 
-## 🏗️ 架构速览
+## 集群拓扑
 
 ```
-Server 41 (Leader)  ←→  Server 58 (Follower)
-       ↕
-Server 111 (Follower)
-
-- 3 节点全副本（数据完全相同）
-- Keeper 自动选举 Leader
-- 使用 Host 网络模式
+Server 41 (Shard 01) ─┐
+Server 58 (Shard 02) ─┼─ 3 Shards, 按 stock_code hash 分片
+Server 111 (Shard 03) ┘
 ```
 
-**配置文件位置**:
-- Server 41: `~/microservice-stock/infrastructure/clickhouse/config/`
-- Server 58/111: `~/microservice-stock-deploy/clickhouse/config/`
+**分片策略**：`xxHash64(stock_code)`
+- 同一股票的所有数据在同一节点
+- 3 节点并行采集和查询
 
 ---
 
-## 🚨 故障处理
+## 常用诊断
 
-### 集群无法启动
 ```bash
-# 完全重建（会清空数据）
-./infrastructure/clickhouse/scripts/full_redeploy_cluster.sh
-```
+# 查看集群状态
+docker exec microservice-stock-clickhouse clickhouse-client \
+  --user admin --password admin123 \
+  --query "SELECT * FROM system.clusters WHERE cluster='stock_cluster'"
 
-### 单节点无响应
-```bash
-# 先查看日志
-docker logs microservice-stock-clickhouse
-
-# 重启该节点
-docker restart microservice-stock-clickhouse
-```
-
-### Keeper 无 Leader
-```bash
-# 检查所有节点的 Keeper 状态
+# 查看各节点数据量
 for ip in 41 58 111; do
   echo "=== Server $ip ==="
-  echo mntr | ssh bxgh@192.168.151.$ip "nc -w 2 127.0.0.1 9181" | grep zk_server_state
+  ssh bxgh@192.168.151.$ip \
+    "docker exec microservice-stock-clickhouse clickhouse-client \
+    --user admin --password admin123 \
+    -q 'SELECT count() FROM stock_data.tick_data_local'"
 done
+
+# 查看 Keeper 状态
+echo mntr | nc -w 2 127.0.0.1 9181 | grep -E "zk_server_state|zk_synced_followers"
 ```
 
 ---
 
-## 💡 重要提醒
+## Python 连接示例
 
-1. **配置更新**: 永远只在 Server 41 修改，然后用 `update_config.sh` 同步
-2. **数据安全**: `full_redeploy_cluster.sh` 会清空数据，慎用
-3. **顺序启动**: Leader 会自动选举，无需担心启动顺序
-4. **网络依赖**: 确保三个节点之间的 9181 和 9234 端口互通
+```python
+from clickhouse_driver import Client
+
+client = Client(
+    host='192.168.151.41',
+    user='admin',
+    password='admin123',
+    database='stock_data'
+)
+
+# 写入
+client.execute("INSERT INTO tick_data VALUES (...)")
+
+# 查询
+result = client.execute("SELECT * FROM tick_data WHERE ...")
+```
 
 ---
 
-## 📞 快速诊断命令
+## 重要提醒
 
-```bash
-# 一键检查所有节点健康状态
-for ip in 41 58 111; do
-  echo "=== Server $ip ==="
-  ssh bxgh@192.168.151.$ip "docker ps --filter name=clickhouse --format '{{.Status}}'"
-done
+1. ✅ **应用程序只使用分布式表**（`tick_data`, `stock_kline_daily`）
+2. ✅ **连接任意节点均可**（推荐 Server 41）
+3. ✅ **数据自动分片**，无需手动指定分片
+4. ⚠️ **无副本架构**，建议定期备份
+5. ⚠️ **不要直接操作本地表**（`*_local`）
 
-# 检查用户列表
-docker exec microservice-stock-clickhouse clickhouse-client -q "SELECT name FROM system.users"
-
-# 检查集群拓扑
-docker exec microservice-stock-clickhouse clickhouse-client -q "SELECT * FROM system.clusters WHERE cluster='stock_cluster'"
-```
+详细文档：`infrastructure/clickhouse/README.md`
