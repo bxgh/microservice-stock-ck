@@ -3,10 +3,15 @@
     <logger>
         <level>information</level>
         <console>true</console>
+        <log>/var/log/clickhouse-server/clickhouse-server.log</log>
+        <errorlog>/var/log/clickhouse-server/clickhouse-server.err.log</errorlog>
+        <size>1000M</size>
+        <count>10</count>
     </logger>
 
     <http_port>8123</http_port>
     <tcp_port>9000</tcp_port>
+    <interserver_http_port>9009</interserver_http_port>
 
     <listen_host>::</listen_host>
 
@@ -22,17 +27,24 @@
     <user_files_path>/var/lib/clickhouse/user_files/</user_files_path>
 
     <users_config>users.xml</users_config>
+    
+    <user_directories>
+        <users_xml>
+            <!-- Path to configuration file with predefined users and profiles -->
+            <path>users.xml</path>
+        </users_xml>
+        <local_directory>
+            <!-- Path to folder where users created by SQL commands are stored -->
+            <path>/var/lib/clickhouse/access/</path>
+        </local_directory>
+    </user_directories>
+
     <default_profile>default</default_profile>
     <default_database>default</default_database>
 
     <timezone>Asia/Shanghai</timezone>
 
-    <remote_servers incl="clickhouse_remote_servers"/>
-    <zookeeper incl="zookeeper-servers" optional="true"/>
-    <macros incl="macros" optional="true"/>
-
     <builtin_dictionaries_reload_interval>3600</builtin_dictionaries_reload_interval>
-
     <max_session_timeout>3600</max_session_timeout>
     <default_session_timeout>60</default_session_timeout>
 </yandex>

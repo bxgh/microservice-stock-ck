@@ -40,20 +40,9 @@ services:
     depends_on:
       - consul
 
-  clickhouse:
-    image: clickhouse/clickhouse-server:latest
-    container_name: microservice-stock-clickhouse
-    restart: unless-stopped
-    volumes:
-      - clickhouse_data:/var/lib/clickhouse
-      - ./infrastructure/clickhouse/config/config.xml:/etc/clickhouse-server/config.xml
-    ports:
-      - "8123:8123"
-      - "9000:9000"
-    networks:
-      - microservice-stock
-    depends_on:
-      - consul
+  # ClickHouse 集群由独立脚本管理，不在此 docker-compose 中定义
+  # 部署方式: infrastructure/clickhouse/scripts/full_redeploy_cluster.sh
+  # 或使用: docker-compose -f infrastructure/clickhouse/docker-compose.node-XX.yml up -d
 
   # 应用服务（开发阶段）
   task-scheduler:
@@ -98,8 +87,6 @@ volumes:
   consul_data:
     driver: local
   redis_data:
-    driver: local
-  clickhouse_data:
     driver: local
 
 networks:
