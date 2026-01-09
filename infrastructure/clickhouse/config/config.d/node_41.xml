@@ -33,10 +33,28 @@
     <remote_servers>
         <stock_cluster>
             <shard>
-                <internal_replication>true</internal_replication>
-                <replica><host>192.168.151.41</host><port>9000</port></replica>
-                <replica><host>192.168.151.58</host><port>9000</port></replica>
-                <replica><host>192.168.151.111</host><port>9000</port></replica>
+                <replica>
+                    <host>192.168.151.41</host>
+                    <port>9000</port>
+                    <user>admin</user>
+                    <password>admin123</password>
+                </replica>
+            </shard>
+            <shard>
+                <replica>
+                    <host>192.168.151.58</host>
+                    <port>9000</port>
+                    <user>admin</user>
+                    <password>admin123</password>
+                </replica>
+            </shard>
+            <shard>
+                <replica>
+                    <host>192.168.151.111</host>
+                    <port>9000</port>
+                    <user>admin</user>
+                    <password>admin123</password>
+                </replica>
             </shard>
         </stock_cluster>
     </remote_servers>
