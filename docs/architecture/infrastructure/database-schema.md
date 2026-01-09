@@ -123,8 +123,11 @@ ORDER BY (timestamp, data_source_id, collection_type)
 TTL timestamp + INTERVAL 90 DAY;
 
 > [!NOTE]
-> 所有核心股票数据表（K线、分笔、快照等）已从标准 `MergeTree` 系列引擎迁移至 `Replicated` 引擎（如 `ReplicatedReplacingMergeTree`），以支持 Server 41 和 Server 58 之间的双主同步。
-> 详细的集群拓扑和引擎规范请参阅 [ClickHouse 双主复制集群](./clickhouse-replicated-cluster.md)。
+> 核心表采用 **3-Shard 高性能架构** (无副本)。
+> - **本地表**: `tick_data_local` (MergeTree)
+> - **分布式表**: `tick_data` (Distributed)
+>
+> 详细拓扑请参阅 [ClickHouse 3-Shard 架构](./clickhouse-3shard-cluster.md)。
 
 ```
 
