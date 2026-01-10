@@ -723,10 +723,10 @@ class TickSyncService:
                     results["errors"].append(f"{code}: {str(e)}")
                     logger.error(f"同步失败 {code}: {e}")
                 
-                # Precise Pacing: Ensure minimum 0.8s interval between requests
+                # Precise Pacing: Ensure minimum 0.3s interval between requests
                 # This subtracts execution time from the delay to maximize throughput
                 elapsed = asyncio.get_running_loop().time() - start_time
-                delay = max(0, 0.8 - elapsed)
+                delay = max(0, 0.3 - elapsed)
                 if delay > 0:
                     await asyncio.sleep(delay)
         
