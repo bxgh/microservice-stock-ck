@@ -23,6 +23,10 @@ logger = logging.getLogger(__name__)
 # 上海时区
 CST = pytz.timezone('Asia/Shanghai')
 
+# 本地缓存路径
+CACHE_DIR = Path("/app/data/cache")
+
+
 
 class TickSyncService:
     """分笔数据同步服务"""
@@ -166,34 +170,89 @@ class TickSyncService:
 
     async def get_sharded_stocks(self, shard_index: int) -> List[str]:
         """
-        从 Redis 获取分片股票列表 (与 K线同步共用 Redis Key)
+        从 Redis 获取分片股票列表 (支持本地磁盘缓存降级)
+        
+        策略:
+        1. 优先尝试 Redis 获取
+        2. 成功则更新本地缓存 (json)
+        3. Redis 失败/为空时，尝试读取本地缓存
         """
-        if not self.redis_cluster:
-            logger.warning("Redis Cluster 未连接，无法获取分片列表")
+        key = f"metadata:stock_codes:shard:{shard_index}"
+        
+        # 1. 尝试 Redis 获取
+        if self.redis_cluster:
+            try:
+                codes = await self.redis_cluster.smembers(key)
+                if codes:
+                    # 清洗数据
+                    clean_codes = []
+                    for code in codes:
+                        clean_codes.append(code.split(".")[0] if "." in code else code)
+                    clean_codes.sort()
+                    
+                    logger.info(f"从 Redis 获取 Shard {shard_index} 股票: {len(clean_codes)} 只")
+                    
+                    # 2. 更新本地缓存
+                    await self._save_local_cache(shard_index, clean_codes)
+                    return clean_codes
+            except Exception as e:
+                logger.error(f"从 Redis 获取分片 {shard_index} 失败: {e}")
+        
+        # 3. 降级：读取本地缓存
+        logger.warning(f"⚠️ Redis 不可用或无数据，尝试读取本地缓存 (Shard {shard_index})...")
+        return await self._load_local_cache(shard_index)
+
+    async def _save_local_cache(self, shard_index: int, codes: List[str]):
+        """异步保存分片数据到本地磁盘"""
+        if not codes: 
+            return
+            
+        try:
+            CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            cache_file = CACHE_DIR / f"shard_{shard_index}_latest.json"
+            
+            # 使用 run_in_executor 避免阻塞事件循环
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(
+                None, 
+                self._write_json_cache, 
+                cache_file, 
+                codes
+            )
+            logger.debug(f"已缓存分片 {shard_index} 到 {cache_file}")
+        except Exception as e:
+            logger.warning(f"保存本地缓存失败: {e}")
+
+    def _write_json_cache(self, path: Path, data: List[str]):
+        """同步写入文件 (运行在 executor 中)"""
+        import json
+        with open(path, "w") as f:
+            json.dump({"updated_at": datetime.now().isoformat(), "codes": data}, f)
+
+    async def _load_local_cache(self, shard_index: int) -> List[str]:
+        """从本地磁盘读取缓存"""
+        cache_file = CACHE_DIR / f"shard_{shard_index}_latest.json"
+        if not cache_file.exists():
+            logger.error(f"❌ 本地缓存不存在: {cache_file}，无法降级！")
             return []
             
-        key = f"metadata:stock_codes:shard:{shard_index}"
         try:
-            codes = await self.redis_cluster.smembers(key)
-            # Redis 返回的是 set，转换为 list
-            # 这里的 codes 格式是 "000001.SZ"，tick 接口一般只需要 "000001"
-            # mootdx-api 的 sync_stock 需要纯数字代码吗？
-            # 看 sync_stock -> fetch_tick_data_sequential -> url = f".../{stock_code}"
-            # get_all_stocks 返回的是 6位代码. mootdx api 通常接受 6位代码.
-            # Redis 中的代码是 "000001.SZ" 格式 (由 daily_stock_collection 生成)
-            # 需要 strip suffix
+            import json
+            loop = asyncio.get_running_loop()
+            # 简单起见直接读，文件不大
+            content = await loop.run_in_executor(None, cache_file.read_text)
+            data = json.loads(content)
+            codes = data.get("codes", [])
+            updated_at = data.get("updated_at", "unknown")
             
-            clean_codes = []
-            for code in codes:
-                if "." in code:
-                    clean_codes.append(code.split(".")[0])
-                else:
-                    clean_codes.append(code)
-            
-            logger.info(f"从 Redis 获取 Shard {shard_index} 股票: {len(clean_codes)} 只")
-            return sorted(clean_codes)
+            if codes:
+                logger.info(f"✅ 从本地缓存恢复 Shard {shard_index}: {len(codes)} 只 (上次更新: {updated_at})")
+                return codes
+            else:
+                logger.error(f"本地缓存文件 {cache_file} 内容无效")
+                return []
         except Exception as e:
-            logger.error(f"获取分片 {shard_index} 股票失败: {e}")
+            logger.error(f"读取本地缓存失败: {e}")
             return []
 
     async def push_tasks_to_redis(

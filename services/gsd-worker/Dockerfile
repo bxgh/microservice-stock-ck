@@ -90,6 +90,7 @@ ENV PYTHONPATH=/app/src
 # 创建并切换到非root用户
 RUN useradd --create-home --shell /bin/bash app && \
     mkdir -p /app/logs && \
+    mkdir -p /app/data/cache && \
     chown -R app:app /app
 
 USER app

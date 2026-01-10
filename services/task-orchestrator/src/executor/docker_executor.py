@@ -69,14 +69,13 @@ class DockerExecutor:
                 "GSD_REDIS_URL": f"redis://{':' + settings.REDIS_PASSWORD + '@' if settings.REDIS_PASSWORD else ''}{settings.REDIS_HOST}:{settings.REDIS_PORT}"
             })
             
-            # Mounts - assumes running on host where libs/gsd-shared is available
-            # In production, gsd-worker image should have libs installed.
-            # In this dev setup, we might need to mount if we want live code, 
-            # but gsd-worker image COPYs code. So no mount needed for code.
-            # BUT, we might need to pass network config.
-            
-            logger.info(f"🐳 Spawning worker: {image} cmd={command}")
-            
+            # Prepare volumes mount
+            volumes = {
+                '/home/bxgh/microservice-stock/data/gsd-worker': {'bind': '/app/data', 'mode': 'rw'},
+                '/home/bxgh/microservice-stock/libs/gsd-shared': {'bind': '/app/libs/gsd-shared', 'mode': 'ro'},
+                '/home/bxgh/microservice-stock/services/gsd-worker/config': {'bind': '/app/config', 'mode': 'ro'}
+            }
+
             container = self.client.containers.run(
                 image=image,
                 command=command,
@@ -85,6 +84,7 @@ class DockerExecutor:
                 network_mode="host" if settings.WORKER_NETWORK == "host" else None,
                 network=settings.WORKER_NETWORK if settings.WORKER_NETWORK != "host" else None,
                 name=container_name,
+                volumes=volumes,
                 auto_remove=False  # Keep container for log inspection
             )
             

@@ -173,6 +173,8 @@ services:
     volumes:
       - ./libs/gsd-shared:/app/libs/gsd-shared:ro
       - ./logs/gsd-worker:/app/logs
+      - ./data/gsd-worker:/app/data
+
 
 volumes:
   redis_data:

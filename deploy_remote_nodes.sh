@@ -84,8 +84,11 @@ else
     exit 0
 fi
 
-# Define the docker command for this shard
-JOB_CMD="docker run -d --rm --network host --env-file /root/microservice-stock/.env gsd-worker jobs.sync_tick --mode incremental --scope all --shard-index $SHARD_INDEX --shard-total 3"
+# Ensure persistent data directory exists
+mkdir -p /home/bxgh/microservice-stock/data/gsd-worker
+
+# Define the docker command for this shard (with persistence)
+JOB_CMD="docker run -d --rm --network host --env-file /root/microservice-stock/.env -v /home/bxgh/microservice-stock/data/gsd-worker:/app/data -v /home/bxgh/microservice-stock/libs/gsd-shared:/app/libs/gsd-shared:ro gsd-worker jobs.sync_tick --mode incremental --scope all --shard-index $SHARD_INDEX --shard-total 3"
 
 # Update Crontab (Idempotent)
 # Remove existing entry for sync_tick to avoid duplicates

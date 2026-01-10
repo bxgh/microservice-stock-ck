@@ -102,6 +102,8 @@ services:
       - ./logs/gsd-worker:/app/logs
       - ./services/gsd-worker/src:/app/src
       - ./services/gsd-worker/config:/app/config
+      - ./data/gsd-worker:/app/data
+
 
 # =============================================================================
 # 使用说明

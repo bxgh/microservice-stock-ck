@@ -32,7 +32,10 @@ logging.basicConfig(
 logger = logging.getLogger("DailyStockCollection")
 
 # 腾讯云 API 配置
-CLOUD_API_URL = os.getenv("CLOUD_API_URL", "http://124.221.80.250:8000/api/v1/stocks/all")
+# 腾讯云 API 配置
+# 默认使用腾讯云公网 IP (硬编码作为兜底)，但在生产环境应通过环境变量覆盖
+DEFAULT_CLOUD_API = "http://124.221.80.250:8000/api/v1/stocks/all"
+CLOUD_API_URL = os.getenv("CLOUD_API_URL", DEFAULT_CLOUD_API)
 HTTP_PROXY = os.getenv("HTTP_PROXY", "http://192.168.151.18:3128")
 REDIS_KEY_CODES = "metadata:stock_codes"
 REDIS_KEY_INFO = "metadata:stock_info"
