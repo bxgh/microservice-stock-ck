@@ -221,7 +221,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--shard-total",
         type=int,
-        default=None,
+        default=3,
         help="总分片数，用于分布式采集"
     )
     parser.add_argument(
