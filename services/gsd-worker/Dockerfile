@@ -81,8 +81,9 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/* && \
     rm -f /etc/apt/apt.conf.d/00proxy
 
-# 复制源代码
+# 复制源代码和配置
 COPY services/gsd-worker/src/ ./src/
+COPY services/gsd-worker/config/ ./config/
 
 # 设置PYTHONPATH
 ENV PYTHONPATH=/app/src

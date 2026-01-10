@@ -21,6 +21,9 @@ services:
       - PORT=8003
       - HOST=0.0.0.0
       - TDX_POOL_SIZE=3
+      - TDX_AUTO_DISCOVER=false
+      - TDX_HOSTS=175.6.5.153:7709,139.9.51.18:7709,139.159.239.163:7709,119.147.212.81:7709,124.71.187.122:7709
+      - TDX_BIND_IP=192.168.151.111
       - LOG_LEVEL=INFO
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health')"]
@@ -102,6 +105,7 @@ services:
       - ./logs/gsd-worker:/app/logs
       - ./services/gsd-worker/src:/app/src
       - ./services/gsd-worker/config:/app/config
+      - ./services/gsd-worker/data/cache:/app/data/cache
 
 # =============================================================================
 # 使用说明

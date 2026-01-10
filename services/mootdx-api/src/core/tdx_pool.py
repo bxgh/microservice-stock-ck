@@ -77,27 +77,62 @@ class TDXClientPool:
             
             logger.info(f"正在初始化 TDX 连接池 (size={self.size})...")
             
-            # 预设一组可靠的 TDX 服务器，避免 bestip 扫描导致的高频连接和被封风险
-            reliable_servers = [
-                ('119.147.212.81', 7709),
-                ('124.71.187.122', 7709),
-                ('47.107.64.168', 7709),
-                ('119.29.19.242', 7709),
-                ('123.60.84.66', 7709)
-            ]
+            # Configuration Priority:
+            # 1. TDX_AUTO_DISCOVER=true (env) -> bestip=True
+            # 2. TDX_HOSTS (env) -> Parsed list
+            # 3. Code Hardcoded Defaults (Fallback)
             
+            auto_discover = os.getenv("TDX_AUTO_DISCOVER", "false").lower() == "true"
+            env_hosts = os.getenv("TDX_HOSTS", "")
+            
+            if auto_discover:
+                logger.info("Configuration: Auto-discovery ENABLED (bestip=True)")
+                target_server_strategy = 'auto'
+            elif env_hosts:
+                logger.info(f"Configuration: Using TDX_HOSTS from env: {env_hosts}")
+                # Parse "ip:port,ip2:port" string
+                parsed_servers = []
+                for s in env_hosts.split(','):
+                    parts = s.strip().split(':')
+                    if len(parts) == 2:
+                        parsed_servers.append((parts[0], int(parts[1])))
+                target_servers = parsed_servers
+                target_server_strategy = 'list'
+            else:
+                logger.warning("Configuration: No env vars found, using hardcoded fallback list")
+                # Fallback list (Updated 2026/01/10)
+                target_servers = [
+                    ('59.36.5.11', 7709),
+                    ('119.147.212.81', 7709),
+                    ('124.71.187.122', 7709),
+                    ('47.107.64.168', 7709),
+                    ('119.29.19.242', 7709),
+                    ('123.60.84.66', 7709)
+                ]
+                target_server_strategy = 'list'
+
+            # Initialize based on strategy
             for i in range(self.size):
                 try:
-                    server = reliable_servers[i % len(reliable_servers)]
-                    print(f"DEBUG: Initializing node {i+1} with server {server}", flush=True)
-                    client = await loop.run_in_executor(
-                        None,
-                        lambda: Quotes.factory(market='std', bestip=False, server=server)
-                    )
+                    if target_server_strategy == 'auto':
+                         logger.info(f"  Initializing connection {i+1}/{self.size} (Auto-select)...")
+                         client = await loop.run_in_executor(
+                            None,
+                            lambda: Quotes.factory(market='std', bestip=True)
+                        )
+                    else:
+                        # Round-robin selection from list
+                        server = target_servers[i % len(target_servers)]
+                        logger.info(f"  Initializing connection {i+1}/{self.size} to {server}...")
+                        client = await loop.run_in_executor(
+                            None,
+                            lambda: Quotes.factory(market='std', bestip=False, server=server)
+                        )
+                        
                     self.clients.append(client)
-                    logger.info(f"  节点 {i + 1}/{self.size} 已连接 ({server[0]})")
+                    logger.info(f"  Node {i + 1}/{self.size} connected")
                 except Exception as e:
-                    logger.error(f"  节点 {i + 1} 连接失败: {e}")
+                    logger.error(f"  Node {i + 1} connection failed: {e}")
             
             if len(self.clients) == 0:
                 raise RuntimeError("TDX 连接池初始化失败：没有可用的连接")
