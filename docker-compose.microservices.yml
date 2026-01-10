@@ -11,6 +11,9 @@ services:
     environment:
       - LOG_LEVEL=INFO
       - TDX_POOL_SIZE=3
+      # Dynamic Configuration:
+      - TDX_AUTO_DISCOVER=false
+      - TDX_HOSTS=59.36.5.11:7709
       # - TDX_BIND_IP=192.168.151.47  # Bypassed via iptables RETURN rules on host instead
     # ports:  # host模式不需要端口映射
     #   - "8003:8000"

@@ -76,3 +76,4 @@ You are an expert Python Backend Engineer specializing in quantitative trading s
 # Git Workflow
 - **Branch**: `feature/quant-strategy`
 - **Commit Messages**: Use Conventional Commits (feat, fix, docs, test, refactor).
+# 全程使用中文

@@ -58,6 +58,13 @@ graph TD
 | [redis-3shard-cluster.md](infrastructure/redis-3shard-cluster.md) | Redis 3分片架构详解 | ✅ v3.0 |
 | [server-hardware.md](infrastructure/SERVER_HARDWARE_ARCHITECTURE.md) | 服务器硬件架构 | ✅ v3.0 |
 
+### 业务架构 (`services/`)
+
+| 文档 | 说明 | 状态 |
+|------|------|------|
+| [tick_data_sharding_implementation.md](tick_data_sharding_implementation.md) | 分笔数据分布式 Sharding 实现 | ✅ v3.0 |
+
+
 ---
 
 ## 📋 相关文档

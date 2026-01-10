@@ -26,23 +26,14 @@ async def main(
     shard_index: int = None,
     shard_total: int = None,
     distributed_source: str = "none",
-    distributed_role: str = "consumer"
+    distributed_role: str = "consumer",
+    concurrency: int = 6
 ) -> int:
     """
     分笔数据同步主函数
-    
-    Args:
-        mode: 'incremental' (增量/今日) | 'full' (全量，仅用于测试)
-        date: 指定日期 YYYYMMDD，默认今日
-        scope: 'config' (配置文件) | 'all' (全市场)
-        shard_index: 分片索引 (0-based)，用于分布式采集
-        shard_total: 总分片数，用于分布式采集
-        
-    Returns:
-        int: 退出码 (0: 成功, 1: 失败)
     """
     shard_info = f", 分片={shard_index}/{shard_total}" if shard_index is not None else ""
-    logger.info(f"启动分笔数据同步任务 (模式={mode}, 日期={date or '今日'}, 范围={scope}{shard_info})")
+    logger.info(f"启动分笔数据同步任务 (模式={mode}, 日期={date or '今日'}, 范围={scope}{shard_info}, 并发={concurrency})")
     
     service = TickSyncService()
     await service.initialize()
@@ -50,7 +41,6 @@ async def main(
     start_time = datetime.now()
     
     try:
-        # 获取股票池 (Consumer 模式不需要预先获取列表)
         # 获取股票池 (Consumer 模式不需要预先获取列表)
         if distributed_source == "redis" and distributed_role == "consumer":
             stock_codes = []
@@ -63,10 +53,8 @@ async def main(
             stock_codes = await service.get_all_stocks() if scope == "all" else await service.get_stock_pool()
         
         # 应用分片过滤 (仅当使用旧逻辑且未通过 Redis 获取分片时)
-        # 如果 stock_codes 是通过 get_sharded_stocks 获取的，则无需再次过滤
         if shard_index is not None and shard_total is not None and stock_codes and scope != "all":
             original_count = len(stock_codes)
-            # 兼容旧的 hash 逻辑 (仅用于非全量或未连接 Redis 的情况)
             stock_codes = [
                 code for code in stock_codes 
                 if hash(code) % shard_total == shard_index
@@ -88,14 +76,10 @@ async def main(
                 return 0
             else:
                 # Consumer 模式: 消费任务
-                logger.info("启动 Redis Consumer 模式")
-                # 使用 consumer 循环逻辑
-                # 原有的 sync_stocks 是并发处理列表，现在我们需要并发处理队列
-                # 简单起见，我们在这里实现一个简单的 consumer loop wrapper 或者调用 service 方法
-                # 由于 TickSyncService 中没有 loop 方法（之前打算加但后来决定放在这里更合适）
+                logger.info(f"启动 Redis Consumer 模式 (并发: {concurrency})")
                 
                 # 定义消费者 worker
-                semaphore = asyncio.Semaphore(6) # 总并发
+                semaphore = asyncio.Semaphore(concurrency) # 总并发
                 active_tasks = 0
                 processed_count = 0
                 failed_count = 0
@@ -105,36 +89,36 @@ async def main(
                 no_task_counter = 0
                 max_idle_cycles = 10 # 20秒空闲退出
                 
-                # 定义消费者 worker
-                # 让我们用一个更健壮的方式： Producer-Consumer 队列模式
-                queue = asyncio.Queue(maxsize=10)
+                # 定义消费者 worker - Producer-Consumer 队列模式
+                queue = asyncio.Queue(maxsize=concurrency * 2)
                 
                 async def worker():
                     nonlocal processed_count, failed_count
                     while True:
                         code = await queue.get()
-                        try:
-                            res = await service.sync_stock(code, date)
-                            if res > 0: processed_count += 1
-                            else: failed_count += 1
-                            await service.ack_task_in_redis(code)
-                        except Exception as e:
-                            failed_count += 1
-                            logger.error(f"处理任务 {code} 失败: {e}")
-                        finally:
-                            queue.task_done()
+                        async with semaphore:
+                            try:
+                                res = await service.sync_stock(code, date)
+                                if res > 0: processed_count += 1
+                                else: failed_count += 1
+                                await service.ack_task_in_redis(code)
+                            except Exception as e:
+                                failed_count += 1
+                                logger.error(f"处理任务 {code} 失败: {e}")
+                            finally:
+                                queue.task_done()
                 
-                # 启动 workers (先启动消费者，防止队列满导致死锁)
-                workers = [asyncio.create_task(worker()) for _ in range(10)]
+                # 启动 workers
+                workers = [asyncio.create_task(worker()) for _ in range(concurrency)]
 
-                # 1. 获取恢复任务列表（不立即入队，避免死锁）
+                # 1. 获取恢复任务列表
                 recovered_tasks = await service.recover_processing_tasks()
                 recovered_iter = iter(recovered_tasks)
                 recovery_mode = bool(recovered_tasks)
                 
                 logger.info(f"🔄 准备恢复 {len(recovered_tasks)} 个未完成任务")
                 
-                # Feeder loop (优先恢复任务，再消费 Redis)
+                # Feeder loop
                 while True:
                     # 优先处理恢复任务
                     if recovery_mode:
@@ -161,14 +145,14 @@ async def main(
                 await queue.join()
                 for w in workers: w.cancel()
                 
-                results = {"success": processed_count, "failed": failed_count, "total_records": processed_count} # Approx
+                results = {"success": processed_count, "failed": failed_count, "total_records": processed_count}
                 
         else:
             # 原始模式: 直接并发列表
             results = await service.sync_stocks(
                 stock_codes=stock_codes,
                 trade_date=date,
-                concurrency=6
+                concurrency=concurrency
             )
         
         duration = (datetime.now() - start_time).total_seconds()
@@ -184,9 +168,10 @@ async def main(
             return 0
         else:
             logger.warning(
-                f"⚠️ 分笔同步部分失败: "
                 f"成功 {results['success']}, 失败 {results['failed']}"
             )
+            if results.get("errors"):
+                logger.warning(f"失败详情 (Top 50): {results['errors'][:50]}")
             return 1 if results["failed"] > results["success"] else 0
             
     except Exception as e:
@@ -238,6 +223,12 @@ if __name__ == "__main__":
         choices=["producer", "consumer"],
         help="分布式角色: producer(生产者) 或 consumer(消费者)"
     )
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=6,
+        help="并发任务数 (默认为 6)"
+    )
     args = parser.parse_args()
     
     exit_code = asyncio.run(main(
@@ -247,6 +238,7 @@ if __name__ == "__main__":
         args.shard_index,
         args.shard_total,
         args.distributed_source,
-        args.distributed_role
+        args.distributed_role,
+        args.concurrency
     ))
     sys.exit(exit_code)

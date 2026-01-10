@@ -411,23 +411,24 @@ class TickSyncService:
             max_retries = 3
             batch_success = False
             
+            end_of_data = False
+            
             while retry_count < max_retries:
                 try:
                     url = f"{self.mootdx_api_url}/api/v1/tick/{stock_code}"
                     params = {"date": int(trade_date), "start": start, "offset": batch_size}
                     
-                    async with self.http_session.get(url, params=params) as response:
+                    async with self.http_session.get(url, params=params, timeout=10) as response:
                         if response.status == 200:
                             data = await response.json()
                             if not data:
                                 batch_success = True
+                                end_of_data = True
                                 break
                                 
                             all_data.extend(data)
                             times = [item.get('time', '23:59') for item in data]
                             earliest = min(times)
-                            
-                            logger.debug(f"SBF {stock_code} [{batch_idx}]: {len(data)}条, 最早 {earliest}")
                             
                             if earliest <= target_time:
                                 found_target = True
@@ -447,6 +448,9 @@ class TickSyncService:
                 logger.error(f"SBF {stock_code} 批次 {batch_idx} 最终失败，跳过")
                 break
                 
+            if end_of_data:
+                break
+
             if found_target:
                 logger.info(f"🎯 {stock_code}: 已找齐全天数据 (共 {len(all_data)} 条)")
                 break
@@ -486,12 +490,15 @@ class TickSyncService:
                 url = f"{self.mootdx_api_url}/api/v1/tick/{stock_code}"
                 params = {"date": int(trade_date), "start": start, "offset": offset}
                 
-                async with self.http_session.get(url, params=params) as response:
+                logger.info(f"DEBUG: Requesting {url} with params {params}") # DEBUG
+                async with self.http_session.get(url, params=params, timeout=10) as response: # Added timeout
+                    logger.info(f"DEBUG: Response status {response.status}") # DEBUG
                     if response.status != 200:
                         logger.warning(f"API 返回 {response.status}: {stock_code} @ {description}")
                         continue
                     
                     data = await response.json()
+                    logger.info(f"DEBUG: Got data length {len(data) if data else 0}") # DEBUG
                     
                     if not data:
                         logger.debug(f"搜索步骤 {i+1}/{len(self.SEARCH_MATRIX)} ({description}): 无数据")
@@ -615,15 +622,13 @@ class TickSyncService:
                 is_auction = 1 if time_str.startswith('09:25') else 0
                 
                 row = (
-                    stock_code,                                    # symbol
+                    stock_code,                                    # stock_code
                     trade_date_obj,                                # trade_date
-                    timestamp,                                      # timestamp
+                    time_str,                                      # tick_time
                     float(item.get('price', 0)),                   # price
                     int(item.get('volume', 0)),                    # volume
-                    int(float(item.get('price', 0)) * int(item.get('volume', 0))),  # amount (UInt64)
+                    float(item.get('price', 0)) * int(item.get('volume', 0)),  # amount (Decimal)
                     self._map_direction(int(item.get('buyorsell', 2))),  # direction
-                    1,                                              # data_source: 1=mootdx
-                    is_auction,                                     # is_auction
                 )
                 rows.append(row)
             except (ValueError, TypeError) as e:
@@ -640,7 +645,7 @@ class TickSyncService:
                     await cursor.execute(
                         """
                         INSERT INTO tick_data 
-                        (symbol, trade_date, timestamp, price, volume, amount, direction, data_source, is_auction)
+                        (stock_code, trade_date, tick_time, price, volume, amount, direction)
                         VALUES
                         """,
                         rows
@@ -679,6 +684,7 @@ class TickSyncService:
         
         async def sync_with_limit(code: str):
             async with semaphore:
+                start_time = asyncio.get_running_loop().time()
                 try:
                     count = await self.sync_stock(code, trade_date)
                     if count > 0:
@@ -691,6 +697,13 @@ class TickSyncService:
                     results["failed"] += 1
                     results["errors"].append(f"{code}: {str(e)}")
                     logger.error(f"同步失败 {code}: {e}")
+                
+                # Precise Pacing: Ensure minimum 0.8s interval between requests
+                # This subtracts execution time from the delay to maximize throughput
+                elapsed = asyncio.get_running_loop().time() - start_time
+                delay = max(0, 0.8 - elapsed)
+                if delay > 0:
+                    await asyncio.sleep(delay)
         
         tasks = [sync_with_limit(code) for code in stock_codes]
         await asyncio.gather(*tasks)
