@@ -7,9 +7,29 @@ TDX 多节点连接池
 
 import asyncio
 import logging
+import socket
 import os
+import sys
 from typing import List, Optional
 from mootdx.quotes import Quotes
+
+# --- Monkey Patch: Force Source IP for TDX Traffic ---
+_TDX_BIND_IP = os.getenv("TDX_BIND_IP")
+if _TDX_BIND_IP:
+    _OriginalSocket = socket.socket
+    class _BoundSocket(_OriginalSocket):
+        def connect(self, address):
+            # 7709 是标准 TDX 端口
+            is_tdx = isinstance(address, tuple) and len(address) >= 2 and address[1] in [7701, 7709, 7711, 7727]
+            if is_tdx:
+                try:
+                    self.bind((_TDX_BIND_IP, 0))
+                except Exception as e:
+                    # bind 失败通常记录日志但不阻断
+                    pass
+            super().connect(address)
+    socket.socket = _BoundSocket
+# --- End Monkey Patch ---
 
 logger = logging.getLogger("tdx-pool")
 
@@ -57,14 +77,25 @@ class TDXClientPool:
             
             logger.info(f"正在初始化 TDX 连接池 (size={self.size})...")
             
+            # 预设一组可靠的 TDX 服务器，避免 bestip 扫描导致的高频连接和被封风险
+            reliable_servers = [
+                ('119.147.212.81', 7709),
+                ('124.71.187.122', 7709),
+                ('47.107.64.168', 7709),
+                ('119.29.19.242', 7709),
+                ('123.60.84.66', 7709)
+            ]
+            
             for i in range(self.size):
                 try:
+                    server = reliable_servers[i % len(reliable_servers)]
+                    print(f"DEBUG: Initializing node {i+1} with server {server}", flush=True)
                     client = await loop.run_in_executor(
                         None,
-                        lambda: Quotes.factory(market='std', bestip=True)
+                        lambda: Quotes.factory(market='std', bestip=False, server=server)
                     )
                     self.clients.append(client)
-                    logger.info(f"  节点 {i + 1}/{self.size} 已连接")
+                    logger.info(f"  节点 {i + 1}/{self.size} 已连接 ({server[0]})")
                 except Exception as e:
                     logger.error(f"  节点 {i + 1} 连接失败: {e}")
             

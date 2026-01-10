@@ -164,6 +164,38 @@ class TickSyncService:
             logger.error(f"获取全市场股票失败: {e}")
             return []
 
+    async def get_sharded_stocks(self, shard_index: int) -> List[str]:
+        """
+        从 Redis 获取分片股票列表 (与 K线同步共用 Redis Key)
+        """
+        if not self.redis_cluster:
+            logger.warning("Redis Cluster 未连接，无法获取分片列表")
+            return []
+            
+        key = f"metadata:stock_codes:shard:{shard_index}"
+        try:
+            codes = await self.redis_cluster.smembers(key)
+            # Redis 返回的是 set，转换为 list
+            # 这里的 codes 格式是 "000001.SZ"，tick 接口一般只需要 "000001"
+            # mootdx-api 的 sync_stock 需要纯数字代码吗？
+            # 看 sync_stock -> fetch_tick_data_sequential -> url = f".../{stock_code}"
+            # get_all_stocks 返回的是 6位代码. mootdx api 通常接受 6位代码.
+            # Redis 中的代码是 "000001.SZ" 格式 (由 daily_stock_collection 生成)
+            # 需要 strip suffix
+            
+            clean_codes = []
+            for code in codes:
+                if "." in code:
+                    clean_codes.append(code.split(".")[0])
+                else:
+                    clean_codes.append(code)
+            
+            logger.info(f"从 Redis 获取 Shard {shard_index} 股票: {len(clean_codes)} 只")
+            return sorted(clean_codes)
+        except Exception as e:
+            logger.error(f"获取分片 {shard_index} 股票失败: {e}")
+            return []
+
     async def push_tasks_to_redis(
         self, 
         stock_codes: List[str], 
