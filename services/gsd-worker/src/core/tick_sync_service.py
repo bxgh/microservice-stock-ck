@@ -583,6 +583,25 @@ class TickSyncService:
         else:
             return 2  # 中性
     
+    async def check_data_exists(self, stock_code: str, trade_date: str) -> bool:
+        """检查 ClickHouse 中是否已存在当日数据"""
+        try:
+            # 兼容格式
+            trade_date_str = datetime.strptime(
+                trade_date.replace("-", ""), "%Y%m%d"
+            ).strftime("%Y-%m-%d")
+            
+            async with self.clickhouse_pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute(
+                        f"SELECT count() FROM tick_data WHERE stock_code = '{stock_code}' AND trade_date = '{trade_date_str}' LIMIT 1"
+                    )
+                    row = await cursor.fetchone()
+                    return row[0] > 0 if row else False
+        except Exception as e:
+            logger.error(f"检查数据存在失败 {stock_code}: {e}")
+            return False
+
     async def sync_stock(
         self, 
         stock_code: str, 
@@ -594,7 +613,13 @@ class TickSyncService:
         Returns:
             写入记录数
         """
-        # 使用顺序批次回溯策略获取数据（确保100%覆盖09:25）
+        # 1. 检查是否已存在 (增量模式)
+        exists = await self.check_data_exists(stock_code, trade_date)
+        if exists:
+            logger.debug(f"⏩ {stock_code}: {trade_date} 数据已存在，跳过")
+            return -1  # 特殊标记，表示跳过
+
+        # 2. 使用顺序批次回溯策略获取数据（确保100%覆盖09:25）
         tick_data = await self.fetch_tick_data_sequential(stock_code, trade_date)
         
         if not tick_data:
