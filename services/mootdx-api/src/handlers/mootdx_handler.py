@@ -112,7 +112,8 @@ class MootdxHandler:
             - bid1-5, ask1-5: 五档买卖
             - volume, amount: 成交量/额
         """
-        if not self.client:
+        client = await self.get_client()
+        if not client:
             logger.warning("Mootdx client not initialized")
             return pd.DataFrame()
         
@@ -123,7 +124,7 @@ class MootdxHandler:
         try:
             data = await loop.run_in_executor(
                 None,
-                lambda: self.client.quotes(symbol=list(codes))
+                lambda: client.quotes(symbol=list(codes))
             )
             return data if data is not None else pd.DataFrame()
         except Exception as e:
@@ -152,7 +153,8 @@ class MootdxHandler:
         Raises:
             ValueError: 未指定股票代码
         """
-        if not self.client:
+        client = await self.get_client()
+        if not client:
             logger.warning("Mootdx client not initialized")
             return pd.DataFrame()
         
@@ -169,7 +171,7 @@ class MootdxHandler:
             if date is not None:
                 data = await loop.run_in_executor(
                     None,
-                    lambda: self.client.transactions(
+                    lambda: client.transactions(
                         symbol=codes[0],
                         date=date,
                         start=start,
@@ -179,7 +181,7 @@ class MootdxHandler:
             else:
                 data = await loop.run_in_executor(
                     None,
-                    lambda: self.client.transactions(symbol=codes[0])
+                    lambda: client.transactions(symbol=codes[0])
                 )
                 
             # 集成标准化逻辑
@@ -220,7 +222,8 @@ class MootdxHandler:
         Raises:
             ValueError: 未指定股票代码
         """
-        if not self.client:
+        client = await self.get_client()
+        if not client:
             logger.warning("Mootdx client not initialized")
             return pd.DataFrame()
         
@@ -240,7 +243,7 @@ class MootdxHandler:
         try:
             data = await loop.run_in_executor(
                 None,
-                lambda: self.client.bars(
+                lambda: client.bars(
                     symbol=codes[0],
                     frequency=mootdx_freq,
                     start=start,
@@ -275,7 +278,8 @@ class MootdxHandler:
             - 返回约 48,000+ 只股票
             - 包含股票、ETF、债券等
         """
-        if not self.client:
+        client = await self.get_client()
+        if not client:
             logger.warning("Mootdx client not initialized")
             return pd.DataFrame()
         
@@ -287,17 +291,17 @@ class MootdxHandler:
                 # 单个市场
                 data = await loop.run_in_executor(
                     None,
-                    lambda: self.client.stocks(market=market)
+                    lambda: client.stocks(market=market)
                 )
             else:
                 # 全市场：合并上海+深圳
                 sh_data = await loop.run_in_executor(
                     None,
-                    lambda: self.client.stocks(market=1)
+                    lambda: client.stocks(market=1)
                 )
                 sz_data = await loop.run_in_executor(
                     None,
-                    lambda: self.client.stocks(market=0)
+                    lambda: client.stocks(market=0)
                 )
                 data = pd.concat([sh_data, sz_data], ignore_index=True)
             
@@ -332,7 +336,8 @@ class MootdxHandler:
             - 数据来自通达信内置数据
             - 更新频率可能不如专业财务数据源
         """
-        if not self.client:
+        client = await self.get_client()
+        if not client:
             logger.warning("Mootdx client not initialized")
             return pd.DataFrame()
         
@@ -346,7 +351,7 @@ class MootdxHandler:
             for code in codes:
                 data = await loop.run_in_executor(
                     None,
-                    lambda c=code: self.client.finance(symbol=c)
+                    lambda c=code: client.finance(symbol=c)
                 )
                 if data is not None and not data.empty:
                     results.append(data)
@@ -387,7 +392,8 @@ class MootdxHandler:
         Raises:
             ValueError: 未指定股票代码
         """
-        if not self.client:
+        client = await self.get_client()
+        if not client:
             logger.warning("Mootdx client not initialized")
             return pd.DataFrame()
         
@@ -398,7 +404,7 @@ class MootdxHandler:
         try:
             data = await loop.run_in_executor(
                 None,
-                lambda: self.client.xdxr(symbol=codes[0])
+                lambda: client.xdxr(symbol=codes[0])
             )
             return data if data is not None else pd.DataFrame()
         except Exception as e:
@@ -434,7 +440,8 @@ class MootdxHandler:
         Raises:
             ValueError: 未指定指数代码
         """
-        if not self.client:
+        client = await self.get_client()
+        if not client:
             logger.warning("Mootdx client not initialized")
             return pd.DataFrame()
         
@@ -454,7 +461,7 @@ class MootdxHandler:
         try:
             data = await loop.run_in_executor(
                 None,
-                lambda: self.client.index_bars(
+                lambda: client.index_bars(
                     symbol=codes[0],
                     frequency=mootdx_freq,
                     start=start,

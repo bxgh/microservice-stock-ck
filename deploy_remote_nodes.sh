@@ -43,6 +43,28 @@ docker build -t microservice-stock-mootdx-api -f services/mootdx-api/Dockerfile 
 echo "🔄 Restarting mootdx-api..."
 docker compose -f docker-compose.microservices.yml up -d --force-recreate mootdx-api
 
+# 4.1 Health Check for mootdx-api
+echo "🔍 Checking mootdx-api health..."
+MAX_RETRIES=10
+RETRY_COUNT=0
+HEALTH_URL="http://localhost:8003/health"
+
+while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+    if curl -s $HEALTH_URL | grep -q '"status":"healthy"'; then
+        echo "✅ mootdx-api is healthy!"
+        break
+    else
+        echo "⏳ Waiting for mootdx-api to become healthy... ($((RETRY_COUNT+1))/$MAX_RETRIES)"
+        RETRY_COUNT=$((RETRY_COUNT+1))
+        sleep 3
+    fi
+done
+
+if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+    echo "❌ mootdx-api health check failed!"
+    exit 1
+fi
+
 # 5. Configure Distributed Scheduling (Cron)
 echo "⏰ Configuring Distributed Scheduling..."
 SERVER_IP=$(hostname -I | awk '{print $1}')
@@ -63,7 +85,7 @@ else
 fi
 
 # Define the docker command for this shard
-JOB_CMD="docker run -d --rm --network host --env-file /root/microservice-stock/.env gsd-worker src.jobs.sync_tick --mode incremental --scope all --shard-index $SHARD_INDEX --shard-total 3"
+JOB_CMD="docker run -d --rm --network host --env-file /root/microservice-stock/.env gsd-worker jobs.sync_tick --mode incremental --scope all --shard-index $SHARD_INDEX --shard-total 3"
 
 # Update Crontab (Idempotent)
 # Remove existing entry for sync_tick to avoid duplicates
