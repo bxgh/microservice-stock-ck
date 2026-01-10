@@ -70,24 +70,20 @@ tasks:
       backoff_seconds: 600
   
   # 盘后分笔数据采集 (P1)
-  # 16:23 执行，3分片并行
+  # 16:35 执行 (通过 Crontab 分布式运行)
+  # 此处配置仅用于 Server 41 (Orchestrator Node) 运行 Shard 0
   - id: daily_tick_sync
-    name: 盘后分笔采集
-    type: workflow
+    name: 盘后分笔采集(Shard-0)
+    type: docker
     enabled: true
     schedule:
       type: trading_cron
       expression: "35 16 * * 1-5"
-    workflow:
-      - id: sync-shards
-        parallel: true
-        tasks:
-          - id: shard-0
-            command: ["jobs.sync_tick", "--scope", "all", "--shard-index", "0", "--shard-total", "3"]
-          - id: shard-1
-            command: ["jobs.sync_tick", "--scope", "all", "--shard-index", "1", "--shard-total", "3"]
-          - id: shard-2
-            command: ["jobs.sync_tick", "--scope", "all", "--shard-index", "2", "--shard-total", "3"]
+    target:
+      command: ["jobs.sync_tick", "--scope", "all", "--shard-index", "0", "--shard-total", "3"]
+    retry:
+      max_attempts: 2
+      backoff_seconds: 600
     retry:
       max_attempts: 2
       backoff_seconds: 600
