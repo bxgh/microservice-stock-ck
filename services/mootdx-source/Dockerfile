@@ -29,16 +29,20 @@ RUN apt-get update && apt-get install -y \
 # 配置pip国内源
 RUN mkdir -p ~/.pip && \
     echo '[global]' > ~/.pip/pip.conf && \
-    echo 'index-url = https://mirrors.cloud.tencent.com/pypi/simple/' >> ~/.pip/pip.conf && \
-    echo 'trusted-host = mirrors.cloud.tencent.com' >> ~/.pip/pip.conf && \
+    echo 'index-url = http://mirrors.aliyun.com/pypi/simple/' >> ~/.pip/pip.conf && \
+    echo 'trusted-host = mirrors.aliyun.com' >> ~/.pip/pip.conf && \
     echo 'timeout = 120' >> ~/.pip/pip.conf
 # 复制依赖文件 (假设 context 是项目根目录)
 # 1. 服务自身依赖
 COPY services/mootdx-source/requirements.txt /app/requirements.txt
 # 2. 共享库依赖 (如果有专门的 requirements) - 这里暂无，直接安装 libraries
 
-# 安装 Python 依赖 (使用 pip.conf 中配置的腾讯云镜像)
-RUN pip install --no-cache-dir -r /app/requirements.txt
+# 安装 Python 依赖
+RUN if [ "$ENABLE_PROXY" = "true" ]; then \
+        http_proxy=$PROXY_URL https_proxy=$PROXY_URL pip install --no-cache-dir -r /app/requirements.txt; \
+    else \
+        pip install --no-cache-dir -r /app/requirements.txt; \
+    fi
 
 # 复制共享库
 COPY libs/common /app/libs/common

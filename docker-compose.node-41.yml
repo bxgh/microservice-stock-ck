@@ -11,8 +11,11 @@ services:
   
   mootdx-api:
     build:
-      context: ./services/mootdx-api
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/mootdx-api/Dockerfile
+      args:
+        - ENABLE_PROXY=true
+        - PROXY_URL=http://192.168.151.18:3128
     image: microservice-stock-mootdx-api:latest
     container_name: microservice-stock-mootdx-api
     network_mode: host
@@ -20,27 +23,50 @@ services:
     environment:
       - PORT=8003
       - HOST=0.0.0.0
-      - TDX_POOL_SIZE=5
+      - TDX_POOL_SIZE=3
+      - TDX_AUTO_DISCOVER=false
+      - TDX_HOSTS=175.6.5.153:7709,139.9.51.18:7709,139.159.239.163:7709,119.147.212.81:7709,124.71.187.122:7709
+      - TDX_BIND_IP=192.168.151.41
+      - LOG_LEVEL=INFO
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
     volumes:
       - ./logs/mootdx-api:/app/logs
+      - mootdx_config:/root/.mootdx
+      - ./services/mootdx-api/src:/app/src  # 开发模式挂载源码
 
   mootdx-source:
     build:
-      context: ./services/mootdx-source
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/mootdx-source/Dockerfile
+      args:
+        - ENABLE_PROXY=true
+        - PROXY_URL=http://192.168.151.18:3128
     image: microservice-stock-mootdx-source:latest
     container_name: microservice-stock-mootdx-source
     network_mode: host
     restart: unless-stopped
     environment:
-      - GRPC_PORT=50051
+      - SERVICE_NAME=mootdx-source
+      - SERVICE_HOST=127.0.0.1
+      - SERVICE_PORT=50051
+      - NACOS_SERVER_ADDR=127.0.0.1:8848
+      - LOG_LEVEL=INFO
+      - MOOTDX_API_URL=http://127.0.0.1:8003
+      # 网络代理配置
+      - HTTP_PROXY=http://192.168.151.18:3128
+      - HTTPS_PROXY=http://192.168.151.18:3128
+      - NO_PROXY=localhost,127.0.0.1,0.0.0.0,::1
+      # 云端 API URLs
+      - AKSHARE_API_URL=http://124.221.80.250:8003
+      - BAOSTOCK_API_URL=http://124.221.80.250:8001
+      - PYWENCAI_API_URL=http://124.221.80.250:8002
     volumes:
       - ./logs/mootdx-source:/app/logs
+      - ./services/mootdx-source/src:/app/src
 
   # ---------------------------------------------------------------------------
   # 任务调度 (仅 41 运行)
@@ -50,6 +76,9 @@ services:
     build:
       context: .
       dockerfile: services/task-orchestrator/Dockerfile
+      args:
+        - ENABLE_PROXY=true
+        - PROXY_URL=http://192.168.151.18:3128
     image: task-orchestrator:latest
     container_name: task-orchestrator
     network_mode: host
@@ -83,8 +112,11 @@ services:
   
   quant-strategy:
     build:
-      context: .
-      dockerfile: services/quant-strategy/Dockerfile
+      context: ./services/quant-strategy
+      dockerfile: Dockerfile
+      args:
+        - ENABLE_PROXY=true
+        - PROXY_URL=http://192.168.151.18:3128
     image: quant-strategy:dev
     container_name: quant-strategy-dev
     network_mode: host
@@ -110,8 +142,11 @@ services:
   
   get-stockdata:
     build:
-      context: .
-      dockerfile: services/get-stockdata/Dockerfile
+      context: ./services/get-stockdata
+      dockerfile: Dockerfile
+      args:
+        - ENABLE_PROXY=true
+        - PROXY_URL=http://192.168.151.18:3128
     image: get-stockdata:latest
     container_name: get-stockdata-api-dev
     network_mode: host
@@ -136,7 +171,7 @@ services:
   
   redis:
     image: redis:7.0-alpine
-    container_name: microservice-stock-redis
+    container_name: node-41-redis
     restart: unless-stopped
     command: redis-server --requirepass redis123 --appendonly yes
     ports:
@@ -146,10 +181,10 @@ services:
 
   prometheus:
     image: prom/prometheus:latest
-    container_name: microservice-stock-prometheus
+    container_name: node-41-prometheus
     restart: unless-stopped
     ports:
-      - "9090:9090"
+      - "9091:9090"
     volumes:
       - ./infrastructure/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
@@ -163,19 +198,50 @@ services:
     build:
       context: .
       dockerfile: services/gsd-worker/Dockerfile
+      args:
+        - ENABLE_PROXY=true
+        - PROXY_URL=http://192.168.151.18:3128
     image: gsd-worker:latest
     network_mode: host
     environment:
       - SHARD_INDEX=0
       - SHARD_TOTAL=3
       - CLICKHOUSE_HOST=127.0.0.1
-      - MOOTDX_API_URL=http://127.0.0.1:8003
+      - MOOTDX_API_URL=http://localhost:8003
+      # 网络代理配置
+      - HTTP_PROXY=http://192.168.151.18:3128
+      - HTTPS_PROXY=http://192.168.151.18:3128
+      - NO_PROXY=localhost,127.0.0.1,192.168.151.41
+      - ENVIRONMENT=development
+      # MySQL 配置
+      - GSD_DB_HOST=${GSD_DB_HOST:-127.0.0.1}
+      - GSD_DB_PORT=${GSD_DB_PORT:-36301}
+      - GSD_DB_NAME=${GSD_DB_NAME:-alwaysup}
+      - GSD_DB_USER=${GSD_DB_USER:-root}
+      - GSD_DB_PASSWORD=${GSD_DB_PASSWORD:-alwaysup@888}
+      # ClickHouse 配置
+      - CLICKHOUSE_HOST=${CLICKHOUSE_HOST:-127.0.0.1}
+      - CLICKHOUSE_PORT=${CLICKHOUSE_PORT:-9000}
+      - CLICKHOUSE_USER=${CLICKHOUSE_USER:-admin}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-admin123}
+      - CLICKHOUSE_DB=${CLICKHOUSE_DB:-stock_data}
+      # Redis 配置
+      - REDIS_HOST=${REDIS_HOST:-127.0.0.1}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-redis123}
+      - REDIS_DB=${REDIS_DB:-1}
     volumes:
       - ./libs/gsd-shared:/app/libs/gsd-shared:ro
       - ./logs/gsd-worker:/app/logs
+      - ./services/gsd-worker/src:/app/src
+      - ./services/gsd-worker/config:/app/config
       - ./data/gsd-worker:/app/data
-
 
 volumes:
   redis_data:
   prometheus_data:
+  mootdx_config:
+
+networks:
+  default:
+    name: microservice-stock-network

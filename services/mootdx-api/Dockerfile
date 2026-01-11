@@ -30,8 +30,9 @@ RUN if [ "$ENABLE_PROXY" = "true" ]; then \
 # 清理 apt 代理 (减少层大小，虽然这里没装系统包，但为了规范)
 RUN rm -f /etc/apt/apt.conf.d/00proxy
 
-# 复制源代码
+# 复制源代码和诊断工具
 COPY services/mootdx-api/src/ ./src/
+COPY services/mootdx-api/diagnostics/ ./diagnostics/
 
 # 设置 Python 路径
 ENV PYTHONPATH=/app/src
