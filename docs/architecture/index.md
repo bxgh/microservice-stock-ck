@@ -57,6 +57,13 @@ graph TD
 | [clickhouse-3shard-cluster.md](infrastructure/clickhouse-3shard-cluster.md) | ClickHouse 3分片架构详解 | ✅ v3.0 |
 | [redis-3shard-cluster.md](infrastructure/redis-3shard-cluster.md) | Redis 3分片架构详解 | ✅ v3.0 |
 | [server-hardware.md](infrastructure/SERVER_HARDWARE_ARCHITECTURE.md) | 服务器硬件架构 | ✅ v3.0 |
+| [verified-tdx-hosts.md](infrastructure/VERIFIED_TDX_HOSTS_20260111.md) | 已验证的 TDX 节点列表 | ✅ v3.1 |
+
+### 数据采集 (`data_acquisition/`)
+
+| 文档 | 说明 | 状态 |
+|------|------|------|
+| [mootdx-api-diagnostic.md](data_acquisition/DIAGNOSTIC_TOOLS.md) | TDX 连接池诊断工具说明 | ✅ 新增 |
 
 ---
 
