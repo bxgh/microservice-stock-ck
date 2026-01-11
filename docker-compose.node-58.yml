@@ -11,8 +11,8 @@ services:
   
   mootdx-api:
     build:
-      context: ./services/mootdx-api
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/mootdx-api/Dockerfile
     image: microservice-stock-mootdx-api:latest
     container_name: microservice-stock-mootdx-api
     network_mode: host
@@ -20,7 +20,11 @@ services:
     environment:
       - PORT=8003
       - HOST=0.0.0.0
+      - TDX_HOSTS=175.6.5.153:7709,175.6.5.154:7709,175.6.5.155:7709,175.6.5.156:7709,139.9.133.247:7709,139.9.51.18:7709,139.159.239.163:7709
+      - TDX_BIND_IP=192.168.151.58
+      - TDX_AUTO_DISCOVER=false
       - TDX_POOL_SIZE=3
+      - LOG_LEVEL=INFO
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
       interval: 30s
@@ -76,10 +80,10 @@ services:
     image: gsd-worker:latest
     network_mode: host
     environment:
-      - SHARD_INDEX=1
-      - SHARD_TOTAL=3
-      - CLICKHOUSE_HOST=localhost
-      - MOOTDX_API_URL=http://localhost:8003
+      - SHARD_INDEX=${SHARD_INDEX:-1}
+      - SHARD_TOTAL=${SHARD_TOTAL:-3}
+      - CLICKHOUSE_HOST=${CLICKHOUSE_HOST:-localhost}
+      - MOOTDX_API_URL=${MOOTDX_API_URL:-http://localhost:8003}
     volumes:
       - ./libs/gsd-shared:/app/libs/gsd-shared:ro
       - ./logs/gsd-worker:/app/logs
