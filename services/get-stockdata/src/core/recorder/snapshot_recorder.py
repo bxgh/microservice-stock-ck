@@ -12,7 +12,9 @@ from src.core.storage.parquet_writer import ParquetWriter
 from src.storage.clickhouse_writer import ClickHouseWriter
 from src.core.storage.dual_writer import DualWriter
 from src.core.scheduling.scheduler import AcquisitionScheduler
+from src.data_access.redis_pool import RedisPoolManager
 from mootdx.quotes import Quotes
+import json
 
 class SnapshotRecorder:
     """
@@ -26,6 +28,7 @@ class SnapshotRecorder:
         self.scheduler = AcquisitionScheduler()
         self.is_running = False
         self.client = None
+        self.redis = None
         
         # 初始化存储路径
         if storage_path is None:
@@ -137,7 +140,13 @@ class SnapshotRecorder:
                     # 重新尝试连接
                     if not self.client:
                         await self._connect()
+                    # 重新初始化 Redis
+                    if not self.redis:
+                        self.redis = await RedisPoolManager.get_instance().get_redis()
                     continue
+
+                if not self.redis:
+                    self.redis = await RedisPoolManager.get_instance().get_redis()
 
                 round_start = time.time()
                 round_count += 1
@@ -169,6 +178,9 @@ class SnapshotRecorder:
                     
                     if not (p_success and c_success):
                         self.logger.warning(f"  ⚠️ Write status: Parquet={'OK' if p_success else 'FAIL'}, CK={'OK' if c_success else 'FAIL'}")
+                    
+                    # 3. 触发增量分笔采集任务
+                    await self._emit_tick_tasks(combined_df)
                 
                 duration = time.time() - round_start
                 self.logger.info(f"✅ Round {round_count} Complete: {total_snapshots} snapshots in {duration:.2f}s")
@@ -188,6 +200,61 @@ class SnapshotRecorder:
             self.writer.close()
         except:
             pass
+
+    async def _emit_tick_tasks(self, df):
+        """
+        根据成交量变化触发分笔采集任务
+        """
+        if df is None or df.empty or self.redis is None:
+            return
+
+        try:
+            # 获取所有股票的当前总成交量
+            # Mootdx 'vol' is total volume in lots (usually), 'amount' is total amount
+            current_data = {str(row.code): int(getattr(row, 'vol', 0)) for row in df.itertuples(index=False)}
+            stock_codes = list(current_data.keys())
+            
+            # 批量获取 Redis 中的上次成交量
+            # 使用 Hash 存储每天的音量状态，Key 包含日期以防跨日冲突
+            today_str = datetime.now().strftime('%Y%m%d')
+            vol_cache_key = f"snapshot:vol:{today_str}"
+            
+            last_volumes = await self.redis.hmget(vol_cache_key, stock_codes)
+            
+            tasks_to_push = []
+            updates_to_cache = {}
+            
+            for i, code in enumerate(stock_codes):
+                current_vol = current_data[code]
+                last_vol = int(last_volumes[i]) if last_volumes[i] is not None else 0
+                
+                if current_vol > last_vol:
+                    # 成交量增加了，触发任务
+                    task = {
+                        "code": code,
+                        "last_vol": last_vol,
+                        "current_vol": current_vol,
+                        "timestamp": datetime.now().isoformat()
+                    }
+                    tasks_to_push.append(json.dumps(task))
+                    updates_to_cache[code] = current_vol
+                elif last_vol == 0 and current_vol > 0:
+                    # 首次看到该股票
+                    updates_to_cache[code] = current_vol
+
+            # 批量更新 Redis 缓存
+            if updates_to_cache:
+                await self.redis.hset(vol_cache_key, mapping=updates_to_cache)
+                # 设置过期时间（1天）
+                await self.redis.expire(vol_cache_key, 86400)
+                
+            # 批量推送任务到队列
+            if tasks_to_push:
+                await self.redis.rpush("queue:intraday_tick_tasks", *tasks_to_push)
+                self.logger.debug(f"📤 Pushed {len(tasks_to_push)} tick tasks to Redis")
+
+        except Exception as e:
+            self.logger.error(f"Error emitting tick tasks: {e}")
 
 def handle_signals(recorder):
     """设置信号处理"""

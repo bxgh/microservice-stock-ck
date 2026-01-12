@@ -20,7 +20,7 @@ RUN mkdir -p ~/.pip && \
     echo 'trusted-host = mirrors.aliyun.com' >> ~/.pip/pip.conf
 
 # 安装 Python 依赖
-COPY requirements.txt .
+COPY services/mootdx-api/requirements.txt .
 RUN if [ "$ENABLE_PROXY" = "true" ]; then \
         http_proxy=$PROXY_URL https_proxy=$PROXY_URL pip install --no-cache-dir -r requirements.txt; \
     else \

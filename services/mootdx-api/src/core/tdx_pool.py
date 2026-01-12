@@ -7,15 +7,18 @@ TDX 多节点连接池
 
 import asyncio
 import logging
+import random
 import socket
 import os
 import sys
-from typing import List, Optional
+from typing import List, Optional, Tuple
+import redis.asyncio as redis
 from mootdx.quotes import Quotes
 
 # --- Monkey Patch: Force Source IP for TDX Traffic ---
 _TDX_BIND_IP = os.getenv("TDX_BIND_IP")
 if _TDX_BIND_IP:
+    print(f"MonkeyPatch: ACTIVATING PATCH to bind {_TDX_BIND_IP}")
     _OriginalSocket = socket.socket
     class _BoundSocket(_OriginalSocket):
         def connect(self, address):
@@ -25,8 +28,7 @@ if _TDX_BIND_IP:
                 try:
                     self.bind((_TDX_BIND_IP, 0))
                 except Exception as e:
-                    # bind 失败通常记录日志但不阻断
-                    pass
+                    print(f"MonkeyPatch: Bind FAILED: {e}")
             super().connect(address)
     socket.socket = _BoundSocket
 # --- End Monkey Patch ---
@@ -54,6 +56,7 @@ class TDXClientPool:
         self._index = 0
         self._lock = asyncio.Lock()
         self._initialized = False
+        self.health_status: List[bool] = []  # True=Healthy, False=Unhealthy
     
     async def initialize(self) -> None:
         """
@@ -130,15 +133,28 @@ class TDXClientPool:
                         )
                         
                     self.clients.append(client)
-                    logger.info(f"  Node {i + 1}/{self.size} connected")
+                    # Try to extract connected host info
+                    try:
+                        connected_host = client.client.api.host
+                        connected_port = client.client.api.port
+                        logger.info(f"  Node {i + 1}/{self.size} connected to {connected_host}:{connected_port}")
+                    except:
+                        logger.info(f"  Node {i + 1}/{self.size} connected (IP unknown)")
                 except Exception as e:
                     logger.error(f"  Node {i + 1} connection failed: {e}")
             
             if len(self.clients) == 0:
                 raise RuntimeError("TDX 连接池初始化失败：没有可用的连接")
             
+            self.health_status = [True] * len(self.clients)
             self._initialized = True
             logger.info(f"✓ TDX 连接池就绪 ({len(self.clients)}/{self.size} 节点)")
+            
+            # 启动健康检查后台任务
+            asyncio.create_task(self._health_check_loop())
+            
+            # 启动动态池刷新任务 (Phase 3)
+            asyncio.create_task(self._pool_refresh_loop())
     
     async def get_next(self) -> Quotes:
         """
@@ -156,6 +172,16 @@ class TDXClientPool:
             raise RuntimeError("连接池未初始化或为空")
         
         async with self._lock:
+            # 尝试找到一个健康节点
+            start_index = self._index
+            for i in range(len(self.clients)):
+                idx = (start_index + i) % len(self.clients)
+                if self.health_status[idx]:
+                    self._index = (idx + 1) % len(self.clients)
+                    return self.clients[idx]
+            
+            # 如果全部不健康，强制轮询 (Last Resort)
+            # logger.warning("⚠️ 全部节点不健康，强制使用轮询策略")
             client = self.clients[self._index]
             self._index = (self._index + 1) % len(self.clients)
             return client
@@ -187,8 +213,135 @@ class TDXClientPool:
             "pool_size": self.size,
             "active_connections": len(self.clients),
             "initialized": self._initialized,
-            "current_index": self._index
+            "current_index": self._index,
+            "health_status": self.health_status
         }
+    async def _health_check_loop(self):
+        """
+        [Reliability Phase 2] 后台健康检查任务
+        
+        定期对连接池中的 IP 进行探针测试。
+        如果探测失败，标记为 UNHEALTHY，get_next 将跳过该节点。
+        """
+        interval = int(os.getenv("TDX_HEALTH_CHECK_INTERVAL", "60"))
+        logger.info(f"🚀 启动健康检查线程 (Interval={interval}s)")
+        
+        while self._initialized:
+            try:
+                await asyncio.sleep(interval)
+                
+                if not self.clients:
+                    continue
+                    
+                loop = asyncio.get_event_loop()
+                
+                for i, client in enumerate(self.clients):
+                    try:
+                        # Probe: 获取平安银行(000001)最近1根1分钟K线
+                        # 这是一个极轻量的标准请求，用于验证链路和数据完整性
+                        data = await loop.run_in_executor(
+                            None,
+                            lambda: client.bars(category=9, market=0, code='000001', start=0, count=1)
+                        )
+                        
+                        is_healthy = data is not None and len(data) > 0
+                        
+                        if is_healthy != self.health_status[i]:
+                            status_str = "HEALTHY" if is_healthy else "UNHEALTHY"
+                            logger.warning(f"🔄 [HealthCheck] Node {i+1} status changed to {status_str}")
+                            self.health_status[i] = is_healthy
+                        elif not is_healthy:
+                             # 持续不健康，记录日志
+                             logger.warning(f"⚠️ [HealthCheck] Node {i+1} remains UNHEALTHY")
+                            
+                    except Exception as e:
+                        logger.error(f"❌ [HealthCheck] Node {i+1} probe failed: {e}")
+                        if self.health_status[i]:
+                             logger.warning(f"⬇️ [HealthCheck] Node {i+1} status changed to UNHEALTHY")
+                             self.health_status[i] = False
+                             
+            except Exception as main_e:
+                logger.error(f"Health check loop error: {main_e}")
+                await asyncio.sleep(interval) # Prevent spinning on error
+
+    async def _pool_refresh_loop(self):
+        """
+        [Reliability Phase 3] 动态 IP 池刷新任务
+        
+        定期 (10分钟) 从 Redis 获取最新的优质 IP列表。
+        策略:
+        1. 如果发现新 IP 且池子未满 -> 添加
+        2. 如果池子满了 -> 尝试替换掉 UNHEALTHY 的节点
+        """
+        redis_host = os.getenv("REDIS_HOST", "127.0.0.1")
+        redis_port = int(os.getenv("REDIS_PORT", 6379))
+        redis_password = os.getenv("REDIS_PASSWORD", "")
+        
+        while self._initialized:
+            redis_client = None
+            try:
+                # 初始等待 1 分钟，之后每 10 分钟刷新一次
+                await asyncio.sleep(600)
+                
+                logger.info("🔄 [PoolRefresh] 开始检查新 IP...")
+                address = f"redis://:{redis_password}@{redis_host}:{redis_port}/1"
+                redis_client = redis.from_url(address)
+                
+                candidates = await redis_client.smembers("tdx:verified_ips")
+                if not candidates:
+                    logger.info("ℹ️ [PoolRefresh] Redis 中无候选 IP")
+                    continue
+                    
+                # 解析 candidates
+                new_ips = []
+                for c in candidates:
+                    try:
+                        # redis-py returns bytes if decode_responses=False (default)
+                        if isinstance(c, bytes):
+                            c = c.decode()
+                        ip, port = c.split(':')
+                        new_ips.append((ip, int(port)))
+                    except Exception as e:
+                        logger.warning(f"Failed to parse candidate {c}: {e}")
+                
+                # 获取当前所有 IP 集合
+                current_ips = set()
+                
+                unhealthy_indices = [i for i, healthy in enumerate(self.health_status) if not healthy]
+                
+                if unhealthy_indices and new_ips:
+                    # 只要有坏节点，就尝试用新 IP 替换
+                    idx = unhealthy_indices[0] # 替换第一个坏的
+                    candidate = random.choice(new_ips)
+                    
+                    logger.info(f"♻️ [PoolRefresh] 尝试用 {candidate} 替换坏节点 {idx+1}")
+                    
+                    loop = asyncio.get_event_loop()
+                    new_client = await loop.run_in_executor(
+                        None,
+                        lambda: Quotes.factory(market='std', bestip=False, server=candidate)
+                    )
+                    
+                    # 验证新客户端
+                    try:
+                         # 简单验证
+                         check = await loop.run_in_executor(
+                            None,
+                            lambda: new_client.get_security_count(0)
+                        )
+                         if check is not None:
+                             async with self._lock:
+                                 self.clients[idx] = new_client
+                                 self.health_status[idx] = True # 标记为健康
+                             logger.info(f"✅ [PoolRefresh] 节点 {idx+1} 已替换为 {candidate}")
+                    except Exception as e:
+                        logger.warning(f"❌ [PoolRefresh] 新候选 {candidate} 连接失败: {e}")
+
+            except Exception as e:
+                logger.error(f"Pool refresh loop error: {e}")
+            finally:
+                if redis_client:
+                    await redis_client.close()
 
 
 def get_pool_size() -> int:

@@ -33,6 +33,9 @@ class TickSyncService:
     
     # 基于验证成功的搜索矩阵（参考：真正100%成功_修复版.py）
     SEARCH_MATRIX = [
+        # 第零优先级：基础全量获取 (保证午盘和收盘数据)
+        (0, 5000, "全量基础"),
+        
         # 第一优先级：万科A验证成功区域
         (3500, 800, "万科A前区域"),
         (4000, 500, "万科A原成功"),
@@ -389,190 +392,124 @@ class TickSyncService:
             logger.error(f"获取全市场股票失败: {e}")
             return []
     
-    async def fetch_tick_data_sequential(
-        self,
-        stock_code: str,
-        trade_date: str,
-        target_time: str = "09:25",
-        batch_size: int = 1000  # 从 2000 降回 1000 保持稳定
-    ) -> List[Dict[str, Any]]:
-        """
-        使用顺序批次回溯策略获取分笔数据，增加重试机制和稳定性
-        """
-        logger.debug(f"开始顺序批次回溯: {stock_code} ({trade_date})")
-        
-        all_data = []
-        start = 0
-        found_target = False
-        max_batches = 30  # 1000 * 30 = 30000, 足够全天数据
-        
-        for batch_idx in range(max_batches):
-            retry_count = 0
-            max_retries = 3
-            batch_success = False
-            
-            end_of_data = False
-            
-            while retry_count < max_retries:
-                try:
-                    url = f"{self.mootdx_api_url}/api/v1/tick/{stock_code}"
-                    params = {"date": int(trade_date), "start": start, "offset": batch_size}
-                    
-                    async with self.http_session.get(url, params=params, timeout=10) as response:
-                        if response.status == 200:
-                            data = await response.json()
-                            if not data:
-                                batch_success = True
-                                end_of_data = True
-                                break
-                                
-                            all_data.extend(data)
-                            times = [item.get('time', '23:59') for item in data]
-                            earliest = min(times)
-                            
-                            if earliest <= target_time:
-                                found_target = True
-                            
-                            start += len(data)
-                            batch_success = True
-                            break
-                        else:
-                            logger.warning(f"SBF {stock_code} 批次 {batch_idx} 失败 ({response.status})，重试 {retry_count+1}")
-                except Exception as e:
-                    logger.warning(f"SBF {stock_code} 批次 {batch_idx} 异常 ({e})，重试 {retry_count+1}")
-                
-                retry_count += 1
-                await asyncio.sleep(0.2 * retry_count)
-            
-            if not batch_success:
-                logger.error(f"SBF {stock_code} 批次 {batch_idx} 最终失败，跳过")
-                break
-                
-            if end_of_data:
-                break
-
-            if found_target:
-                logger.info(f"🎯 {stock_code}: 已找齐全天数据 (共 {len(all_data)} 条)")
-                break
-                
-            # 移除无意义的 sleep(0.1)
-            
-        return all_data
-    async def fetch_tick_data_smart(
+    async def fetch_tick_data(
         self, 
         stock_code: str, 
         trade_date: str
     ) -> List[Dict[str, Any]]:
         """
-        使用智能搜索矩阵策略获取分笔数据
-        
-        策略：
-        1. 遍历搜索矩阵（多个 start/offset 组合）
-        2. 检查每批数据是否包含目标时间（09:25）
-        3. 找到目标后继续1-2步确保完整性
-        4. 合并去重并按时间升序排列
-        
-        Args:
-            stock_code: 股票代码（如 000001）
-            trade_date: 交易日期（YYYYMMDD）
-            
-        Returns:
-            分笔数据列表
+        核心分笔数据采集策略 (Standard Reference Strategy)
+        完全复刻 "真正100%成功_修复版.py" 的逻辑
         """
-        all_data = []
+        start_time = asyncio.get_running_loop().time()
+        # logger.debug(f"开始采集: {stock_code} ({trade_date})")
+        
+        all_frames = []
         found_target = False
-        successful_step = None
         
-        logger.debug(f"开始智能搜索: {stock_code} ({trade_date})")
-        
+        # 1. 执行验证搜索矩阵
         for i, (start, offset, description) in enumerate(self.SEARCH_MATRIX):
             try:
+                # 随机抖动，模拟人工或避免被WAF识别 (可选，参考 Reference)
+                # await asyncio.sleep(0.1) 
+                
                 url = f"{self.mootdx_api_url}/api/v1/tick/{stock_code}"
                 params = {"date": int(trade_date), "start": start, "offset": offset}
                 
-                logger.info(f"DEBUG: Requesting {url} with params {params}") # DEBUG
-                async with self.http_session.get(url, params=params, timeout=10) as response: # Added timeout
-                    logger.info(f"DEBUG: Response status {response.status}") # DEBUG
+                async with self.http_session.get(url, params=params, timeout=10) as response:
                     if response.status != 200:
-                        logger.warning(f"API 返回 {response.status}: {stock_code} @ {description}")
                         continue
                     
                     data = await response.json()
-                    logger.info(f"DEBUG: Got data length {len(data) if data else 0}") # DEBUG
-                    
                     if not data:
-                        logger.debug(f"搜索步骤 {i+1}/{len(self.SEARCH_MATRIX)} ({description}): 无数据")
                         continue
+                        
+                    # 提取时间特征
+                    times = [x.get('time', '') for x in data]
+                    current_earliest = min(times)
                     
-                    # 获取此批次的时间范围
-                    batch_times = [item.get('time', '') for item in data]
-                    if not batch_times:
-                        continue
-                    
-                    current_earliest = min(batch_times)
-                    current_latest = max(batch_times)
-                    
-                    logger.debug(
-                        f"搜索步骤 {i+1}/{len(self.SEARCH_MATRIX)} ({description}): "
-                        f"{len(data)} 条 ({current_earliest} ~ {current_latest})"
-                    )
-                    
-                    # 检查是否找到目标时间
+                    # 关键逻辑: 检查是否找到目标时间 (09:25)
                     if current_earliest <= self.TARGET_TIME:
                         found_target = True
-                        successful_step = description
-                        logger.info(f"🎯 {stock_code}: 找到 {self.TARGET_TIME} 数据！步骤: {description}")
+                        all_frames.append(data)
+                        logger.debug(f"🎯 {stock_code}: 命中 {self.TARGET_TIME} @ {description}")
                         
-                        all_data.append(data)
-                        
-                        # 智能停止：找到目标后继续1-2步确保完整性
-                        if found_target and len(all_data) >= 3:
-                            logger.debug(f"{stock_code}: 已确保完整性，停止搜索")
-                            break
+                        # 智能停止: 找到目标后，确保至少有2个批次的数据 (参考 Reference line 117)
+                        # 这样通常能保证覆盖 09:25 ~ 10:xx 甚至更多
+                        # [Integrity Fix]: 为了保证全天数据完整 (09:25-15:00)，不进行早期中断，跑完矩阵
+                        # if len(all_frames) >= 2:
+                        #     break
                     else:
-                        all_data.append(data)
-                
-                # 避免服务器压力
-                await asyncio.sleep(0.05)
-                
-            except aiohttp.ClientError as e:
-                logger.warning(f"搜索步骤 {description} 失败: {stock_code}, 错误: {e}")
-                continue
-            except asyncio.TimeoutError:
-                logger.warning(f"搜索步骤 {description} 超时: {stock_code}")
+                        all_frames.append(data)
+                        
+            except Exception as e:
+                logger.warning(f"{stock_code} 步骤 {description} 异常: {e}")
                 continue
         
-        if not all_data:
-            logger.debug(f"{stock_code}: 搜索未获取到任何数据")
+        # 2. 合并数据
+        if not all_frames:
             return []
-        
-        # 合并所有批次数据
-        merged_data = []
-        for batch in all_data:
-            merged_data.extend(batch)
-        
-        # 去重（基于 time + price + volume）
+            
+        merged = []
+        for frame in all_frames:
+            merged.extend(frame)
+            
+        # 3. 严格去重 (按 time, price, vol)
         seen = set()
-        unique_data = []
-        for item in merged_data:
-            key = (item.get('time'), item.get('price'), item.get('volume'))
+        final_data = []
+        for item in merged:
+            key = (
+                item.get('time'), 
+                item.get('price'), 
+                item.get('vol', item.get('volume'))
+                # Reference script uses time, price, vol for dedupe
+            )
             if key not in seen:
                 seen.add(key)
-                unique_data.append(item)
+                final_data.append(item)
         
-        # 按时间升序排列
-        unique_data.sort(key=lambda x: x.get('time', ''))
+        # 4. 排序 (按时间升序)
+        final_data.sort(key=lambda x: x.get('time', ''))
         
-        if unique_data:
-            earliest = unique_data[0].get('time', '')
-            latest = unique_data[-1].get('time', '')
-            logger.info(
-                f"✓ {stock_code}: {len(unique_data)} 条记录 "
-                f"({earliest} ~ {latest}) "
-                f"{'✅' if earliest <= self.TARGET_TIME else '⚠️'}"
-            )
+        elapsed = asyncio.get_running_loop().time() - start_time
+        # logger.info(f"采集完成 {stock_code}: {len(final_data)} 条, 耗时 {elapsed:.2f}s")
         
-        return unique_data
+        return final_data
+    
+    def _validate_data(self, stock_code: str, data: list, trade_date: str = None):
+        """
+        [Reliability Phase 1 Extended] Smart Validation
+        
+        1. 金丝雀校验: 核心权重股绝不应为空
+        2. 历史数据校验: 只要查询的是过去日期的分笔，理论上不应为空 (除非停牌)。
+           为空则怀疑 IP 假死，抛出异常触发重试。
+        """
+        if data:
+            return
+
+        # 1. 金丝雀列表 (权重股绝对不应为空)
+        CANARY_STOCKS = {
+            '000001', '600519', '600036', '601318', '000002', 
+            '300059', '000725', '600000', '000858', '600276'
+        }
+        
+        if stock_code in CANARY_STOCKS:
+             raise ValueError(f"CRITICAL: Suspicious empty data for canary stock {stock_code}. Triggering retry...")
+
+        # 2. 历史数据严格校验
+        # 如果查询日期早于今天，且返回为空，大概率是坏 IP
+        if trade_date:
+            try:
+                query_date = datetime.strptime(str(trade_date), "%Y%m%d").date()
+                today = datetime.now(CST).date()
+                if query_date < today:
+                    # 对于非金丝雀股票，虽然有停牌可能，但为了保险起见，
+                    # 我们可以选择重试一次。或者，更激进地，认为只要是全量同步就不该为空。
+                    # 这里采取折中方案：打印警告并抛出 RetryError，依靠 tenacity 的 max_attempts 限制
+                    # 避免无限死循环 (Task 会在 retry 几次后最终接受空结果)
+                    raise ValueError(f"Suspicious empty data for {stock_code} on historical date {trade_date}")
+            except ValueError:
+                pass
     
     def _map_direction(self, buyorsell: int) -> int:
         """映射买卖方向: 0=买 1=卖 2=中性"""
@@ -594,7 +531,7 @@ class TickSyncService:
             async with self.clickhouse_pool.acquire() as conn:
                 async with conn.cursor() as cursor:
                     await cursor.execute(
-                        f"SELECT count() FROM tick_data WHERE stock_code = '{stock_code}' AND trade_date = '{trade_date_str}' LIMIT 1"
+                        f"SELECT count() FROM tick_data_local WHERE stock_code = '{stock_code}' AND trade_date = '{trade_date_str}' LIMIT 1"
                     )
                     row = await cursor.fetchone()
                     return row[0] > 0 if row else False
@@ -619,12 +556,22 @@ class TickSyncService:
             logger.debug(f"⏩ {stock_code}: {trade_date} 数据已存在，跳过")
             return -1  # 特殊标记，表示跳过
 
-        # 2. 使用顺序批次回溯策略获取数据（确保100%覆盖09:25）
-        tick_data = await self.fetch_tick_data_sequential(stock_code, trade_date)
+        # 2. 核心策略: 采用"真正100%成功_修复版"的标准逻辑
+        # 不再进行缺口分析，而是直接执行全量覆盖搜索
+        tick_data = await self.fetch_tick_data(stock_code, trade_date)
         
         if not tick_data:
             logger.debug(f"{stock_code} 无分笔数据")
             return 0
+            
+        # 完整性日志检查
+        times = [x.get('time', '') for x in tick_data]
+        if times:
+            min_t, max_t = min(times), max(times)
+            if min_t <= "09:25":
+                logger.info(f"✅ {stock_code}: 采集成功 ({min_t}-{max_t})")
+            else:
+                logger.warning(f"⚠️ {stock_code}: 采集完成但缺少竞价 ({min_t}-{max_t})")
         
         # 转换日期格式
         trade_date_obj = datetime.strptime(trade_date, "%Y%m%d").date()
@@ -705,7 +652,7 @@ class TickSyncService:
         logger.info(f"开始同步分笔数据: {len(stock_codes)} 只股票, 日期: {trade_date}")
         
         semaphore = asyncio.Semaphore(concurrency)
-        results = {"success": 0, "failed": 0, "total_records": 0, "errors": []}
+        results = {"success": 0, "failed": 0, "skipped": 0, "total_records": 0, "errors": []}
         
         async def sync_with_limit(code: str):
             async with semaphore:
@@ -715,6 +662,9 @@ class TickSyncService:
                     if count > 0:
                         results["success"] += 1
                         results["total_records"] += count
+                    elif count == -1:
+                        results["skipped"] += 1
+                        logger.info(f"⏭️ {code}: 跳过 (已存在)")
                     else:
                         results["failed"] += 1
                         results["errors"].append(f"{code}: 无数据")
@@ -735,6 +685,7 @@ class TickSyncService:
         
         logger.info(
             f"同步完成: 成功 {results['success']}, "
+            f"跳过 {results['skipped']}, "
             f"失败 {results['failed']}, "
             f"总记录 {results['total_records']:,}"
         )

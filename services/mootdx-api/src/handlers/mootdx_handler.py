@@ -163,12 +163,13 @@ class MootdxHandler:
         
         # 提取参数
         date = params.get("date")
-        start = params.get("start", 0)
-        offset = params.get("offset", 800)
+        start = int(params.get("start", 0))
+        offset = int(params.get("offset", 800))
         
         loop = asyncio.get_event_loop()
         try:
             if date is not None:
+                # 历史成交 (Plural: transactions)
                 data = await loop.run_in_executor(
                     None,
                     lambda: client.transactions(
@@ -179,9 +180,17 @@ class MootdxHandler:
                     )
                 )
             else:
+                # 当日实时成交 (Singular: transaction)
+                # Important: Remove 'sh'/'sz' prefix generally for transaction() as it expects raw code
+                symbol = codes[0].lower().replace('sh', '').replace('sz', '')
+                
                 data = await loop.run_in_executor(
                     None,
-                    lambda: client.transactions(symbol=codes[0])
+                    lambda: client.transaction(
+                        symbol=symbol,
+                        start=start,
+                        offset=offset
+                    )
                 )
                 
             # 集成标准化逻辑

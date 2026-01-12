@@ -9,6 +9,7 @@ import asyncio
 import logging
 import argparse
 from datetime import datetime
+import xxhash
 from core.tick_sync_service import TickSyncService
 from core.task_logger import TaskLogger
 
@@ -57,7 +58,7 @@ async def main(
             original_count = len(stock_codes)
             stock_codes = [
                 code for code in stock_codes 
-                if hash(code) % shard_total == shard_index
+                if xxhash.xxh64(code).intdigest() % shard_total == shard_index
             ]
             logger.info(
                 f"本地分片过滤: {original_count} 只 → {len(stock_codes)} 只 "

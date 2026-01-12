@@ -12,10 +12,14 @@ COPY src/ ./src/
 COPY config/ ./config/
 COPY entrypoint.sh /app/entrypoint.sh
 COPY tests/ ./tests/
+COPY packages/ /packages/
 
 # 设置权限 (base image already has 'app' user)
 USER root
-RUN chmod +x /app/entrypoint.sh && \
+RUN pip install --no-cache-dir --no-index --find-links=/packages pytdx && \
+    pip list && \
+    rm -rf /packages && \
+    chmod +x /app/entrypoint.sh && \
     chown -R app:app /app/src /app/config /app/entrypoint.sh /app/tests
 
 # 切换到非root用户

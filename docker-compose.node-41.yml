@@ -10,24 +10,29 @@ services:
   # ---------------------------------------------------------------------------
   
   mootdx-api:
-    build:
-      context: .
-      dockerfile: services/mootdx-api/Dockerfile
-      args:
-        - ENABLE_PROXY=true
-        - PROXY_URL=http://192.168.151.18:3128
-    image: microservice-stock-mootdx-api:latest
+#    build:
+#      context: .
+#      dockerfile: services/mootdx-api/Dockerfile
+#      args:
+#        - ENABLE_PROXY=true
+#        - PROXY_URL=http://192.168.151.18:3128
+    image: get-stockdata:latest
+    command: uvicorn main:app --host 0.0.0.0 --port 8003
     container_name: microservice-stock-mootdx-api
     network_mode: host
     restart: unless-stopped
     environment:
       - PORT=8003
       - HOST=0.0.0.0
-      - TDX_POOL_SIZE=3
-      - TDX_AUTO_DISCOVER=false
-      - TDX_HOSTS=175.6.5.153:7709,139.9.51.18:7709,139.159.239.163:7709,119.147.212.81:7709,124.71.187.122:7709
-      - TDX_BIND_IP=192.168.151.41
+      - TDX_POOL_SIZE=5
+      - TDX_AUTO_DISCOVER=true
+      # - TDX_HOSTS=119.97.185.59:7709
+      # - TDX_BIND_IP=192.168.151.47
       - LOG_LEVEL=INFO
+      - REDIS_HOST=127.0.0.1
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=redis123
+      - PYTHONUNBUFFERED=1
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health')"]
       interval: 30s
@@ -156,14 +161,80 @@ services:
       - CLICKHOUSE_HOST=127.0.0.1
       - REDIS_HOST=127.0.0.1
       - MOOTDX_API_URL=http://127.0.0.1:8003
-    volumes:
-      - ./libs/gsd-shared:/app/libs/gsd-shared:ro
-      - ./logs/get-stockdata:/app/logs
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8083/api/v1/health"]
       interval: 30s
       timeout: 10s
       retries: 3
+    volumes:
+      - ./libs/gsd-shared:/app/libs/gsd-shared:ro
+      - ./logs/get-stockdata:/app/logs
+      - ./data/snapshots:/app/data/snapshots
+
+  # ---------------------------------------------------------------------------
+  # 盘中快照录制器 (NEW)
+  # ---------------------------------------------------------------------------
+  
+  snapshot-recorder:
+    image: get-stockdata:latest
+    container_name: snapshot-recorder
+    network_mode: host
+    restart: unless-stopped
+    command: python3 -m src.core.recorder.snapshot_recorder
+    environment:
+      - CLICKHOUSE_HOST=127.0.0.1
+      - CLICKHOUSE_PORT=9000
+      - CLICKHOUSE_DB=stock_data
+      - REDIS_HOST=127.0.0.1
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=redis123
+      - REDIS_DB=0
+      - HTTP_PROXY=http://192.168.151.18:3128
+      - HTTPS_PROXY=http://192.168.151.18:3128
+      - PROXY_URL=http://192.168.151.18:3128
+      - SNAPSHOT_STORAGE_PATH=/app/data/snapshots
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./libs/gsd-shared:/app/libs/gsd-shared:ro
+      - ./logs/snapshot-recorder:/app/logs
+      - ./data/snapshots:/app/data/snapshots
+      - ./services/get-stockdata/src:/app/src
+      - ./services/get-stockdata/config/hs300_stocks.yaml:/app/config/hs300_stocks.yaml:ro
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import os; exit(0 if os.path.exists('/app/logs/snapshot_recorder.log') or os.path.exists('/app/logs/snapshot-recorder/snapshot_recorder.log') else 1)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+
+  # ---------------------------------------------------------------------------
+  # 盘中分笔抓取器 (NEW)
+  # ---------------------------------------------------------------------------
+  
+  intraday-tick-puller:
+    image: gsd-worker:latest
+    container_name: intraday-tick-puller
+    network_mode: host
+    restart: unless-stopped
+    command: jobs.run_intraday_tick
+    environment:
+      - CLICKHOUSE_HOST=127.0.0.1
+      - CLICKHOUSE_PORT=9000
+      - REDIS_HOST=127.0.0.1
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=redis123
+      - MOOTDX_API_URL=http://localhost:8003
+      - HTTP_PROXY=http://192.168.151.18:3128
+      - HTTPS_PROXY=http://192.168.151.18:3128
+      - PYTHONPATH=/app/src
+      - REDIS_DB=0
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./libs/gsd-shared:/app/libs/gsd-shared:ro
+      - ./logs/intraday-tick-puller:/app/logs
+      - ./services/gsd-worker/src:/app/src
+      - ./services/gsd-worker/config:/app/config
+      - ./data/intraday-tick-puller:/app/data
 
   # ---------------------------------------------------------------------------
   # 支撑服务 (仅 41 运行)

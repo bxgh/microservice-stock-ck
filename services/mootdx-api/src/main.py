@@ -12,6 +12,19 @@ Mootdx API - 通达信数据源 REST API 服务
 """
 import asyncio
 import logging
+
+# --- Monkeypatch: Force mootdx to use pytdx for connection ---
+try:
+    import tdxpy.hq
+    import pytdx.hq
+    # Use print/logging warning to ensure visibility
+    print("⚡ Monkeypatching: Overwriting tdxpy.hq.TdxHq_API with pytdx.hq.TdxHq_API")
+    tdxpy.hq.TdxHq_API = pytdx.hq.TdxHq_API
+except Exception as e:
+    print(f"Monkeypatch failed: {e}")
+# -------------------------------------------------------------
+
+import core.tdx_pool 
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
