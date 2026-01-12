@@ -80,7 +80,9 @@ tasks:
       type: trading_cron
       expression: "05 22 * * 1-5"
     target:
-      command: ["jobs.sync_tick", "--scope", "all", "--shard-index", "0", "--shard-total", "3"]
+      # New Architecture: Single Publisher -> Redis Stream
+      # No sharding args needed (Publisher fetches all)
+      command: ["python3", "src/jobs/run_stream_tick.py", "publisher"]
     retry:
       max_attempts: 2
       backoff_seconds: 600

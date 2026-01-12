@@ -280,12 +280,20 @@ class TDXClientPool:
         while self._initialized:
             redis_client = None
             try:
-                # 初始等待 1 分钟，之后每 10 分钟刷新一次
+                # 初始等待 1 分支，之后每 10 分钟刷新一次
                 await asyncio.sleep(600)
                 
                 logger.info("🔄 [PoolRefresh] 开始检查新 IP...")
-                address = f"redis://:{redis_password}@{redis_host}:{redis_port}/1"
-                redis_client = redis.from_url(address)
+                is_cluster = os.getenv("REDIS_CLUSTER", "false").lower() == "true"
+                auth_part = f":{redis_password}@" if redis_password else ""
+                # DB must be 0 for Cluster
+                address = f"redis://{auth_part}{redis_host}:{redis_port}/0"
+                
+                if is_cluster:
+                    from redis.asyncio.cluster import RedisCluster
+                    redis_client = RedisCluster.from_url(address, decode_responses=True)
+                else:
+                    redis_client = redis.from_url(address, decode_responses=True)
                 
                 candidates = await redis_client.smembers("tdx:verified_ips")
                 if not candidates:

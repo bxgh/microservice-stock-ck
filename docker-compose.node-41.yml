@@ -24,14 +24,20 @@ services:
     environment:
       - PORT=8003
       - HOST=0.0.0.0
-      - TDX_POOL_SIZE=5
-      - TDX_AUTO_DISCOVER=true
-      # - TDX_HOSTS=119.97.185.59:7709
-      # - TDX_BIND_IP=192.168.151.47
+      - TDX_POOL_SIZE=10
+      - MOOTDX_CONCURRENCY=10
+      - MOOTDX_FETCH_COUNT=5
+      # - SOCKS_PROXY=127.0.0.1:8118
+      
+      # [Standardized Direct Connection Config]
+      - TDX_AUTO_DISCOVER=false
+      - TDX_BIND_IP=192.168.151.41
+      - TDX_HOSTS=59.36.5.11:7709,119.147.212.81:7709,124.71.187.122:7709,218.60.29.136:7709,175.6.5.153:7709,119.29.51.30:7709,175.6.5.154:7709,175.6.5.155:7709,139.9.51.18:7709
       - LOG_LEVEL=INFO
       - REDIS_HOST=127.0.0.1
-      - REDIS_PORT=6379
-      - REDIS_PASSWORD=redis123
+      - REDIS_PORT=16379
+      - REDIS_PASSWORD=
+      - REDIS_CLUSTER=true
       - PYTHONUNBUFFERED=1
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health')"]
@@ -42,6 +48,7 @@ services:
       - ./logs/mootdx-api:/app/logs
       - mootdx_config:/root/.mootdx
       - ./services/mootdx-api/src:/app/src  # 开发模式挂载源码
+      - ./libs/gsd-shared:/app/libs/gsd-shared:ro # 挂载共享库
 
   mootdx-source:
     build:
@@ -282,6 +289,7 @@ services:
       # 网络代理配置
       - HTTP_PROXY=http://192.168.151.18:3128
       - HTTPS_PROXY=http://192.168.151.18:3128
+      - REDIS_CLUSTER=true
       - NO_PROXY=localhost,127.0.0.1,192.168.151.41
       - ENVIRONMENT=development
       # MySQL 配置
@@ -298,15 +306,36 @@ services:
       - CLICKHOUSE_DB=${CLICKHOUSE_DB:-stock_data}
       # Redis 配置
       - REDIS_HOST=${REDIS_HOST:-127.0.0.1}
-      - REDIS_PORT=${REDIS_PORT:-6379}
-      - REDIS_PASSWORD=${REDIS_PASSWORD:-redis123}
-      - REDIS_DB=${REDIS_DB:-1}
+      - REDIS_PORT=${REDIS_PORT:-16379}
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_CLUSTER=${REDIS_CLUSTER:-true}
+      - REDIS_DB=${REDIS_DB:-0}
     volumes:
       - ./libs/gsd-shared:/app/libs/gsd-shared:ro
       - ./logs/gsd-worker:/app/logs
       - ./services/gsd-worker/src:/app/src
-      - ./services/gsd-worker/config:/app/config
       - ./data/gsd-worker:/app/data
+
+  gsd-worker-consumer:
+    image: gsd-worker:latest
+    network_mode: host
+    environment:
+      - PYTHONPATH=/app:/app/libs/gsd-shared
+      - CLICKHOUSE_HOST=127.0.0.1
+      - REDIS_HOST=127.0.0.1
+      - REDIS_PORT=16379
+      - REDIS_CLUSTER=true
+      - REDIS_DB=0
+      - CLICKHOUSE_USER=${CLICKHOUSE_USER:-admin}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-admin123}
+      - CLICKHOUSE_DB=${CLICKHOUSE_DB:-stock_data}
+    volumes:
+      - ./libs/gsd-shared:/app/libs/gsd-shared:ro
+      - ./logs/gsd-worker:/app/logs
+      - ./services/gsd-worker/src:/app/src
+    entrypoint: ["python3", "src/jobs/run_stream_tick.py"]
+    command: ["consumer"]
+    restart: always
 
 volumes:
   redis_data:
