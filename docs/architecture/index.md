@@ -59,6 +59,7 @@ graph TD
 | [server-hardware.md](infrastructure/SERVER_HARDWARE_ARCHITECTURE.md) | 服务器硬件架构 | ✅ v3.0 |
 | [server-111-network.md](infrastructure/SERVER_111_NETWORK_CONFIG.md) | Server 111 三网卡配置详解 | ✅ v3.1 |
 | [verified-tdx-hosts.md](infrastructure/VERIFIED_TDX_HOSTS_20260111.md) | 已验证的 TDX 节点列表 | ✅ v3.1 |
+| [tdx-docker-config.md](data_acquisition/TDX_POOL_DOCKER_CONFIG.md) | Mootdx 容器部署指南 | ✅ v3.1 |
 
 ### 数据采集 (`data_acquisition/`)
 
