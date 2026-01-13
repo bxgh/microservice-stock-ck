@@ -15,7 +15,7 @@ echo "🚀 Starting Deployment on $(hostname -I | awk '{print $1}')..."
 
 # 1. Pull Latest Code
 echo "📥 Pulling latest code..."
-git pull origin feature/quant-strategy
+git pull origin feature/redis-stream-refactor
 
 # 2. Update Environment Variables
 echo "⚙️  Updating .env configuration..."
