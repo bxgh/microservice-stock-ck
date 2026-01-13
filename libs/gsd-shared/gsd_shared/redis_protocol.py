@@ -98,5 +98,53 @@ class RedisStreamClient:
         """Push result to stream"""
         return await self.redis.xadd(STREAM_KEY_DATA, result.to_redis_dict())
 
+    async def consume_jobs(self, stream_key: str, group_name: str, consumer_name: str, count: int = 1, block_ms: int = 5000) -> List[Tuple[str, Dict[str, Any]]]:
+        """
+        Consume jobs from a stream using a consumer group.
+        Returns a list of (msg_id, data_dict).
+        """
+        try:
+            # > implies "new messages" for this consumer in the group
+            streams = {stream_key: ">"}
+            response = await self.redis.xreadgroup(group_name, consumer_name, streams, count=count, block=block_ms)
+            
+            # Response format: [[stream_name, [[msg_id, {data}], ...]]]
+            parsed_messages = []
+            if response:
+                for stream_name, messages in response:
+                    for msg_id, data in messages:
+                        parsed_messages.append((msg_id, data))
+            return parsed_messages
+        except Exception as e:
+            logger.error(f"Error consuming stream {stream_key}: {e}")
+            return []
+
+    async def claim_pending_jobs(self, stream_key: str, group_name: str, consumer_name: str, min_idle_time_ms: int = 60000, count: int = 10) -> List[Tuple[str, Dict[str, Any]]]:
+        """
+        Claim pending jobs from other consumers that have been idle for too long.
+        """
+        try:
+            # XAUTOCLAIM key group consumer min-idle-time start [COUNT count] [JUSTID]
+            # Returns: [start_id, [[msg_id, {data}], ...]]
+            # We use '0-0' as start_id to scan from beginning of PEL
+            start_id = "0-0"
+            result = await self.redis.xautoclaim(stream_key, group_name, consumer_name, min_idle_time_ms, start_id, count=count)
+            
+            messages = result[1] # The list of messages
+            parsed_messages = []
+            if messages:
+                 for msg_id, data in messages:
+                    parsed_messages.append((msg_id, data))
+            return parsed_messages
+        except Exception as e:
+            logger.error(f"Error claiming pending jobs {stream_key}: {e}")
+            return []
+
+    async def ack_job(self, stream_key: str, group_name: str, *msg_ids: str) -> int:
+        """Acknowledge processed jobs"""
+        if not msg_ids:
+            return 0
+        return await self.redis.xack(stream_key, group_name, *msg_ids)
+
     async def aclose(self):
         await self.redis.close()

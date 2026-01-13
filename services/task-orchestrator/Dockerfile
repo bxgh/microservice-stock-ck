@@ -1,7 +1,7 @@
 FROM python:3.12-slim
 
 # 构建参数
-ARG ENABLE_PROXY=false
+ARG ENABLE_PROXY=true
 ARG PROXY_URL=http://192.168.151.18:3128
 
 # 设置工作目录
