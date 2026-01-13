@@ -16,6 +16,16 @@ from src.data_access.redis_pool import RedisPoolManager
 from mootdx.quotes import Quotes
 import json
 
+# --- Monkeypatch: Force mootdx to use pytdx for connection ---
+try:
+    import tdxpy.hq
+    import pytdx.hq
+    print("⚡ Monkeypatching: Overwriting tdxpy.hq.TdxHq_API with pytdx.hq.TdxHq_API")
+    tdxpy.hq.TdxHq_API = pytdx.hq.TdxHq_API
+except Exception as e:
+    print(f"Monkeypatch failed: {e}")
+# -------------------------------------------------------------
+
 class SnapshotRecorder:
     """
     快照录制器 (Refactored for Code Quality)
@@ -203,7 +213,7 @@ class SnapshotRecorder:
 
     async def _emit_tick_tasks(self, df):
         """
-        根据成交量变化触发分笔采集任务
+        根据成交量变化触发分笔采集任务 (Refactored to Redis Stream)
         """
         if df is None or df.empty or self.redis is None:
             return
@@ -215,46 +225,54 @@ class SnapshotRecorder:
             stock_codes = list(current_data.keys())
             
             # 批量获取 Redis 中的上次成交量
-            # 使用 Hash 存储每天的音量状态，Key 包含日期以防跨日冲突
             today_str = datetime.now().strftime('%Y%m%d')
             vol_cache_key = f"snapshot:vol:{today_str}"
             
             last_volumes = await self.redis.hmget(vol_cache_key, stock_codes)
             
-            tasks_to_push = []
+            # Redis Stream Key
+            STREAM_KEY_JOBS = "stream:tick:jobs"
+            
             updates_to_cache = {}
+            pushed_count = 0
+            
+            import uuid
             
             for i, code in enumerate(stock_codes):
                 current_vol = current_data[code]
                 last_vol = int(last_volumes[i]) if last_volumes[i] is not None else 0
                 
-                if current_vol > last_vol:
-                    # 成交量增加了，触发任务
-                    task = {
-                        "code": code,
-                        "last_vol": last_vol,
-                        "current_vol": current_vol,
-                        "timestamp": datetime.now().isoformat()
+                # 触发条件: 成交量增加 OR (首次出现且有量)
+                if current_vol > last_vol or (last_vol == 0 and current_vol > 0):
+                    # 构造 TickJob 消息 (符合 gsd_shared.redis_protocol.TickJob)
+                    # 使用 raw dict 避免依赖导入问题
+                    job_payload = {
+                        "job_id": str(uuid.uuid4()),
+                        "stock_code": code,
+                        "type": "intraday",  # JobType.INTRADAY
+                        "date": today_str,
+                        "market": "", # Optional
+                        "last_vol": str(last_vol),
+                        "retry_count": "0"
                     }
-                    tasks_to_push.append(json.dumps(task))
+                    
+                    # 发布到 Redis Stream
+                    await self.redis.xadd(STREAM_KEY_JOBS, job_payload)
+                    
                     updates_to_cache[code] = current_vol
-                elif last_vol == 0 and current_vol > 0:
-                    # 首次看到该股票
-                    updates_to_cache[code] = current_vol
-
+                    pushed_count += 1
+                    
             # 批量更新 Redis 缓存
             if updates_to_cache:
                 await self.redis.hset(vol_cache_key, mapping=updates_to_cache)
-                # 设置过期时间（1天）
                 await self.redis.expire(vol_cache_key, 86400)
                 
-            # 批量推送任务到队列
-            if tasks_to_push:
-                await self.redis.rpush("queue:intraday_tick_tasks", *tasks_to_push)
-                self.logger.debug(f"📤 Pushed {len(tasks_to_push)} tick tasks to Redis")
+            if pushed_count > 0:
+                self.logger.debug(f"📤 Published {pushed_count} tick jobs to Stream")
 
         except Exception as e:
             self.logger.error(f"Error emitting tick tasks: {e}")
+
 
 def handle_signals(recorder):
     """设置信号处理"""

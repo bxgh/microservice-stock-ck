@@ -14,6 +14,7 @@ import os
 from typing import List, Dict, Any
 import pandas as pd
 from mootdx.quotes import Quotes
+from contextlib import asynccontextmanager
 
 from utils.field_mapper import standardize_mootdx_fields
 from core.tdx_pool import TDXClientPool
@@ -45,31 +46,20 @@ class MootdxHandler:
         self._lock = asyncio.Lock()
     
     
-    async def get_client(self) -> Quotes:
-        """获取连接池中的下一个客户端"""
-        return await self.pool.get_next()
-    
-    @property
-    def client(self) -> Quotes:
+    @asynccontextmanager
+    async def acquire_client(self):
         """
-        兼容旧接口：返回连接池中的下一个客户端
-        
-        Warning: 此属性是同步的，但内部调用异步方法。
-        仅用于向后兼容，不保证线程安全。
-        推荐使用 get_client() 方法。
+        获取一个独占的客户端连接 (Async Context Manager)
+        用法:
+            async with handler.acquire_client() as client:
+                client.quotes(...)
         """
-        # 为了向后兼容，使用 run_until_complete
-        # 注意：这不是最佳实践，仅用于兼容现有代码
+        client = await self.pool.acquire()
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # 如果事件循环正在运行，直接返回第一个客户端（不安全但简单）
-                return self.pool.clients[0] if self.pool.clients else None
-            else:
-                return loop.run_until_complete(self.pool.get_next())
-        except Exception:
-            # 降级处理：直接返回第一个客户端
-            return self.pool.clients[0] if self.pool.clients else None
+            yield client
+        finally:
+            await self.pool.release(client)
+
     
     async def initialize(self) -> None:
         """
@@ -112,24 +102,24 @@ class MootdxHandler:
             - bid1-5, ask1-5: 五档买卖
             - volume, amount: 成交量/额
         """
-        client = await self.get_client()
-        if not client:
-            logger.warning("Mootdx client not initialized")
-            return pd.DataFrame()
-        
         if not codes:
             return pd.DataFrame()
+            
+        async with self.acquire_client() as client:
+            if not client:
+                logger.warning("Mootdx client not initialized")
+                return pd.DataFrame()
         
-        loop = asyncio.get_event_loop()
-        try:
-            data = await loop.run_in_executor(
-                None,
-                lambda: client.quotes(symbol=list(codes))
-            )
-            return data if data is not None else pd.DataFrame()
-        except Exception as e:
-            logger.error(f"Mootdx get_quotes failed: {e}")
-            return pd.DataFrame()
+            loop = asyncio.get_event_loop()
+            try:
+                data = await loop.run_in_executor(
+                    None,
+                    lambda: client.quotes(symbol=list(codes))
+                )
+                return data if data is not None else pd.DataFrame()
+            except Exception as e:
+                logger.error(f"Mootdx get_quotes failed: {e}")
+                return pd.DataFrame()
     
     async def get_tick(
         self,
@@ -153,55 +143,55 @@ class MootdxHandler:
         Raises:
             ValueError: 未指定股票代码
         """
-        client = await self.get_client()
-        if not client:
-            logger.warning("Mootdx client not initialized")
-            return pd.DataFrame()
-        
         if not codes:
             raise ValueError("No code specified for TICK")
+            
+        async with self.acquire_client() as client:
+            if not client:
+                logger.warning("Mootdx client not initialized")
+                return pd.DataFrame()
         
-        # 提取参数
-        date = params.get("date")
-        start = int(params.get("start", 0))
-        offset = int(params.get("offset", 800))
-        
-        loop = asyncio.get_event_loop()
-        try:
-            if date is not None:
-                # 历史成交 (Plural: transactions)
-                data = await loop.run_in_executor(
-                    None,
-                    lambda: client.transactions(
-                        symbol=codes[0],
-                        date=date,
-                        start=start,
-                        offset=offset
+            # 提取参数
+            date = params.get("date")
+            start = int(params.get("start", 0))
+            offset = int(params.get("offset", 800))
+            
+            loop = asyncio.get_event_loop()
+            try:
+                if date is not None:
+                    # 历史成交 (Plural: transactions)
+                    data = await loop.run_in_executor(
+                        None,
+                        lambda: client.transactions(
+                            symbol=codes[0],
+                            date=date,
+                            start=start,
+                            offset=offset
+                        )
                     )
-                )
-            else:
-                # 当日实时成交 (Singular: transaction)
-                # Important: Remove 'sh'/'sz' prefix generally for transaction() as it expects raw code
-                symbol = codes[0].lower().replace('sh', '').replace('sz', '')
-                
-                data = await loop.run_in_executor(
-                    None,
-                    lambda: client.transaction(
-                        symbol=symbol,
-                        start=start,
-                        offset=offset
+                else:
+                    # 当日实时成交 (Singular: transaction)
+                    # Important: Remove 'sh'/'sz' prefix generally for transaction() as it expects raw code
+                    symbol = codes[0].lower().replace('sh', '').replace('sz', '')
+                    
+                    data = await loop.run_in_executor(
+                        None,
+                        lambda: client.transaction(
+                            symbol=symbol,
+                            start=start,
+                            offset=offset
+                        )
                     )
-                )
-                
-            # 集成标准化逻辑
-            if data is not None:
-                data = standardize_mootdx_fields(data, data_type='tick')
-                # 修复 NaN 导致 JSON 序列化失败的问题
-                data = data.where(pd.notnull(data), None)
-            return data if data is not None else pd.DataFrame()
-        except Exception as e:
-            logger.error(f"Mootdx get_tick failed: {e}")
-            return pd.DataFrame()
+                    
+                # 集成标准化逻辑
+                if data is not None:
+                    data = standardize_mootdx_fields(data, data_type='tick')
+                    # 修复 NaN 导致 JSON 序列化失败的问题
+                    data = data.where(pd.notnull(data), None)
+                return data if data is not None else pd.DataFrame()
+            except Exception as e:
+                logger.error(f"Mootdx get_tick failed: {e}")
+                return pd.DataFrame()
     
     async def get_history(
         self,
@@ -231,38 +221,38 @@ class MootdxHandler:
         Raises:
             ValueError: 未指定股票代码
         """
-        client = await self.get_client()
-        if not client:
-            logger.warning("Mootdx client not initialized")
-            return pd.DataFrame()
-        
         if not codes:
             raise ValueError("No code specified for HISTORY")
+            
+        async with self.acquire_client() as client:
+            if not client:
+                logger.warning("Mootdx client not initialized")
+                return pd.DataFrame()
         
-        # 频率映射: d/w/m -> mootdx frequency code
-        frequency = params.get("frequency", DEFAULT_FREQUENCY)
-        freq_map = {"d": 9, "w": 6, "m": 5}
-        mootdx_freq = freq_map.get(frequency, 9)
-        
-        # 数据范围
-        start = params.get("start", 0)
-        offset = min(params.get("offset", 500), 800)  # 最大800条
-        
-        loop = asyncio.get_event_loop()
-        try:
-            data = await loop.run_in_executor(
-                None,
-                lambda: client.bars(
-                    symbol=codes[0],
-                    frequency=mootdx_freq,
-                    start=start,
-                    offset=offset
+            # 频率映射: d/w/m -> mootdx frequency code
+            frequency = params.get("frequency", DEFAULT_FREQUENCY)
+            freq_map = {"d": 9, "w": 6, "m": 5}
+            mootdx_freq = freq_map.get(frequency, 9)
+            
+            # 数据范围
+            start = params.get("start", 0)
+            offset = min(params.get("offset", 500), 800)  # 最大800条
+            
+            loop = asyncio.get_event_loop()
+            try:
+                data = await loop.run_in_executor(
+                    None,
+                    lambda: client.bars(
+                        symbol=codes[0],
+                        frequency=mootdx_freq,
+                        start=start,
+                        offset=offset
+                    )
                 )
-            )
-            return data if data is not None else pd.DataFrame()
-        except Exception as e:
-            logger.error(f"Mootdx get_history failed: {e}")
-            return pd.DataFrame()
+                return data if data is not None else pd.DataFrame()
+            except Exception as e:
+                logger.error(f"Mootdx get_history failed: {e}")
+                return pd.DataFrame()
     
     async def get_stocks(
         self,
@@ -287,37 +277,37 @@ class MootdxHandler:
             - 返回约 48,000+ 只股票
             - 包含股票、ETF、债券等
         """
-        client = await self.get_client()
-        if not client:
-            logger.warning("Mootdx client not initialized")
-            return pd.DataFrame()
-        
         market = params.get("market")
         
-        loop = asyncio.get_event_loop()
-        try:
-            if market is not None:
-                # 单个市场
-                data = await loop.run_in_executor(
-                    None,
-                    lambda: client.stocks(market=market)
-                )
-            else:
-                # 全市场：合并上海+深圳
-                sh_data = await loop.run_in_executor(
-                    None,
-                    lambda: client.stocks(market=1)
-                )
-                sz_data = await loop.run_in_executor(
-                    None,
-                    lambda: client.stocks(market=0)
-                )
-                data = pd.concat([sh_data, sz_data], ignore_index=True)
-            
-            return data if data is not None else pd.DataFrame()
-        except Exception as e:
-            logger.error(f"Mootdx get_stocks failed: {e}")
-            return pd.DataFrame()
+        async with self.acquire_client() as client:
+            if not client:
+                logger.warning("Mootdx client not initialized")
+                return pd.DataFrame()
+        
+            loop = asyncio.get_event_loop()
+            try:
+                if market is not None:
+                    # 单个市场
+                    data = await loop.run_in_executor(
+                        None,
+                        lambda: client.stocks(market=market)
+                    )
+                else:
+                    # 全市场：合并上海+深圳
+                    sh_data = await loop.run_in_executor(
+                        None,
+                        lambda: client.stocks(market=1)
+                    )
+                    sz_data = await loop.run_in_executor(
+                        None,
+                        lambda: client.stocks(market=0)
+                    )
+                    data = pd.concat([sh_data, sz_data], ignore_index=True)
+                
+                return data if data is not None else pd.DataFrame()
+            except Exception as e:
+                logger.error(f"Mootdx get_stocks failed: {e}")
+                return pd.DataFrame()
     
     async def get_finance_info(
         self,
@@ -345,30 +335,30 @@ class MootdxHandler:
             - 数据来自通达信内置数据
             - 更新频率可能不如专业财务数据源
         """
-        client = await self.get_client()
-        if not client:
-            logger.warning("Mootdx client not initialized")
-            return pd.DataFrame()
-        
         if not codes:
             return pd.DataFrame()
-        
-        loop = asyncio.get_event_loop()
-        results = []
-        
-        try:
-            for code in codes:
-                data = await loop.run_in_executor(
-                    None,
-                    lambda c=code: client.finance(symbol=c)
-                )
-                if data is not None and not data.empty:
-                    results.append(data)
             
-            return pd.concat(results, ignore_index=True) if results else pd.DataFrame()
-        except Exception as e:
-            logger.error(f"Mootdx get_finance_info failed: {e}")
-            return pd.DataFrame()
+        async with self.acquire_client() as client:
+            if not client:
+                logger.warning("Mootdx client not initialized")
+                return pd.DataFrame()
+        
+            loop = asyncio.get_event_loop()
+            results = []
+            
+            try:
+                for code in codes:
+                    data = await loop.run_in_executor(
+                        None,
+                        lambda c=code: client.finance(symbol=c)
+                    )
+                    if data is not None and not data.empty:
+                        results.append(data)
+                
+                return pd.concat(results, ignore_index=True) if results else pd.DataFrame()
+            except Exception as e:
+                logger.error(f"Mootdx get_finance_info failed: {e}")
+                return pd.DataFrame()
     
     async def get_xdxr(
         self,
@@ -401,24 +391,24 @@ class MootdxHandler:
         Raises:
             ValueError: 未指定股票代码
         """
-        client = await self.get_client()
-        if not client:
-            logger.warning("Mootdx client not initialized")
-            return pd.DataFrame()
-        
         if not codes:
             raise ValueError("No code specified for XDXR")
+            
+        async with self.acquire_client() as client:
+            if not client:
+                logger.warning("Mootdx client not initialized")
+                return pd.DataFrame()
         
-        loop = asyncio.get_event_loop()
-        try:
-            data = await loop.run_in_executor(
-                None,
-                lambda: client.xdxr(symbol=codes[0])
-            )
-            return data if data is not None else pd.DataFrame()
-        except Exception as e:
-            logger.error(f"Mootdx get_xdxr failed: {e}")
-            return pd.DataFrame()
+            loop = asyncio.get_event_loop()
+            try:
+                data = await loop.run_in_executor(
+                    None,
+                    lambda: client.xdxr(symbol=codes[0])
+                )
+                return data if data is not None else pd.DataFrame()
+            except Exception as e:
+                logger.error(f"Mootdx get_xdxr failed: {e}")
+                return pd.DataFrame()
     
     async def get_index_bars(
         self,
@@ -449,36 +439,36 @@ class MootdxHandler:
         Raises:
             ValueError: 未指定指数代码
         """
-        client = await self.get_client()
-        if not client:
-            logger.warning("Mootdx client not initialized")
-            return pd.DataFrame()
-        
         if not codes:
             raise ValueError("No code specified for INDEX_BARS")
+            
+        async with self.acquire_client() as client:
+            if not client:
+                logger.warning("Mootdx client not initialized")
+                return pd.DataFrame()
         
-        # 频率映射: d/w/m -> mootdx frequency code
-        frequency = params.get("frequency", DEFAULT_FREQUENCY)
-        freq_map = {"d": 9, "w": 6, "m": 5}
-        mootdx_freq = freq_map.get(frequency, 9)
-        
-        # 数据范围
-        start = params.get("start", 0)
-        offset = min(params.get("offset", 500), 800)  # 最大800条
-        
-        loop = asyncio.get_event_loop()
-        try:
-            data = await loop.run_in_executor(
-                None,
-                lambda: client.index_bars(
-                    symbol=codes[0],
-                    frequency=mootdx_freq,
-                    start=start,
-                    offset=offset
+            # 频率映射: d/w/m -> mootdx frequency code
+            frequency = params.get("frequency", DEFAULT_FREQUENCY)
+            freq_map = {"d": 9, "w": 6, "m": 5}
+            mootdx_freq = freq_map.get(frequency, 9)
+            
+            # 数据范围
+            start = params.get("start", 0)
+            offset = min(params.get("offset", 500), 800)  # 最大800条
+            
+            loop = asyncio.get_event_loop()
+            try:
+                data = await loop.run_in_executor(
+                    None,
+                    lambda: client.index_bars(
+                        symbol=codes[0],
+                        frequency=mootdx_freq,
+                        start=start,
+                        offset=offset
+                    )
                 )
-            )
-            return data if data is not None else pd.DataFrame()
-        except Exception as e:
-            logger.error(f"Mootdx get_index_bars failed: {e}")
-            return pd.DataFrame()
+                return data if data is not None else pd.DataFrame()
+            except Exception as e:
+                logger.error(f"Mootdx get_index_bars failed: {e}")
+                return pd.DataFrame()
 

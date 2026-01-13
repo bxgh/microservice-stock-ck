@@ -29,7 +29,6 @@ logger = logging.getLogger("tdx-scanner")
 PRIORITY_NETWORKS = [
     ("124.71.187", 7709), 
     ("119.147.212", 7709),
-    ("59.36.5", 7709),
     ("139.9.51", 7709)
 ]
 

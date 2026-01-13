@@ -95,3 +95,20 @@ services:
     ```bash
     docker exec microservice-stock-mootdx-api python /app/diagnostics/verify_tdx_20260112.py
     ```
+
+## [Update 2026-01-13] Thread-Safe Queue Pool
+
+### Motivation
+The initial Round-Robin implementation was **not thread-safe**. Sharing `pytdx` client instances across concurrent asyncio tasks led to socket-level data corruption and connection resets.
+
+### New Architecture
+- **Structure**: `asyncio.Queue` (FIFO).
+- **Size**: Determined by `TDX_POOL_SIZE` (default 50).
+- **Mechanism**:
+    - **Acquire**: `client = await pool.acquire()` (pops from queue, waits if empty).
+    - **Release**: `await pool.release(client)` (pushes back to queue).
+- **Guarantee**: Each `pytdx` connection is used by exactly **one** task at a time.
+
+### Configuration
+- `TDX_POOL_SIZE`: 50 (Aligned with `MOOTDX_CONCURRENCY=50`).
+- `MOOTDX_CONCURRENCY`: 50 (Worker concurrency matches pool size).

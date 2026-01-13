@@ -10,6 +10,7 @@ from gsd_shared.redis_protocol import (
     STREAM_KEY_JOBS, STREAM_KEY_DATA, GROUP_MOOTDX_WORKERS, CONSUMER_PREFIX
 )
 from core.search_strategy import MatrixSearchStrategy
+from core.realtime_strategy import RealtimeDeltaStrategy
 
 logger = logging.getLogger("stream-worker")
 
@@ -23,7 +24,8 @@ class RedisStreamWorker:
             tdx_handler: MootdxHandler 实例，用于获取 TDX 连接池
         """
         self.tdx_handler = tdx_handler
-        self.strategy = MatrixSearchStrategy()
+        self.matrix_strategy = MatrixSearchStrategy()
+        self.realtime_strategy = RealtimeDeltaStrategy()
         
         # Redis Config
         redis_host = os.getenv("REDIS_HOST", "127.0.0.1")
@@ -132,19 +134,23 @@ class RedisStreamWorker:
                 row_count = 0
                 
                 try:
-                    # 借用连接
-                    client = await self.tdx_handler.pool.get_next()
-                    
-                    # 执行全量搜索
-                    records, has_0925 = await self.strategy.execute_post_market(client, job.stock_code, job.date)
+                    # 借用连接 (使用 acquire_client 以利用负载均衡)
+                    async with self.tdx_handler.acquire_client() as client:
+                        # 策略分发
+                        if job.type == "intraday":
+                             # 增量更新策略
+                             records, has_0925 = await self.realtime_strategy.execute_intraday(client, job.stock_code, job.date)
+                        else:
+                             # 全量矩阵搜索策略 (Post-market)
+                             records, has_0925 = await self.matrix_strategy.execute_post_market(client, job.stock_code, job.date)
                     
                     if records and len(records) > 0:
                         data_blob = json.dumps(records)
                         row_count = len(records)
                         result_status = JobStatus.SUCCESS
                         
-                        if not has_0925:
-                             # 虽然有数据，但不包含 09:25，标记为 Partial
+                        if job.type != "intraday" and not has_0925:
+                             # 仅对 Post-Market 任务标记 Partial (Intraday 不强求 09:25)
                              result_status = JobStatus.PARTIAL
                              err_msg = "Missing 09:25 data"
                     else:
@@ -173,8 +179,6 @@ class RedisStreamWorker:
                 # 4. 确认消息 (ACK)
                 await self.redis_client.redis.xack(STREAM_KEY_JOBS, GROUP_MOOTDX_WORKERS, msg_id)
                 
-                log_icon = "✅" if result_status == JobStatus.SUCCESS else "⚠️" if result_status == JobStatus.PARTIAL else "❌"
-                logger.info(f"{log_icon} Job {job.stock_code} Done: {result_status} ({row_count} rows)")
-                
             except Exception as e:
                 logger.error(f"Process message crash: {e}")
+
