@@ -148,6 +148,10 @@ cd /home/bxgh/microservice-stock
 docker-compose -f docker-compose.node-58.yml up -d mootdx-api
 docker-compose -f docker-compose.node-58.yml up -d task-orchestrator
 
+> [!TIP]
+> **Server 41 本地连接提示**:
+> 在 Server 41 节点上，建议 `.env` 中的 `REDIS_HOST` 设置为 `127.0.0.1`。这是因为宿主机连接自身的物理 IP 时（如 192.168.151.41）可能会由于 Docker 默认的网桥过滤或路由策略导致超时。使用 `127.0.0.1` 可确保通过回环接口直接访问，性能更优且更稳定。
+
 # 检查服务状态
 docker-compose -f docker-compose.node-58.yml ps
 docker logs task-orchestrator --tail 50
