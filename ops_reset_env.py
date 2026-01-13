@@ -7,8 +7,9 @@ from clickhouse_driver import Client
 
 # Config
 REDIS_HOST = os.getenv("REDIS_HOST", "127.0.0.1")
-REDIS_PORT = int(os.getenv("REDIS_PORT", 16379))
-REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "")
+REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "redis123")
+REDIS_CLUSTER = os.getenv("REDIS_CLUSTER", "false").lower() == "true"
 
 CLICKHOUSE_HOST = os.getenv("CLICKHOUSE_HOST", "127.0.0.1")
 CLICKHOUSE_PORT = int(os.getenv("CLICKHOUSE_PORT", 9000))
@@ -17,8 +18,13 @@ CLICKHOUSE_PASSWORD = os.getenv("CLICKHOUSE_PASSWORD", "")
 CLICKHOUSE_DB = os.getenv("CLICKHOUSE_DB", "stock_data")
 
 def get_redis_client():
+    from redis import Redis
+    from redis.cluster import RedisCluster
     auth_kwargs = {"password": REDIS_PASSWORD} if REDIS_PASSWORD else {}
-    return RedisCluster(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True, **auth_kwargs)
+    if REDIS_CLUSTER:
+        return RedisCluster(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True, **auth_kwargs)
+    else:
+        return Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True, **auth_kwargs)
 
 def get_clickhouse_client():
     return Client(host=CLICKHOUSE_HOST, port=CLICKHOUSE_PORT, 

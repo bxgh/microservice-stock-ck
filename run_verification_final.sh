@@ -35,9 +35,9 @@ echo "--- Monitoring Processing Progress (Ctrl+C to stop) ---"
 
 while true; do
     STATS=$(docker exec microservice-stock-mootdx-api python3 -c "
-from redis.cluster import RedisCluster
+from redis import Redis
 try:
-    r = RedisCluster(host='127.0.0.1', port=16379, decode_responses=True)
+    r = Redis(host='127.0.0.1', port=6379, password='redis123', decode_responses=True)
     pending = r.xpending('stream:tick:jobs', 'group:mootdx:workers')['pending']
     results = r.xlen('stream:tick:data')
     print(f'{pending}|{results}')

@@ -1,0 +1,50 @@
+# A股全市场盘后补采与归档方案交付说明
+
+## 1. 实现概述
+完成了 A 股全市场 (~5,300 只股票) 的盘后自动化分笔补采及数据归档系统。该系统通过分布式调度确保采集效率，并实现了完善的数据生命周期管理。
+
+## 2. 核心功能
+### 2.1 分布式调度 (3 节点)
+- **触发时间**: 每日盘后 **15:35**。
+- **执行引擎**: 每个节点 (41/58/111) 部署独立的 `task-orchestrator`。
+- **任务分片**: 
+  - **Server 41**: 负责 Shard 0 (~1,800 股)
+  - **Server 58**: 负责 Shard 1 (~1,800 股)
+  - **Server 111**: 负责 Shard 2 (~1,700 股)
+
+### 2.2 数据存储流转
+- **当日补采**: 数据首先进入 `tick_data_intraday` (分布式表)，用于当日高频分析。
+- **自动归档**: 次日 **09:00**，由 Server 41 触发归档任务：
+  1. 将 `tick_data_intraday` 数据平移至历史主表 `tick_data` (映射至 `tick_data_local`)。
+  2. 清空 `tick_data_intraday` 为当日交易做准备。
+- **历史回溯**: 脚本自动识别日期，非当日补采数据将**直接写入** `tick_data` 历史表。
+
+### 2.3 状态与质量监控
+- **Redis 状态 Hash**: `tick_sync:status:YYYYMMDD`
+- **详细记录**: 每只股票记录 `状态|记录数|数据开始时间|数据结束时间|同步时间|错误信息`。
+- **完整性验证**: 通过 `data_start` (应为 09:25) 和 `data_end` (应为 15:00) 即可快速验证数据是否抓取完整。
+
+## 3. 文件变更汇总
+- **逻辑核心**: [tick_sync_service.py](file:///home/bxgh/microservice-stock/services/gsd-worker/src/core/tick_sync_service.py) (状态追踪、多表路由、时间范围记录)
+- **任务定义**: 
+  - [tasks.yml (Node 41)](file:///home/bxgh/microservice-stock/services/task-orchestrator/config/tasks.yml)
+  - [tasks_58.yml](file:///home/bxgh/microservice-stock/services/task-orchestrator/config/tasks_58.yml)
+  - [tasks_111.yml](file:///home/bxgh/microservice-stock/services/task-orchestrator/config/tasks_111.yml)
+- **环境部署**: [docker-compose.node-58.yml](file:///home/bxgh/microservice-stock/docker-compose.node-58.yml), [docker-compose.node-111.yml](file:///home/bxgh/microservice-stock/docker-compose.node-111.yml)
+
+## 4. 运维指南
+### 4.1 手动启动补采
+若需手动触发今日分片补采（以 Node 58 为例）：
+```bash
+docker exec -it task-orchestrator python3 src/jobs/sync_tick.py --scope all --shard-index 1
+```
+
+### 4.2 查看进度
+```bash
+redis-cli HGETALL tick_sync:status:20260113
+```
+
+## 5. 项目状态
+- **开发完成**: 100%
+- **配置下发**: 已就绪
+- **预期首运行**: 次日实时验证。

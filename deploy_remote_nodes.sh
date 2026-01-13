@@ -19,11 +19,12 @@ git pull origin feature/quant-strategy
 
 # 2. Update Environment Variables
 echo "⚙️  Updating .env configuration..."
-if ! grep -q "REDIS_NODES" .env; then
-    echo "REDIS_NODES=192.168.151.41:16379,192.168.151.58:16379,192.168.151.111:16379" >> .env
-    echo "REDIS_HOST=$(hostname -I | awk '{print $1}')" >> .env
-    echo "REDIS_PORT=16379" >> .env
-    echo "✅ Added Redis Cluster config to .env"
+if ! grep -q "REDIS_HOST" .env; then
+    echo "REDIS_HOST=192.168.151.41" >> .env
+    echo "REDIS_PORT=6379" >> .env
+    echo "REDIS_PASSWORD=redis123" >> .env
+    echo "REDIS_CLUSTER=false" >> .env
+    echo "✅ Added Redis Standalone config to .env"
 else
     echo "ℹ️  Redis config already exists in .env"
 fi

@@ -30,11 +30,11 @@ services:
       - TDX_HOSTS=59.36.5.11:7709,119.147.212.81:7709,124.71.187.122:7709,218.60.29.136:7709,175.6.5.153:7709,119.29.51.30:7709,175.6.5.154:7709,175.6.5.155:7709,139.9.51.18:7709
       - LOG_LEVEL=INFO
       
-      # [Redis Cluster Worker Config]
+      # [Redis Standalone Config]
       - REDIS_HOST=192.168.151.41
-      - REDIS_PORT=16379
-      - REDIS_PASSWORD=
-      - REDIS_CLUSTER=true
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=redis123
+      - REDIS_CLUSTER=false
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health')"]
       interval: 30s
@@ -73,6 +73,39 @@ services:
       - ./services/mootdx-source/src:/app/src
 
   # ---------------------------------------------------------------------------
+  # 任务调度 (111 节点)
+  # ---------------------------------------------------------------------------
+  
+  task-orchestrator:
+    build:
+      context: .
+      dockerfile: services/task-orchestrator/Dockerfile
+    image: task-orchestrator:latest
+    container_name: task-orchestrator
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      - ORCHESTRATOR_DEBUG=false
+      - ORCHESTRATOR_DOCKER_HOST=unix:///var/run/docker.sock
+      - ORCHESTRATOR_WORKER_IMAGE=gsd-worker:latest
+      - ORCHESTRATOR_WORKER_NETWORK=host
+      - ORCHESTRATOR_REDIS_HOST=192.168.151.41
+      - ORCHESTRATOR_REDIS_PORT=6379
+      - ORCHESTRATOR_REDIS_PASSWORD=redis123
+      - WORKER_CLICKHOUSE_HOST=127.0.0.1
+      - WORKER_CLICKHOUSE_PORT=9000
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./libs/gsd-shared:/app/libs/gsd-shared:ro
+      - ./logs/task-orchestrator:/app/logs
+      - ./services/task-orchestrator/config/tasks_111.yml:/app/config/tasks.yml:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:18000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ---------------------------------------------------------------------------
   # 分片采集 Worker (按需运行)
   # ---------------------------------------------------------------------------
   # docker-compose -f docker-compose.node-111.yml run --rm gsd-worker python -m jobs.sync_tick
@@ -106,9 +139,10 @@ services:
       - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-admin123}
       - CLICKHOUSE_DB=${CLICKHOUSE_DB:-stock_data}
       # Redis 配置
-      - REDIS_HOST=${REDIS_HOST:-127.0.0.1}
-      - REDIS_PORT=${REDIS_PORT:-6379}
-      - REDIS_PASSWORD=${REDIS_PASSWORD:-redis123}
+      - REDIS_HOST=192.168.151.41
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=redis123
+      - REDIS_CLUSTER=false
       - REDIS_DB=${REDIS_DB:-1}
     volumes:
       - ./libs/gsd-shared:/app/libs/gsd-shared:ro

@@ -10,14 +10,21 @@ import logging
 import argparse
 from datetime import datetime
 import xxhash
+import pytz
 from core.tick_sync_service import TickSyncService
 from core.task_logger import TaskLogger
+
+# 上海时区
+CST = pytz.timezone('Asia/Shanghai')
 
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# 常量定义
+CONSUMER_MAX_IDLE_CYCLES = 10  # 队列最大轮询空闲次数 (5秒)
 
 
 async def main(
@@ -34,7 +41,10 @@ async def main(
     分笔数据同步主函数
     """
     shard_info = f", 分片={shard_index}/{shard_total}" if shard_index is not None else ""
-    logger.info(f"启动分笔数据同步任务 (模式={mode}, 日期={date or '今日'}, 范围={scope}{shard_info}, 并发={concurrency})")
+    today_str = datetime.now(CST).strftime("%Y%m%d")
+    target_date = date if date else today_str
+    
+    logger.info(f"启动分笔数据同步任务 (模式={mode}, 日期={target_date}, 范围={scope}{shard_info}, 并发={concurrency})")
     
     service = TickSyncService()
     await service.initialize()
@@ -87,9 +97,6 @@ async def main(
                 
                 logger.info("开始监听 Redis 任务队列...")
                 
-                no_task_counter = 0
-                max_idle_cycles = 10 # 20秒空闲退出
-                
                 # 定义消费者 worker - Producer-Consumer 队列模式
                 queue = asyncio.Queue(maxsize=concurrency * 2)
                 
@@ -99,7 +106,7 @@ async def main(
                         code = await queue.get()
                         async with semaphore:
                             try:
-                                res = await service.sync_stock(code, date)
+                                res = await service.sync_stock(code, target_date)
                                 if res > 0: processed_count += 1
                                 else: failed_count += 1
                                 await service.ack_task_in_redis(code)
@@ -118,6 +125,8 @@ async def main(
                 recovery_mode = bool(recovered_tasks)
                 
                 logger.info(f"🔄 准备恢复 {len(recovered_tasks)} 个未完成任务")
+                
+                no_task_counter = 0
                 
                 # Feeder loop
                 while True:
@@ -138,7 +147,7 @@ async def main(
                         no_task_counter = 0
                     else:
                         no_task_counter += 1
-                        if no_task_counter > (max_idle_cycles * 5) and queue.empty(): # 10s idle
+                        if no_task_counter > CONSUMER_MAX_IDLE_CYCLES and queue.empty(): # 5s idle
                              break
                         await asyncio.sleep(0.5)
                 
@@ -152,7 +161,7 @@ async def main(
             # 原始模式: 直接并发列表
             results = await service.sync_stocks(
                 stock_codes=stock_codes,
-                trade_date=date,
+                trade_date=target_date,
                 concurrency=concurrency
             )
         

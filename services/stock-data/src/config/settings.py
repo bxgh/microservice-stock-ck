@@ -64,7 +64,7 @@ class Settings(BaseSettings):
         # To make the redis_url configurable and use the new default,
         # we'll define redis_port and construct redis_url from it.
         # This ensures the file remains syntactically correct and achieves the goal.
-        redis_port: int = int(os.getenv("REDIS_PORT", 16379))
+        redis_port: int = int(os.getenv("REDIS_PORT", 6379))
 
     # Re-define redis_url to use the configurable port
     redis_url: str = f"redis://localhost:{Config.redis_port}"

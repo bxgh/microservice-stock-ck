@@ -10,9 +10,10 @@ import aiohttp
 import asynch
 import os
 import logging
-from datetime import datetime, timedelta
+import json
+from datetime import datetime
 from pathlib import Path
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Dict, Any, Tuple, Union
 import yaml
 import pytz
 import redis.asyncio as redis
@@ -56,18 +57,26 @@ class TickSyncService:
         (10000, 3000, "极限区域2"),
     ]
     
-    # 目标时间：集合竞价
+    # 常量定义
     TARGET_TIME = "09:25"
+    REDIS_STATUS_EXPIRE_SECONDS = 86400 * 7  # 7天
+    DEFAULT_MIN_PACING_INTERVAL = 0.3      # 最小请求间隔
     
     def __init__(self):
-        self.clickhouse_pool = None
+        self.clickhouse_pool: Optional[asynch.Pool] = None
         self.http_session: Optional[aiohttp.ClientSession] = None
-        self.mootdx_api_url = os.getenv("MOOTDX_API_URL", "http://mootdx-api:8000")
-        self.redis_cluster: Optional[RedisCluster] = None
-        self.redis_nodes = os.getenv(
+        self.mootdx_api_url: str = os.getenv("MOOTDX_API_URL", "http://mootdx-api:8000")
+        
+        self.redis_client: Optional[redis.Redis] = None  # 支持单机和集群
+        self.redis_mode_is_cluster: bool = os.getenv("REDIS_CLUSTER", "false").lower() == "true"
+        self.redis_nodes: str = os.getenv(
             "REDIS_NODES", 
             "192.168.151.41:6379,192.168.151.58:6379,192.168.151.111:6379"
         )
+        self.redis_host: str = os.getenv("REDIS_HOST", "127.0.0.1")
+        self.redis_port: int = int(os.getenv("REDIS_PORT", "6379"))
+        self.redis_password: str = os.getenv("REDIS_PASSWORD", "redis123")
+        
         self._lock = asyncio.Lock()
     
     async def initialize(self) -> None:
@@ -92,26 +101,38 @@ class TickSyncService:
                 self.http_session = aiohttp.ClientSession(timeout=timeout)
                 logger.info(f"✓ HTTP 会话初始化完成: {self.mootdx_api_url}")
             
-            # Redis Cluster 连接
-            if self.redis_cluster is None:
+            # Redis 连接 (支持单机和集群)
+            if self.redis_client is None:
                 try:
-                    nodes = []
-                    for node_str in self.redis_nodes.split(","):
-                        host, port = node_str.split(":")
-                        nodes.append(ClusterNode(host, int(port)))
+                    if self.redis_mode_is_cluster:
+                        nodes = []
+                        for node_str in self.redis_nodes.split(","):
+                            host, port = node_str.split(":")
+                            nodes.append(ClusterNode(host, int(port)))
+                        
+                        self.redis_client = RedisCluster(
+                            startup_nodes=nodes,
+                            decode_responses=True,
+                            socket_timeout=5,
+                            cluster_error_retry_attempts=3,
+                            password=self.redis_password
+                        )
+                        logger.info(f"✓ Redis Cluster 连接初始化完成: {len(nodes)} 个起始节点")
+                    else:
+                        self.redis_client = redis.Redis(
+                            host=self.redis_host,
+                            port=self.redis_port,
+                            password=self.redis_password,
+                            decode_responses=True,
+                            socket_timeout=5
+                        )
+                        logger.info(f"✓ Redis Standalone 连接初始化完成: {self.redis_host}:{self.redis_port}")
                     
-                    self.redis_cluster = RedisCluster(
-                        startup_nodes=nodes,
-                        decode_responses=True,
-                        socket_timeout=5,
-                        cluster_error_retry_attempts=3
-                    )
                     # 验证连接
-                    await self.redis_cluster.ping()
-                    logger.info(f"✓ Redis Cluster 连接初始化完成: {len(nodes)} 个起始节点")
+                    await self.redis_client.ping()
                 except Exception as e:
-                    logger.warning(f"⚠️ Redis Cluster 初始化失败 (任务订阅可能不可用): {e}")
-                    self.redis_cluster = None
+                    logger.warning(f"⚠️ Redis 初始化失败 (任务订阅/状态持续可能不可用): {e}")
+                    self.redis_client = None
     
     async def close(self) -> None:
         """关闭连接池和会话"""
@@ -124,9 +145,9 @@ class TickSyncService:
                 await self.http_session.close()
                 await asyncio.sleep(0.25)  # 等待连接完全关闭
                 self.http_session = None
-            if self.redis_cluster:
-                await self.redis_cluster.aclose()
-                self.redis_cluster = None
+            if self.redis_client:
+                await self.redis_client.aclose()
+                self.redis_client = None
             logger.info("连接池和会话已关闭")
 
     async def get_all_stocks(self) -> List[str]:
@@ -183,9 +204,10 @@ class TickSyncService:
         key = f"metadata:stock_codes:shard:{shard_index}"
         
         # 1. 尝试 Redis 获取
-        if self.redis_cluster:
+        if self.redis_client:
             try:
-                codes = await self.redis_cluster.smembers(key)
+                # 获取集合成员
+                codes = await self.redis_client.smembers(key)
                 if codes:
                     # 清洗数据
                     clean_codes = []
@@ -205,7 +227,7 @@ class TickSyncService:
         logger.warning(f"⚠️ Redis 不可用或无数据，尝试读取本地缓存 (Shard {shard_index})...")
         return await self._load_local_cache(shard_index)
 
-    async def _save_local_cache(self, shard_index: int, codes: List[str]):
+    async def _save_local_cache(self, shard_index: int, codes: List[str]) -> None:
         """异步保存分片数据到本地磁盘"""
         if not codes: 
             return
@@ -226,7 +248,7 @@ class TickSyncService:
         except Exception as e:
             logger.warning(f"保存本地缓存失败: {e}")
 
-    def _write_json_cache(self, path: Path, data: List[str]):
+    def _write_json_cache(self, path: Path, data: List[str]) -> None:
         """同步写入文件 (运行在 executor 中)"""
         import json
         with open(path, "w") as f:
@@ -266,16 +288,16 @@ class TickSyncService:
         """
         [Producer] 将股票代码推入 Redis 任务队列
         """
-        if not self.redis_cluster:
-            raise RuntimeError("Redis Cluster 未初始化")
+        if not self.redis_client:
+            raise RuntimeError("Redis 客户端未初始化")
             
         try:
             # 清空旧队列
-            await self.redis_cluster.delete(queue_name)
+            await self.redis_client.delete(queue_name)
             
             # 批量推送
             if stock_codes:
-                await self.redis_cluster.lpush(queue_name, *stock_codes)
+                await self.redis_client.lpush(queue_name, *stock_codes)
                 logger.info(f"📤 已向 Redis 队列 {queue_name} 推送 {len(stock_codes)} 个任务")
                 return len(stock_codes)
             return 0
@@ -291,7 +313,7 @@ class TickSyncService:
         """
         [Consumer] 从 Redis 队列获取一个新任务
         """
-        if not self.redis_cluster:
+        if not self.redis_client:
             return None
             
         if node_id is None:
@@ -301,7 +323,7 @@ class TickSyncService:
         
         try:
             # 直接获取新任务
-            task = await self.redis_cluster.brpoplpush(queue_name, processing_queue, timeout=5)
+            task = await self.redis_client.brpoplpush(queue_name, processing_queue, timeout=5)
             return task
         except Exception as e:
             logger.error(f"❌ 获取 Redis 任务失败: {e}")
@@ -311,7 +333,7 @@ class TickSyncService:
         """
         [Consumer] 启动时恢复上次意外中断的任务
         """
-        if not self.redis_cluster:
+        if not self.redis_client:
             return []
             
         if node_id is None:
@@ -321,7 +343,7 @@ class TickSyncService:
         
         try:
             # 获取所有处理中任务
-            tasks = await self.redis_cluster.lrange(processing_queue, 0, -1)
+            tasks = await self.redis_client.lrange(processing_queue, 0, -1)
             if tasks:
                 logger.info(f"♻️ 发现 {len(tasks)} 个未完成任务，准备恢复")
             return tasks
@@ -332,12 +354,12 @@ class TickSyncService:
     async def ack_task_in_redis(
         self,
         stock_code: str,
-        node_id: str = None
+        node_id: Optional[str] = None
     ) -> bool:
         """
         [Consumer] 任务完成确认，从处理中队列移除
         """
-        if not self.redis_cluster:
+        if not self.redis_client:
             return False
             
         if node_id is None:
@@ -346,51 +368,14 @@ class TickSyncService:
         processing_queue = f"{{gsd:tick}}:processing:{node_id}"
         
         try:
-            await self.redis_cluster.lrem(processing_queue, 1, stock_code)
+            await self.redis_client.lrem(processing_queue, 1, stock_code)
             return True
         except Exception as e:
             logger.error(f"❌ 确认 Redis 任务失败 ({stock_code}): {e}")
             return False
-        """
-        从 mootdx-api 获取全市场股票代码 (A股)
-        
-        过滤规则: 60/68 (沪), 00/30 (深)
-        """
-        logger.info("正在获取全市场股票列表...")
-        all_codes = []
-        
-        try:
-            # 获取深圳市场 (0) 和 上海市场 (1)
-            for market in [0, 1]:
-                url = f"{self.mootdx_api_url}/api/v1/stocks"
-                params = {"market": market}
-                
-                async with self.http_session.get(url, params=params) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        if data:
-                            # 过滤 A 股代码
-                            # 60xxxx: 沪市主板
-                            # 68xxxx: 科创板
-                            # 00xxxx: 深市主板
-                            # 30xxxx: 创业板
-                            market_codes = [
-                                item['code'] for item in data 
-                                if item.get('code', '').startswith(('60', '68', '00', '30'))
-                            ]
-                            all_codes.extend(market_codes)
-                            logger.info(f"市场 {market} 获取到 {len(market_codes)} 只 A股股票")
-                    else:
-                        logger.error(f"获取市场 {market} 股票失败: {response.status}")
-                        
-            # 去重并排序
-            all_codes = sorted(list(set(all_codes)))
-            logger.info(f"全市场 A股总数: {len(all_codes)}")
-            return all_codes
-            
         except Exception as e:
-            logger.error(f"获取全市场股票失败: {e}")
-            return []
+            logger.error(f"❌ 确认 Redis 任务失败 ({stock_code}): {e}")
+            return False
     
     async def fetch_tick_data(
         self, 
@@ -402,21 +387,25 @@ class TickSyncService:
         完全复刻 "真正100%成功_修复版.py" 的逻辑
         """
         start_time = asyncio.get_running_loop().time()
-        # logger.debug(f"开始采集: {stock_code} ({trade_date})")
         
         all_frames = []
-        found_target = False
         
+        # 判断日期是否为今天
+        today_str = datetime.now(CST).strftime("%Y%m%d")
+        is_today = (trade_date == today_str)
+
         # 1. 执行验证搜索矩阵
         for i, (start, offset, description) in enumerate(self.SEARCH_MATRIX):
             try:
-                # 随机抖动，模拟人工或避免被WAF识别 (可选，参考 Reference)
-                # await asyncio.sleep(0.1) 
+                # 路由选择: 当日使用 /api/v1/tick/, 历史使用 /api/v1/tick/历史参数
+                if is_today:
+                    url = f"{self.mootdx_api_url}/api/v1/tick/{stock_code}"
+                    params = {"start": start, "offset": offset}
+                else:
+                    url = f"{self.mootdx_api_url}/api/v1/tick/{stock_code}"
+                    params = {"date": int(trade_date), "start": start, "offset": offset}
                 
-                url = f"{self.mootdx_api_url}/api/v1/tick/{stock_code}"
-                params = {"date": int(trade_date), "start": start, "offset": offset}
-                
-                async with self.http_session.get(url, params=params, timeout=10) as response:
+                async with self.http_session.get(url, params=params, timeout=12) as response:
                     if response.status != 200:
                         continue
                     
@@ -428,20 +417,14 @@ class TickSyncService:
                     times = [x.get('time', '') for x in data]
                     current_earliest = min(times)
                     
+                    all_frames.append(data)
+                    
                     # 关键逻辑: 检查是否找到目标时间 (09:25)
                     if current_earliest <= self.TARGET_TIME:
-                        found_target = True
-                        all_frames.append(data)
                         logger.debug(f"🎯 {stock_code}: 命中 {self.TARGET_TIME} @ {description}")
-                        
-                        # 智能停止: 找到目标后，确保至少有2个批次的数据 (参考 Reference line 117)
-                        # 这样通常能保证覆盖 09:25 ~ 10:xx 甚至更多
-                        # [Integrity Fix]: 为了保证全天数据完整 (09:25-15:00)，不进行早期中断，跑完矩阵
-                        # if len(all_frames) >= 2:
-                        #     break
-                    else:
-                        all_frames.append(data)
-                        
+                        # [Integrity Fix]: 为了保证全天数据完整 (09:25-15:00)，跑完矩阵或直到 09:25
+                        break
+
             except Exception as e:
                 logger.warning(f"{stock_code} 步骤 {description} 异常: {e}")
                 continue
@@ -462,7 +445,6 @@ class TickSyncService:
                 item.get('time'), 
                 item.get('price'), 
                 item.get('vol', item.get('volume'))
-                # Reference script uses time, price, vol for dedupe
             )
             if key not in seen:
                 seen.add(key)
@@ -471,12 +453,9 @@ class TickSyncService:
         # 4. 排序 (按时间升序)
         final_data.sort(key=lambda x: x.get('time', ''))
         
-        elapsed = asyncio.get_running_loop().time() - start_time
-        # logger.info(f"采集完成 {stock_code}: {len(final_data)} 条, 耗时 {elapsed:.2f}s")
-        
         return final_data
     
-    def _validate_data(self, stock_code: str, data: list, trade_date: str = None):
+    def _validate_data(self, stock_code: str, data: list, trade_date: Optional[str] = None) -> None:
         """
         [Reliability Phase 1 Extended] Smart Validation
         
@@ -539,6 +518,32 @@ class TickSyncService:
             logger.error(f"检查数据存在失败 {stock_code}: {e}")
             return False
 
+    async def _update_sync_status(
+        self, 
+        stock_code: str, 
+        trade_date: str, 
+        status: str, 
+        count: int = 0,
+        start_t: str = "",
+        end_t: str = "",
+        error: str = ""
+    ) -> None:
+        """更新 Redis 中的采集状态"""
+        if not self.redis_client:
+            return
+        
+        key = f"tick_sync:status:{trade_date}"
+        sync_time = datetime.now(CST).isoformat()
+        # 格式: {status}|{tick_count}|{data_start}|{data_end}|{sync_time}|{error}
+        value = f"{status}|{count}|{start_t}|{end_t}|{sync_time}|{error}"
+        
+        try:
+            await self.redis_client.hset(key, stock_code, value)
+            # 设置过期时间
+            await self.redis_client.expire(key, self.REDIS_STATUS_EXPIRE_SECONDS)
+        except Exception as e:
+            logger.warning(f"Failed to update sync status in Redis: {e}")
+
     async def sync_stock(
         self, 
         stock_code: str, 
@@ -546,87 +551,71 @@ class TickSyncService:
     ) -> int:
         """
         同步单只股票的分笔数据
-        
-        Returns:
-            写入记录数
         """
-        # 1. 检查是否已存在 (增量模式)
-        exists = await self.check_data_exists(stock_code, trade_date)
-        if exists:
-            logger.debug(f"⏩ {stock_code}: {trade_date} 数据已存在，跳过")
-            return -1  # 特殊标记，表示跳过
-
-        # 2. 核心策略: 采用"真正100%成功_修复版"的标准逻辑
-        # 不再进行缺口分析，而是直接执行全量覆盖搜索
-        tick_data = await self.fetch_tick_data(stock_code, trade_date)
+        # 0. 初始化状态为 processing
+        await self._update_sync_status(stock_code, trade_date, "processing")
         
-        if not tick_data:
-            logger.debug(f"{stock_code} 无分笔数据")
-            return 0
-            
-        # 完整性日志检查
-        times = [x.get('time', '') for x in tick_data]
-        if times:
-            min_t, max_t = min(times), max(times)
-            if min_t <= "09:25":
-                logger.info(f"✅ {stock_code}: 采集成功 ({min_t}-{max_t})")
-            else:
-                logger.warning(f"⚠️ {stock_code}: 采集完成但缺少竞价 ({min_t}-{max_t})")
+        today_str = datetime.now(CST).strftime("%Y%m%d")
+        target_table = "tick_data_intraday" if trade_date == today_str else "tick_data"
         
-        # 转换日期格式
-        trade_date_obj = datetime.strptime(trade_date, "%Y%m%d").date()
-        
-        # 准备插入数据 - 适配现有表结构
-        # 表结构: symbol, trade_date, timestamp, price, volume, amount, direction, data_source, is_auction
-        rows = []
-        for item in tick_data:
-            try:
-                # 解析时间字符串为 datetime
-                time_str = str(item.get('time', '09:30'))
-                if len(time_str) == 5:  # HH:MM 格式
-                    time_str = f"{time_str}:00"
-                timestamp = datetime.strptime(
-                    f"{trade_date} {time_str}", 
-                    "%Y%m%d %H:%M:%S"
-                )
-                
-                # 判断是否为集合竞价
-                is_auction = 1 if time_str.startswith('09:25') else 0
-                
-                row = (
-                    stock_code,                                    # stock_code
-                    trade_date_obj,                                # trade_date
-                    time_str,                                      # tick_time
-                    float(item.get('price', 0)),                   # price
-                    int(item.get('volume', 0)),                    # volume
-                    float(item.get('price', 0)) * int(item.get('volume', 0)),  # amount (Decimal)
-                    self._map_direction(int(item.get('buyorsell', 2))),  # direction
-                )
-                rows.append(row)
-            except (ValueError, TypeError) as e:
-                logger.warning(f"数据转换失败: {item}, 错误: {e}")
-                continue
-        
-        if not rows:
-            return 0
-        
-        # 写入 ClickHouse
         try:
+            # 1. 检查是否已存在 (全量覆盖模式下，实际上 ReplacingMergeTree 会处理，但为了效率可以先查)
+            # exists = await self.check_data_exists(stock_code, trade_date)
+            # if exists: return -1
+
+            # 2. 采集数据
+            tick_data = await self.fetch_tick_data(stock_code, trade_date)
+            
+            if not tick_data:
+                await self._update_sync_status(stock_code, trade_date, "completed", 0)
+                return 0
+                
+            # 提取时间和范围
+            times = [x.get('time', '') for x in tick_data]
+            min_t, max_t = min(times), max(times)
+            
+            # 3. 转换格式
+            trade_date_obj = datetime.strptime(trade_date, "%Y%m%d").date()
+            rows = []
+            for item in tick_data:
+                time_str = str(item.get('time', '09:30'))
+                if len(time_str) == 5: time_str += ":00"
+                
+                price = float(item.get('price', 0))
+                vol = int(item.get('volume', item.get('vol', 0)))
+                
+                rows.append((
+                    stock_code,
+                    trade_date_obj,
+                    time_str,
+                    price,
+                    vol,
+                    price * vol,
+                    self._map_direction(int(item.get('buyorsell', 2))),
+                ))
+            
+            if not rows:
+                await self._update_sync_status(stock_code, trade_date, "completed", 0)
+                return 0
+            
+            # 4. 写入 ClickHouse (分布式表)
             async with self.clickhouse_pool.acquire() as conn:
                 async with conn.cursor() as cursor:
                     await cursor.execute(
-                        """
-                        INSERT INTO tick_data 
-                        (stock_code, trade_date, tick_time, price, volume, amount, direction)
-                        VALUES
-                        """,
+                        f"INSERT INTO stock_data.{target_table} (stock_code, trade_date, tick_time, price, volume, amount, direction) VALUES",
                         rows
                     )
             
-            logger.info(f"✓ {stock_code}: {len(rows)} 条分笔写入成功")
+            # 5. 更新状态为 completed
+            await self._update_sync_status(
+                stock_code, trade_date, "completed", len(rows), min_t, max_t
+            )
+            logger.info(f"✓ {stock_code}: {len(rows)} ticks -> {target_table} ({min_t}-{max_t})")
             return len(rows)
+
         except Exception as e:
-            logger.error(f"❌ {stock_code}: ClickHouse 写入失败: {e}")
+            logger.error(f"❌ {stock_code} sync failed: {e}")
+            await self._update_sync_status(stock_code, trade_date, "failed", error=str(e))
             return 0
     
     async def sync_stocks(
@@ -673,10 +662,10 @@ class TickSyncService:
                     results["errors"].append(f"{code}: {str(e)}")
                     logger.error(f"同步失败 {code}: {e}")
                 
-                # Precise Pacing: Ensure minimum 0.3s interval between requests
+                # Precise Pacing: Ensure minimum pacing interval between requests
                 # This subtracts execution time from the delay to maximize throughput
                 elapsed = asyncio.get_running_loop().time() - start_time
-                delay = max(0, 0.3 - elapsed)
+                delay = max(0, self.DEFAULT_MIN_PACING_INTERVAL - elapsed)
                 if delay > 0:
                     await asyncio.sleep(delay)
         

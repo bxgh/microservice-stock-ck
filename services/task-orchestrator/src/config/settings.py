@@ -16,8 +16,8 @@ class Settings(BaseSettings):
     
     # Redis
     REDIS_HOST: str = "redis"
-    REDIS_PORT: int = int(os.getenv("REDIS_PORT", 16379))
-    REDIS_PASSWORD: str = ""
+    REDIS_PORT: int = int(os.getenv("REDIS_PORT", 6379))
+    REDIS_PASSWORD: str = "redis123"
     REDIS_DB: int = 1  # Use DB 1 for orchestrator state
     
     # Worker DB Config (Injected into workers)

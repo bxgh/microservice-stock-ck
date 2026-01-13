@@ -1,0 +1,27 @@
+# Task Orchestrator 任务配置 (Server 58)
+version: "1.0"
+timezone: "Asia/Shanghai"
+
+global:
+  docker:
+    image: gsd-worker:latest
+    network_mode: host
+    default_volumes:
+      - ./libs/gsd-shared:/app/libs/gsd-shared:ro
+      - ./services/gsd-worker/config:/app/config:ro
+    environment:
+      PYTHONPATH: /app/src
+
+tasks:
+  - id: daily_tick_sync_shard_1
+    name: 盘后分笔采集(Shard-1)
+    type: docker
+    enabled: true
+    schedule:
+      type: trading_cron
+      expression: "35 15 * * 1-5"
+    target:
+      command: ["python3", "src/jobs/sync_tick.py", "--scope", "all", "--shard-index", "1", "--shard-total", "3"]
+    retry:
+      max_attempts: 2
+      backoff_seconds: 600

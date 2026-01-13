@@ -5,7 +5,8 @@ import sys
 
 # Redis Config
 REDIS_HOST = os.getenv("REDIS_HOST", "127.0.0.1")
-REDIS_PORT = int(os.getenv("REDIS_PORT", 16379))
+REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "redis123")
 REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "")
 auth_kwargs = {"password": REDIS_PASSWORD} if REDIS_PASSWORD else {}
 
