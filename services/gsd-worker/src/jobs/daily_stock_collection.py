@@ -22,7 +22,9 @@ import json
 import os
 import xxhash
 from datetime import datetime
+from redis.asyncio import Redis
 from redis.asyncio.cluster import RedisCluster
+from gsd_shared.validators import is_valid_a_stock
 
 # 配置日志
 logging.basicConfig(
@@ -32,8 +34,6 @@ logging.basicConfig(
 logger = logging.getLogger("DailyStockCollection")
 
 # 腾讯云 API 配置
-# 腾讯云 API 配置
-# 默认使用腾讯云公网 IP (硬编码作为兜底)，但在生产环境应通过环境变量覆盖
 DEFAULT_CLOUD_API = "http://124.221.80.250:8000/api/v1/stocks/all"
 CLOUD_API_URL = os.getenv("CLOUD_API_URL", DEFAULT_CLOUD_API)
 HTTP_PROXY = os.getenv("HTTP_PROXY", "http://192.168.151.18:3128")
@@ -95,6 +95,10 @@ async def update_redis_cache(redis, items):
             exchange = item.get("exchange")
             
             if not code or not exchange:
+                continue
+            
+            # 严格过滤无效 A 股 (排除已退市或历史代码)
+            if not is_valid_a_stock(code):
                 continue
                 
             formatted_code = f"{code}.{exchange}"
@@ -180,18 +184,36 @@ async def main():
     """主任务流程"""
     start_time = datetime.now()
     
-    # 1. 初始化 Redis Cluster
     redis_host = os.getenv("REDIS_HOST", "127.0.0.1")
-    redis_port = int(os.getenv("REDIS_PORT", "16379"))
+    redis_port = int(os.getenv("REDIS_PORT", "6379"))
+    redis_password = os.getenv("REDIS_PASSWORD", "redis123")
+    is_cluster = os.getenv("REDIS_CLUSTER", "false").lower() == "true"
+    
+    logger.info(f"正在建立 Redis 连接: host={redis_host}, port={redis_port}, cluster={is_cluster}")
     
     try:
-        redis = await RedisCluster.from_url(
-            f"redis://{redis_host}:{redis_port}",
-            decode_responses=True
-        )
-        logger.info(f"✓ Redis Cluster 连接成功: {redis_host}:{redis_port}")
+        url = f"redis://{redis_host}:{redis_port}"
+        if is_cluster:
+            redis = await RedisCluster.from_url(
+                url,
+                password=redis_password,
+                decode_responses=True
+            )
+            logger.info("✓ Redis Cluster 连接初始化完成")
+        else:
+            redis = Redis.from_url(
+                url,
+                password=redis_password,
+                decode_responses=True
+            )
+            logger.info("✓ Redis Standalone 连接初始化完成")
+        
+        # 显式测试连接
+        await redis.ping()
+        logger.info("✓ Redis 测试连接 (PING) 成功")
     except Exception as e:
-        logger.error(f"❌ Redis Cluster 连接失败: {e}")
+        mode_str = "Cluster" if is_cluster else "Standalone"
+        logger.error(f"❌ Redis {mode_str} 连接失败: {e}")
         return 1
         
     try:
@@ -211,7 +233,7 @@ async def main():
             return 1
             
     finally:
-        await redis.close()
+        await redis.aclose()
         logger.info("Redis 连接已关闭")
 
 if __name__ == "__main__":

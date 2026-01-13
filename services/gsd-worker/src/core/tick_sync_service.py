@@ -18,6 +18,7 @@ import yaml
 import pytz
 import redis.asyncio as redis
 from redis.asyncio.cluster import RedisCluster, ClusterNode
+from gsd_shared.validators import is_valid_a_stock
 
 logger = logging.getLogger(__name__)
 
@@ -47,20 +48,15 @@ class TickSyncService:
         (5000, 1000, "深度区域2"),
         (6000, 1200, "深度区域3"),
         
-        # 第三优先级：广域搜索
+        # 第三优先级：广域搜索 (精简后，移除低效区域以提升性能)
         (2000, 1500, "广域区域1"),
         (7000, 1500, "广域区域2"),
-        (8000, 2000, "广域区域3"),
-        
-        # 第四优先级：极限搜索
-        (1000, 2000, "极限区域1"),
-        (10000, 3000, "极限区域2"),
     ]
     
     # 常量定义
     TARGET_TIME = "09:25"
     REDIS_STATUS_EXPIRE_SECONDS = 86400 * 7  # 7天
-    DEFAULT_MIN_PACING_INTERVAL = 0.3      # 最小请求间隔
+    DEFAULT_MIN_PACING_INTERVAL = 0.1       # 优化后：最小请求间隔 (原 0.3)
     
     def __init__(self):
         self.clickhouse_pool: Optional[asynch.Pool] = None
@@ -176,7 +172,7 @@ class TickSyncService:
                             # 30xxxx: 创业板
                             market_codes = [
                                 item['code'] for item in data 
-                                if item.get('code', '').startswith(('60', '68', '00', '30'))
+                                if is_valid_a_stock(item.get('code'))
                             ]
                             all_codes.extend(market_codes)
                             logger.info(f"市场 {market} 获取到 {len(market_codes)} 只 A股股票")
@@ -212,7 +208,9 @@ class TickSyncService:
                     # 清洗数据
                     clean_codes = []
                     for code in codes:
-                        clean_codes.append(code.split(".")[0] if "." in code else code)
+                        pure_code = code.split(".")[0] if "." in code else code
+                        if is_valid_a_stock(pure_code):
+                            clean_codes.append(pure_code)
                     clean_codes.sort()
                     
                     logger.info(f"从 Redis 获取 Shard {shard_index} 股票: {len(clean_codes)} 只")
