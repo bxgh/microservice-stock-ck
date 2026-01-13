@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     WORKER_CLICKHOUSE_PASSWORD: str = ""
     WORKER_CLICKHOUSE_DATABASE: str = "stock_data"
     
+    WORKER_MOOTDX_API_URL: str = "http://mootdx-api:8000"  # 容器网络默认域名
+    
     TIMEZONE: str = "Asia/Shanghai"
     
     # Trading Hours

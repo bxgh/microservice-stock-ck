@@ -116,6 +116,7 @@ class GenericTaskRunner:
             "CLICKHOUSE_USER": settings.WORKER_CLICKHOUSE_USER,
             "CLICKHOUSE_PASSWORD": settings.WORKER_CLICKHOUSE_PASSWORD,
             "CLICKHOUSE_DATABASE": settings.WORKER_CLICKHOUSE_DATABASE,
+            "MOOTDX_API_URL": settings.WORKER_MOOTDX_API_URL,
             "TZ": settings.TIMEZONE,
             "PYTHONPATH": "/app/src"
         })
@@ -185,6 +186,7 @@ class GenericTaskRunner:
                     dependencies=set([f"{task.id}-{d}" for d in step.depends_on]) if step.depends_on else set()
                 )
                 dag_tasks.append(dt)
+
 
         workflow = Workflow(name=task.name, tasks=dag_tasks)
         success = await engine.run_workflow(workflow)

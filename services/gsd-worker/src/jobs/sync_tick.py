@@ -35,7 +35,8 @@ async def main(
     shard_total: int = None,
     distributed_source: str = "none",
     distributed_role: str = "consumer",
-    concurrency: int = 6
+    concurrency: int = 6,
+    stock_codes: list = None
 ) -> int:
     """
     分笔数据同步主函数
@@ -52,8 +53,10 @@ async def main(
     start_time = datetime.now()
     
     try:
-        # 获取股票池 (Consumer 模式不需要预先获取列表)
-        if distributed_source == "redis" and distributed_role == "consumer":
+        if stock_codes:
+            logger.info(f"手动指定模式: 使用提供的股票列表 ({len(stock_codes)} 只)")
+            # Already have stock_codes
+        elif distributed_source == "redis" and distributed_role == "consumer":
             stock_codes = []
             logger.info("Consumer 模式: 跳过本地股票列表获取，将直接从 Redis 消费")
         elif scope == "all" and shard_index is not None:
@@ -236,11 +239,22 @@ if __name__ == "__main__":
     parser.add_argument(
         "--concurrency",
         type=int,
-        default=6,
-        help="并发任务数 (默认为 6)"
+        default=12,
+        help="并发任务数 (默认为 12，优化后)"
+    )
+    parser.add_argument(
+        "--stock-code", "--stock-codes",
+        type=str,
+        default=None,
+        help="手动指定股票代码，逗号分隔"
     )
     args = parser.parse_args()
     
+    # 解析股票代码
+    passed_codes = None
+    if args.stock_code:
+        passed_codes = [c.strip() for c in args.stock_code.split(',') if c.strip()]
+
     exit_code = asyncio.run(main(
         args.mode, 
         args.date, 
@@ -249,6 +263,7 @@ if __name__ == "__main__":
         args.shard_total,
         args.distributed_source,
         args.distributed_role,
-        args.concurrency
+        args.concurrency,
+        passed_codes
     ))
     sys.exit(exit_code)
