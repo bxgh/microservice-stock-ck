@@ -75,7 +75,7 @@ class DAGEngine:
                 ready_tasks = workflow.get_ready_tasks()
                 
                 for task in ready_tasks:
-                    task.status = "scheduled" 
+                    task.status = "scheduled"
                     t = asyncio.create_task(self._run_task(task))
                     active_tasks.append(t)
                 

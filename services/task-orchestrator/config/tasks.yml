@@ -74,14 +74,20 @@ tasks:
   # 盘后分笔数据全量采集 (P1)
   # 15:35 执行，全市场分片同步 (当前节点负责 Shard 0)
   - id: daily_tick_sync_shard_0
-    name: 盘后分笔采集(Shard-0)
-    type: docker
+    name: 盘后分笔采集与补采(Shard-0)
+    type: workflow
     enabled: true
     schedule:
       type: trading_cron
       expression: "35 15 * * 1-5"
-    target:
-      command: ["python3", "src/jobs/sync_tick.py", "--scope", "all", "--shard-index", "0", "--shard-total", "3"]
+    workflow:
+      - id: collect
+        name: 分片采集
+        command: ["jobs.sync_tick", "--scope", "all", "--shard-index", "0", "--shard-total", "3"]
+      - id: retry
+        name: 自动补采
+        command: ["jobs.retry_tick", "--concurrency", "5"]
+        depends_on: [collect]
     retry:
       max_attempts: 2
       backoff_seconds: 600
@@ -108,6 +114,7 @@ tasks:
     retry:
       max_attempts: 3
       backoff_seconds: 60
+
   
   # K线每日同步 - 云端分片模式 (未来腾讯云部署使用)
   # 4个分片并行，调用 Baostock 获取数据

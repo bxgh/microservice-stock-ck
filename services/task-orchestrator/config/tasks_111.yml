@@ -14,14 +14,20 @@ global:
 
 tasks:
   - id: daily_tick_sync_shard_2
-    name: 盘后分笔采集(Shard-2)
-    type: docker
+    name: 盘后分笔采集与补采(Shard-2)
+    type: workflow
     enabled: true
     schedule:
       type: trading_cron
       expression: "35 15 * * 1-5"
-    target:
-      command: ["python3", "src/jobs/sync_tick.py", "--scope", "all", "--shard-index", "2", "--shard-total", "3"]
+    workflow:
+      - id: collect
+        name: 分片采集
+        command: ["jobs.sync_tick", "--scope", "all", "--shard-index", "2", "--shard-total", "3"]
+      - id: retry
+        name: 自动补采
+        command: ["jobs.retry_tick", "--concurrency", "5"]
+        depends_on: [collect]
     retry:
       max_attempts: 2
       backoff_seconds: 600
