@@ -57,9 +57,13 @@ graph TD
 | [clickhouse-3shard-cluster.md](infrastructure/clickhouse-3shard-cluster.md) | ClickHouse 3分片架构详解 | ✅ v3.0 |
 | [redis-3shard-cluster.md](infrastructure/redis-3shard-cluster.md) | Redis 3分片架构详解 | ✅ v3.0 |
 | [server-hardware.md](infrastructure/SERVER_HARDWARE_ARCHITECTURE.md) | 服务器硬件架构 | ✅ v3.0 |
+| [server-41-network.md](infrastructure/SERVER_41_NETWORK_CONFIG.md) | Server 41 三网卡配置详解 | ✅ v3.1 |
+| [server-58-network.md](infrastructure/SERVER_58_NETWORK_CONFIG.md) | Server 58 三网卡配置详解 | ✅ v3.1 |
 | [server-111-network.md](infrastructure/SERVER_111_NETWORK_CONFIG.md) | Server 111 三网卡配置详解 | ✅ v3.1 |
 | [verified-tdx-hosts.md](infrastructure/VERIFIED_TDX_HOSTS_20260111.md) | 已验证的 TDX 节点列表 | ✅ v3.1 |
-| [tdx-docker-config.md](data_acquisition/TDX_POOL_DOCKER_CONFIG.md) | Mootdx 容器部署指南 | ✅ v3.1 |
+| [tdx-docker-41.md](data_acquisition/TDX_POOL_DOCKER_CONFIG_41.md) | Server 41 Mootdx 部署指南 | ✅ v3.1 |
+| [tdx-docker-58.md](data_acquisition/TDX_POOL_DOCKER_CONFIG_58.md) | Server 58 Mootdx 部署指南 | ✅ v3.1 |
+| [tdx-docker-111.md](data_acquisition/TDX_POOL_DOCKER_CONFIG.md) | Server 111 Mootdx 部署指南 | ✅ v3.1 |
 
 ### 数据采集 (`data_acquisition/`)
 

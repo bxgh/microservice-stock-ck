@@ -10,14 +10,13 @@ services:
   # ---------------------------------------------------------------------------
   
   mootdx-api:
-#    build:
-#      context: .
-#      dockerfile: services/mootdx-api/Dockerfile
-#      args:
-#        - ENABLE_PROXY=true
-#        - PROXY_URL=http://192.168.151.18:3128
-    image: get-stockdata:latest
-    command: uvicorn main:app --host 0.0.0.0 --port 8003
+    build:
+      context: .
+      dockerfile: services/mootdx-api/Dockerfile
+      args:
+        - ENABLE_PROXY=true
+        - PROXY_URL=http://192.168.151.18:3128
+    image: microservice-stock-mootdx-api:latest
     container_name: microservice-stock-mootdx-api
     network_mode: host
     restart: unless-stopped
