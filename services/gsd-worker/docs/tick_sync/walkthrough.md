@@ -24,6 +24,12 @@
 - **详细记录**: 每只股票记录 `状态|记录数|数据开始时间|数据结束时间|同步时间|错误信息`。
 - **完整性验证**: 通过 `data_start` (应为 09:25) 和 `data_end` (应为 15:00) 即可快速验证数据是否抓取完整。
 
+### 2.4 数据质量与自动补采
+针对金融数据的高完整性要求，系统集成了自动补采机制：
+- **主动搜索**: `TickSyncService` 使用多维搜索矩阵，强制寻找 09:25 数据。
+- **自动冗余**: 配合 ClickHouse `ReplacingMergeTree` 引擎，支持无损覆盖补采。
+- **补采工具**: 提供 `retry_tick.py` 脚本，可精准识别并重采“失败”或“早盘不全”的股票。
+
 ## 3. 文件变更汇总
 - **逻辑核心**: [tick_sync_service.py](file:///home/bxgh/microservice-stock/services/gsd-worker/src/core/tick_sync_service.py) (状态追踪、多表路由、时间范围记录)
 - **任务定义**: 

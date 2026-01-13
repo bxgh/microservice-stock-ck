@@ -208,7 +208,25 @@ docker exec -it task-orchestrator python3 /app/src/jobs/sync_tick.py \
 docker logs -f task-orchestrator | grep "daily_tick_sync"
 ```
 
-### 4.4 数据完整性检查
+### 4.5 自动质量扫描与补采
+
+系统提供了一个专门的工具用于在全量采集完成后进行质量扫描，并对失败或数据不全的股票进行补采。
+
+#### 手动执行扫描（Dry Run）:
+```bash
+# 仅查看哪些股票需要补采
+docker exec -it gsd-worker python3 src/jobs/retry_tick.py --date 20260113 --dry-run
+```
+
+#### 执行自动补采:
+```bash
+# 执行补采，识别 failed 状态或缺少 09:25 数据的股票
+docker exec -it gsd-worker python3 src/jobs/retry_tick.py --date 20260113 --concurrency 5
+```
+
+> **原理**: 该工具会扫描 Redis 状态，识别 `status="failed"` 或 `data_start > "09:25"` 的记录，并重新调用采集引擎。利用 ClickHouse 的 `ReplacingMergeTree` 特性，补采的数据会自动覆盖/合并旧数据。
+
+### 4.6 数据完整性检查
 
 在 Server 41 的 ClickHouse 中验证数据：
 
