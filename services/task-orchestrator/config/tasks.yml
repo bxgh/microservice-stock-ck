@@ -63,10 +63,6 @@ tasks:
         tasks:
           - id: shard-0
             command: ["jobs.sync_kline", "--mode", "adaptive", "--shard-index", "0"]
-          - id: shard-1
-            command: ["jobs.sync_kline", "--mode", "adaptive", "--shard-index", "1"]
-          - id: shard-2
-            command: ["jobs.sync_kline", "--mode", "adaptive", "--shard-index", "2"]
     retry:
       max_attempts: 2
       backoff_seconds: 600
