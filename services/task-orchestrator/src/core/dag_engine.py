@@ -134,6 +134,15 @@ class DAGEngine:
                 task.status = "failed"
                 task.error = f"Exit code: {status_code}"
                 logger.error(f"❌ Task {task.id} failed with exit code {status_code}")
+                
+                # Capture logs for debugging (limit to last 500 lines to avoid memory issues)
+                try:
+                    container = self.executor.client.containers.get(task.container_id)
+                    logs = container.logs(tail=500).decode('utf-8', errors='replace')
+                    logger.error(f"📜 Task {task.id} Output (last 500 lines):\n{logs}")
+                except Exception as log_err:
+                    logger.error(f"⚠️ Failed to retrieve logs for {task.id}: {log_err}")
+
                 await notifier.send_alert("Task Failed", f"Task {task.name} ({task.id}) failed with exit code {status_code}")
 
         except Exception as e:

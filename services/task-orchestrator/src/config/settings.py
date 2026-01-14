@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     REDIS_PORT: int = int(os.getenv("REDIS_PORT", 6379))
     REDIS_PASSWORD: str = "redis123"
     REDIS_DB: int = 1  # Use DB 1 for orchestrator state
+    REDIS_CLUSTER: bool = False # Default to standalone
     
     # Worker DB Config (Injected into workers)
     # Tencent Cloud MySQL via GOST Tunnel

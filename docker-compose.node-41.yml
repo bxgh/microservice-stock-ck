@@ -106,6 +106,7 @@ services:
       - WORKER_MYSQL_PORT=36301
       - WORKER_CLICKHOUSE_HOST=127.0.0.1
       - WORKER_CLICKHOUSE_PORT=9000
+      - ORCHESTRATOR_WORKER_MOOTDX_API_URL=http://127.0.0.1:8003
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./libs/gsd-shared:/app/libs/gsd-shared:ro

@@ -319,6 +319,9 @@ async def lifespan(app: FastAPI):
     global docker_client, mysql_pool, task_logger, task_config
     logger.info("🚀 Starting Task Orchestrator...")
     
+    # Initialize command_poller to None for proper cleanup
+    command_poller = None
+    
     # 1. Initialize MySQL Connection Pool
     try:
         mysql_pool = await aiomysql.create_pool(
@@ -368,10 +371,28 @@ async def lifespan(app: FastAPI):
     # 5. Register Scheduled Jobs
     await register_jobs()
     
+    # 6. Start Command Poller (Cloud -> Local)
+    # 只有当配置了云端 MySQL 时才启动，或者默认启动因为 alwaysup 库在云端
+    try:
+        from core.command_poller import CommandPoller
+        command_poller = CommandPoller(mysql_pool, scheduler, docker_client, task_config)
+        await command_poller.start()
+        logger.info("✓ CommandPoller started")
+    except Exception as e:
+        logger.error(f"⚠️ Failed to start CommandPoller: {e}")
+        logger.warning("Orchestrator will continue without remote command polling")
+    
     yield
     
     # Shutdown
     logger.info("🛑 Shutting down Task Orchestrator...")
+    
+    if command_poller:
+        try:
+            await command_poller.stop()
+        except Exception as e:
+            logger.error(f"Error stopping CommandPoller: {e}")
+        
     scheduler.shutdown()
     
     if docker_client:
