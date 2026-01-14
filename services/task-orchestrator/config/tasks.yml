@@ -276,6 +276,24 @@ tasks:
       backoff_seconds: 60
   
   # ========== 数据质量任务 ==========
+  
+  # 盘前数据质量门禁 (P0) - 核心校验与自动补采
+  # 08:00 执行，在盘前确保昨日数据完备
+  - id: pre_market_gate
+    name: 盘前数据质量门禁
+    type: docker
+    enabled: true
+    schedule:
+      type: trading_cron
+      expression: "0 8 * * 1-5"  # 08:00 交易日
+    target:
+      command: ["jobs.pre_market_gate"]
+      environment:
+        KLINE_THRESHOLD: "98"
+        TICK_THRESHOLD: "95"
+    retry:
+      max_attempts: 1
+
 
   # 每周深度审计 (P0) - 全量聚合校验 & 自动修复
   - id: weekly_deep_audit
@@ -300,5 +318,37 @@ tasks:
       expression: "0 3 5 * *"  # 每月5号 03:00
     target:
       command: ["jobs.data_audit"]
+    retry:
+      max_attempts: 1
+
+  # ========== 补采/修复任务 (供 CommandPoller 调用) ==========
+  
+  # K线按日补采
+  - id: repair_kline
+    name: K线数据补采
+    type: docker
+    enabled: false # 不自动调度，仅手动/API触发
+    schedule:
+      type: cron
+      expression: "0 0 1 1 *" # Dummy schedule
+    target:
+      command: ["jobs.sync_kline"]
+      environment:
+        KLINE_THRESHOLD: "98"
+    retry:
+      max_attempts: 1
+
+  # 分笔按日补采
+  - id: repair_tick
+    name: 分笔数据补采
+    type: docker
+    enabled: false # 不自动调度，仅手动/API触发
+    schedule:
+      type: cron
+      expression: "0 0 1 1 *" # Dummy schedule
+    target:
+      command: ["jobs.sync_tick", "--scope", "config", "--distributed-source", "none"]
+      environment:
+        TICK_THRESHOLD: "95"
     retry:
       max_attempts: 1
