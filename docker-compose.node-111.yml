@@ -87,6 +87,7 @@ services:
     environment:
       - ORCHESTRATOR_DEBUG=false
       - ORCHESTRATOR_DOCKER_HOST=unix:///var/run/docker.sock
+      - ORCHESTRATOR_BASE_DIR=${PWD}
       - ORCHESTRATOR_WORKER_IMAGE=gsd-worker:latest
       - ORCHESTRATOR_WORKER_NETWORK=host
       - ORCHESTRATOR_REDIS_HOST=192.168.151.41

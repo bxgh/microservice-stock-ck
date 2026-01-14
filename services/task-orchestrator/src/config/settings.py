@@ -9,6 +9,16 @@ class Settings(BaseSettings):
     APP_NAME: str = "Task Orchestrator"
     DEBUG: bool = False
     
+    # Base Directory (Dynamic)
+    # This assumes the settings.py is in services/task-orchestrator/src/config/
+    # So we go up 4 levels to get to the project root
+    @property
+    def BASE_DIR(self) -> str:
+        env_base = os.getenv("ORCHESTRATOR_BASE_DIR")
+        if env_base:
+            return env_base
+        return os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../.."))
+    
     # Docker
     DOCKER_HOST: str = "unix:///var/run/docker.sock"
     WORKER_IMAGE: str = "gsd-worker:latest"

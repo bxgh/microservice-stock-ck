@@ -101,3 +101,10 @@ openspec/
 !.vscode/workspaces/task-scheduler.code-workspace
 !.vscode/workspaces/frontend-web.code-workspace
 !.vscode/workspaces/cross-domain.code-workspace
+
+# 调试脚本与本地工具
+check_task_status.py
+update_db.py
+
+# 私有文档与草稿
+docs/miniprogram/

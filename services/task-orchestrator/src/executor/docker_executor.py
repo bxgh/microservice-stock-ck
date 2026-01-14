@@ -73,9 +73,9 @@ class DockerExecutor:
             
             # Prepare volumes mount
             volumes = {
-                '/home/bxgh/microservice-stock/data/gsd-worker': {'bind': '/app/data', 'mode': 'rw'},
-                '/home/bxgh/microservice-stock/libs/gsd-shared': {'bind': '/app/libs/gsd-shared', 'mode': 'ro'},
-                '/home/bxgh/microservice-stock/services/gsd-worker/config': {'bind': '/app/config', 'mode': 'ro'}
+                f'{settings.BASE_DIR}/data/gsd-worker': {'bind': '/app/data', 'mode': 'rw'},
+                f'{settings.BASE_DIR}/libs/gsd-shared': {'bind': '/app/libs/gsd-shared', 'mode': 'ro'},
+                f'{settings.BASE_DIR}/services/gsd-worker/config': {'bind': '/app/config', 'mode': 'ro'}
             }
 
             container = self.client.containers.run(
