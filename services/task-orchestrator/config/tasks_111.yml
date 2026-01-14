@@ -31,16 +31,3 @@ tasks:
     retry:
       max_attempts: 2
       backoff_seconds: 600
-
-  - id: daily_kline_sync_shard_2
-    name: K线每日同步(Shard-2)
-    type: docker
-    enabled: true
-    schedule:
-      type: trading_cron
-      expression: "30 17 * * *"
-    target:
-      command: ["jobs.sync_kline", "--mode", "adaptive", "--shard-index", "2"]
-    retry:
-      max_attempts: 2
-      backoff_seconds: 600
