@@ -5,7 +5,7 @@ import enum
 import json
 import logging
 import asyncio
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 from pydantic import BaseModel, Field
 
 import redis.asyncio as redis

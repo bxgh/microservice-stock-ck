@@ -44,6 +44,7 @@ services:
       - ./logs/mootdx-api:/app/logs
       - mootdx_config:/root/.mootdx
       - ./services/mootdx-api/src:/app/src  # 开发模式挂载源码
+      - ./libs/gsd-shared:/app/libs/gsd-shared:ro
 
   mootdx-source:
     build:

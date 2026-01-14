@@ -30,6 +30,10 @@ RUN if [ "$ENABLE_PROXY" = "true" ]; then \
 # 清理 apt 代理 (减少层大小，虽然这里没装系统包，但为了规范)
 RUN rm -f /etc/apt/apt.conf.d/00proxy
 
+# 复制共享库并安装
+COPY libs/gsd-shared/ /app/libs/gsd-shared/
+RUN pip install --no-cache-dir -e /app/libs/gsd-shared/
+
 # 复制源代码和诊断工具
 COPY services/mootdx-api/src/ ./src/
 COPY services/mootdx-api/diagnostics/ ./diagnostics/
