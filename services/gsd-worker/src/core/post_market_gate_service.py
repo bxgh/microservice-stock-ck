@@ -191,29 +191,30 @@ class PostMarketGateService:
             return {"error": str(e)}
 
     async def _persist_to_cloud(self, report: Dict):
-        """将审计结果持久化到腾讯云 MySQL"""
+        """将审计结果持久化到腾讯云 MySQL (精简版)"""
         try:
+            is_complete = 1 if report['status'] == "SUCCESS" else 0
+            # 构建简要说明
+            m = report['metrics']['continuity']
+            desc = f"K:{report['kline_rate']}% T:{report['tick_rate']}% 缺时段:{m.get('failed_count', 0)}"
+            
             conn = await aiomysql.connect(**self.mysql_config)
             async with conn.cursor() as cur:
                 sql = """
                 INSERT INTO alwaysup.data_gate_audits 
-                (trade_date, gate_id, status, kline_rate, tick_rate, metrics, actions_taken) 
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                (trade_date, gate_id, is_complete, description) 
+                VALUES (%s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE 
-                status=VALUES(status), kline_rate=VALUES(kline_rate), tick_rate=VALUES(tick_rate),
-                metrics=VALUES(metrics), actions_taken=VALUES(actions_taken)
+                is_complete=VALUES(is_complete), description=VALUES(description)
                 """
                 await cur.execute(sql, (
                     report['date'], 
                     report['gate_id'], 
-                    report['status'],
-                    report['kline_rate'],
-                    report['tick_rate'],
-                    json.dumps(report['metrics']),
-                    json.dumps(report['actions_taken'])
+                    is_complete,
+                    desc
                 ))
             await conn.ensure_closed()
-            logger.info(f"✅ 审计结果已持久化到云端 MySQL (Gate-3)")
+            logger.info(f"✅ 审计结果已持久化到云端 MySQL (is_complete={is_complete})")
         except Exception as e:
             logger.error(f"❌ 持久化审计结果失败: {e}")
 

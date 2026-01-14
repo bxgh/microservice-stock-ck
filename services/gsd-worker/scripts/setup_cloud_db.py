@@ -26,28 +26,18 @@ async def setup_db():
     try:
         conn = await aiomysql.connect(**config)
         async with conn.cursor() as cur:
-            # 创建审计记录表
+            # 创建精简版审计记录表
             logger.info("📝 Creating table `data_gate_audits`...")
             create_table_sql = """
             CREATE TABLE IF NOT EXISTS `data_gate_audits` (
                 `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
                 `trade_date` DATE NOT NULL COMMENT '交易日期',
-                `gate_id` ENUM('GATE_1', 'GATE_2', 'GATE_3') NOT NULL,
-                `status` ENUM('SUCCESS', 'WARNING', 'ERROR') NOT NULL,
-                
-                -- 核心指标
-                `kline_rate` DECIMAL(5,2) COMMENT 'K线覆盖率',
-                `tick_rate` DECIMAL(5,2) COMMENT '分笔覆盖率',
-                
-                -- 深度明细 (JSON)
-                `metrics` JSON COMMENT '包含 continuity, consistency 等深度审计详情',
-                
-                -- 响应动作 (JSON)
-                `actions_taken` JSON COMMENT '已自动触发的任务列表',
-                
+                `gate_id` VARCHAR(20) NOT NULL COMMENT 'GATE_1/2/3',
+                `is_complete` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '1: 完整, 0: 不完整',
+                `description` VARCHAR(255) COMMENT '简要结果说明',
                 `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE INDEX `idx_date_gate` (`trade_date`, `gate_id`)
-            ) COMMENT='数据门禁每日审计历史';
+            ) COMMENT='精简版数据门禁每日审计历史';
             """
             await cur.execute(create_table_sql)
             logger.info("✅ Table `data_gate_audits` created or already exists.")

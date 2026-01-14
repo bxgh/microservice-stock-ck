@@ -24,34 +24,24 @@
 ## 5. 检查结果入库 (Persistence)
 
 ### 5.1 云端数据表 (`alwaysup.data_gate_audits`)
-用于存储历史记录，供前端小程序展示：
+极简审计表，仅保留核心状态：
 
 ```sql
 CREATE TABLE IF NOT EXISTS `data_gate_audits` (
     `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
     `trade_date` DATE NOT NULL COMMENT '交易日期',
-    `gate_id` ENUM('GATE_1', 'GATE_2', 'GATE_3') NOT NULL,
-    `status` ENUM('SUCCESS', 'WARNING', 'ERROR') NOT NULL,
-    
-    -- 核心指标
-    `kline_rate` DECIMAL(5,2) COMMENT 'K线覆盖率',
-    `tick_rate` DECIMAL(5,2) COMMENT '分笔覆盖率',
-    
-    -- 深度明细 (JSON)
-    `metrics` JSON COMMENT '{ "continuity": [...], "consistency": {...} }',
-    
-    -- 响应动作
-    `actions_taken` JSON COMMENT '已自动触发的任务列表',
-    
+    `gate_id` VARCHAR(20) NOT NULL COMMENT 'GATE_1/2/3',
+    `is_complete` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '1: 完整, 0: 不完整',
+    `description` VARCHAR(255) COMMENT '简要结果说明 (如: K线99% 分笔100%)',
     `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
     UNIQUE INDEX `idx_date_gate` (`trade_date`, `gate_id`)
-) COMMENT='数据门禁审计历史';
+) COMMENT='精简版数据门禁审计历史';
 ```
 
-### 5.2 入库流程 (Data Flow)
+### 5.2 入库流程 (Simplified Flow)
 1. **本地执行**: `PostMarketGateService` 完成校验。
-2. **隧道传输**: 通过 SSH 反向隧道 (LocalPort: 36301 -> CloudMySQL) 连接云端数据库。
-3. **原子更新**: 采用 `INSERT INTO ... ON DUPLICATE KEY UPDATE` 确保单日单门禁仅保留最新记录。
+2. **状态判定**: 若 `status == 'SUCCESS'` 则 `is_complete = 1`，否则为 `0`。
+3. **极简写入**: 仅写入日期、门禁ID、是否完整以及一行文本摘要。
 
 ### 5.3 前端交互与任务启动
 1. **状态展示**: 小程序根据 `status` 字段渲染卡片（绿色/橙色/红色）。
