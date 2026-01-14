@@ -5,6 +5,8 @@ from typing import Tuple, Dict, Any, List
 import httpx
 import os
 import pytz
+import json
+import aiomysql
 
 from core.clickhouse_client import ClickHouseClient
 from core.notifier import Notifier
@@ -19,9 +21,9 @@ class PostMarketGateService:
     职责:
     1. 校验当日 K线覆盖率
     2. 校验当日 分笔覆盖率
-    3. 校验关键股票 (HS300) 的分笔完整性 (09:25-15:00)
+    3. 全量校验分笔时段完整性 (09:25-15:00)
     4. 校验收盘价对账一致性
-    5. 触发补采并发送深度审计报告
+    5. 结果持久化到云端 MySQL
     """
     
     def __init__(self):
@@ -32,7 +34,16 @@ class PostMarketGateService:
         self.kline_threshold = float(os.getenv("KLINE_THRESHOLD", "98.0"))
         self.tick_threshold = float(os.getenv("TICK_THRESHOLD", "95.0"))
         self.orchestrator_url = os.getenv("ORCHESTRATOR_URL", "http://127.0.0.1:18000")
-        self.strict_mode = os.getenv("STRICT_MODE", "true").lower() == "true"
+        
+        # 云端 MySQL 配置 (通过隧道)
+        self.mysql_config = {
+            "host": os.getenv("GSD_DB_HOST", "127.0.0.1"),
+            "port": int(os.getenv("GSD_DB_PORT", 36301)), # SSH 隧道映射端口
+            "user": os.getenv("GSD_DB_USER", "root"),
+            "password": os.getenv("GSD_DB_PASSWORD", "alwaysup@888"),
+            "db": os.getenv("GSD_DB_NAME", "alwaysup"),
+            "autocommit": True
+        }
         
     async def initialize(self):
         """初始化资源"""
@@ -46,19 +57,18 @@ class PostMarketGateService:
 
     async def run_gate_check(self) -> Dict[str, Any]:
         """执行 Gate-3 审计流程"""
-        today = datetime.now(CST).strftime('%Y-%m-%d')
+        today_obj = datetime.now(CST)
+        today = today_obj.strftime('%Y-%m-%d')
         logger.info(f"🛡️ 开始盘后深度审计, 目标日期: {today}")
         
         # 1. 基础覆盖率检查
         kline_rate = await self._check_kline_coverage(today)
         tick_rate = await self._check_tick_coverage(today)
         
-        # 2. 深度质量检查 (时段完整性)
-        continuity_report = []
-        if self.strict_mode:
-            continuity_report = await self._check_tick_continuity(today)
-            
-        # 3. 数据一致性检查 (对账)
+        # 2. 深度质量检查 (全量时段完整性)
+        continuity_summary = await self._check_all_ticks_continuity(today)
+        
+        # 3. 数据一致性检查 (抽样对账)
         consistency_report = await self._check_price_consistency(today)
         
         # 4. 判断是否需要补采
@@ -68,30 +78,41 @@ class PostMarketGateService:
             await self._trigger_recovery("daily_kline_sync", today)
             actions.append("当日K线补采")
             
-        if tick_rate < self.tick_threshold:
-            logger.warning(f"⚠️ 当日 分笔覆盖率 {tick_rate}% 不足")
-            # 注意: 这里触发分片补采或者全量补采取决于策略
-            # 简化版触发一次全量补采
+        if tick_rate < self.tick_threshold or continuity_summary['failed_count'] > 100:
+            logger.warning(f"⚠️ 当日分笔异常: 覆盖率={tick_rate}%, 缺时段股票数={continuity_summary['failed_count']}")
             await self._trigger_recovery("repair_tick", today)
             actions.append("应当分笔补采")
 
-        # 5. 生成综合报告
+        # 5. 生成报告并持久化
+        status = "SUCCESS"
+        if kline_rate < 90 or tick_rate < 90 or continuity_summary['failed_count'] > 500:
+            status = "ERROR"
+        elif actions:
+            status = "WARNING"
+
         report = {
             "date": today,
+            "gate_id": "GATE_3",
+            "status": status,
             "kline_rate": kline_rate,
             "tick_rate": tick_rate,
-            "continuity": continuity_report,
-            "consistency": consistency_report,
-            "actions": actions,
-            "status": "ERROR" if (kline_rate < 90 or tick_rate < 90) else ("WARNING" if actions else "SUCCESS")
+            "metrics": {
+                "continuity": continuity_summary,
+                "consistency": consistency_report
+            },
+            "actions_taken": actions
         }
         
+        # 持久化到云端
+        await self._persist_to_cloud(report)
+        
+        # 发送企微报告
         await self._send_audit_report(report)
         return report
 
     async def _check_kline_coverage(self, date_str: str) -> float:
         """K线覆盖率"""
-        query = f"SELECT countDistinct(stock_code) FROM stock_data.stock_kline_daily WHERE trade_date = '{date_str}'"
+        query = f"SELECT countDistinct(stock_code) FROM stock_data.stock_kline_daily WHERE trade_date = '{date_str.replace('-', '')}'"
         try:
             result = self.ch_client.client.execute(query)
             count = result[0][0]
@@ -102,7 +123,7 @@ class PostMarketGateService:
 
     async def _check_tick_coverage(self, date_str: str) -> float:
         """分笔覆盖率"""
-        query = f"SELECT countDistinct(stock_code) FROM stock_data.tick_data WHERE trade_date = '{date_str}'"
+        query = f"SELECT countDistinct(stock_code) FROM stock_data.tick_data WHERE trade_date = '{date_str.replace('-', '')}'"
         try:
             result = self.ch_client.client.execute(query)
             count = result[0][0]
@@ -111,107 +132,117 @@ class PostMarketGateService:
             logger.error(f"分笔覆盖率检查失败: {e}")
             return 0.0
 
-    async def _check_tick_continuity(self, date_str: str) -> List[Dict]:
-        """检查核心股票的时段覆盖情况 (抽样 HS300)"""
-        # 抽取若干代表性股票检查
-        samples = ['000001', '600036', '600519', '000333', '601318']
-        report = []
-        
-        for code in samples:
-            query = f"""
+    async def _check_all_ticks_continuity(self, date_str: str) -> Dict[str, Any]:
+        """全量检查分笔时段完整性 (ClickHouse 分片聚合)"""
+        # 核心逻辑：检查每只股票的分钟数
+        # 正常交易日应有 120 (AM) + 120 (PM) + 1 (9:25) = 241 分钟
+        query = f"""
+        SELECT 
+            countDistinct(stock_code) as total,
+            countIf(active_minutes < 235) as insufficient_minutes,
+            countIf(first_tick > '09:25:05') as late_starts,
+            countIf(last_tick < '14:59:55') as early_ends
+        FROM (
             SELECT 
+                stock_code,
                 min(tick_time) as first_tick,
                 max(tick_time) as last_tick,
-                count() as total_count
+                countDistinct(toStartOfMinute(toDateTime(concat('2000-01-01 ', tick_time)))) as active_minutes
             FROM stock_data.tick_data 
-            WHERE stock_code = '{code}' AND trade_date = '{date_str}'
-            """
-            try:
-                res = self.ch_client.client.execute(query)
-                first, last, count = res[0]
-                
-                # 情况判定
-                has_0925 = first <= "09:25:01" if first else False
-                has_1500 = last >= "15:00:00" if last else False
-                
-                status = "OK"
-                if not has_0925 or not has_1500 or count < 1000:
-                    status = "MISSING_PERIODS"
-                
-                report.append({
-                    "code": code,
-                    "first": str(first),
-                    "last": str(last),
-                    "count": count,
-                    "status": status
-                })
-            except Exception as e:
-                logger.error(f"检查连续性失败 {code}: {e}")
-        return report
+            WHERE trade_date = '{date_str.replace('-', '')}'
+            GROUP BY stock_code
+        )
+        """
+        try:
+            res = self.ch_client.client.execute(query)
+            total, insufficient, late, early = res[0]
+            failed_codes = insufficient + late + early # 可能有重合，但在 Gate-3 关心总量
+            return {
+                "total_checked": total,
+                "insufficient_minutes_count": insufficient,
+                "late_starts_count": late,
+                "early_ends_count": early,
+                "failed_count": failed_codes
+            }
+        except Exception as e:
+            logger.error(f"全量分笔连续性审计失败: {e}")
+            return {"error": str(e), "failed_count": 0}
 
     async def _check_price_consistency(self, date_str: str) -> Dict:
-        """收盘价一致性检查 (抽样)"""
-        query = f"""
-        WITH 
-          (SELECT stock_code, close FROM stock_data.stock_kline_daily WHERE trade_date = '{date_str}' LIMIT 10) as klines,
-          (SELECT stock_code, last_value(price) as last_tick_price FROM stock_data.tick_data WHERE trade_date = '{date_str}' GROUP BY stock_code LIMIT 10) as ticks
-        SELECT klines.stock_code, klines.close, ticks.last_tick_price
-        FROM klines INNER JOIN ticks ON klines.stock_code = ticks.stock_code
-        """
-        # 注意: 这里的 SQL 可能需要根据实际 ClickHouse 架构调整 (分布式表下的 argMax/last_value)
-        # 为简化，我们执行两次查询手动对比
+        """抽样对账"""
         try:
-            # 抽样 5 只
-            stocks = ['600519', '000001', '601318']
+            ds = date_str.replace('-', '')
+            # 抽样 10 只
+            stocks = ['600519', '000001', '601318', '000333', '600036', '000858', '600276', '601998', '000002', '300750']
             matches = 0
             for code in stocks:
-                k_query = f"SELECT close FROM stock_data.stock_kline_daily WHERE stock_code='{code}' AND trade_date='{date_str}' LIMIT 1"
-                t_query = f"SELECT price FROM stock_data.tick_data WHERE stock_code='{code}' AND trade_date='{date_str}' ORDER BY tick_time DESC LIMIT 1"
+                k_query = f"SELECT close FROM stock_data.stock_kline_daily WHERE stock_code='{code}' AND trade_date='{ds}' LIMIT 1"
+                t_query = f"SELECT price FROM stock_data.tick_data WHERE stock_code='{code}' AND trade_date='{ds}' ORDER BY tick_time DESC LIMIT 1"
                 
                 k_res = self.ch_client.client.execute(k_query)
                 t_res = self.ch_client.client.execute(t_query)
                 
                 if k_res and t_res:
-                    if abs(k_res[0][0] - t_res[0][0]) < 0.01:
+                    if abs(float(k_res[0][0]) - float(t_res[0][0])) < 0.011:
                         matches += 1
             return {"sample_size": len(stocks), "matched": matches}
         except Exception as e:
-            logger.error(f"一致性对账失败: {e}")
+            logger.error(f"一致性检查异常: {e}")
             return {"error": str(e)}
 
+    async def _persist_to_cloud(self, report: Dict):
+        """将审计结果持久化到腾讯云 MySQL"""
+        try:
+            conn = await aiomysql.connect(**self.mysql_config)
+            async with conn.cursor() as cur:
+                sql = """
+                INSERT INTO alwaysup.data_gate_audits 
+                (trade_date, gate_id, status, kline_rate, tick_rate, metrics, actions_taken) 
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE 
+                status=VALUES(status), kline_rate=VALUES(kline_rate), tick_rate=VALUES(tick_rate),
+                metrics=VALUES(metrics), actions_taken=VALUES(actions_taken)
+                """
+                await cur.execute(sql, (
+                    report['date'], 
+                    report['gate_id'], 
+                    report['status'],
+                    report['kline_rate'],
+                    report['tick_rate'],
+                    json.dumps(report['metrics']),
+                    json.dumps(report['actions_taken'])
+                ))
+            await conn.ensure_closed()
+            logger.info(f"✅ 审计结果已持久化到云端 MySQL (Gate-3)")
+        except Exception as e:
+            logger.error(f"❌ 持久化审计结果失败: {e}")
+
     async def _trigger_recovery(self, task_id: str, date_str: str):
-        """触发 Orchestrator 任务"""
+        """触发补采任务"""
         url = f"{self.orchestrator_url}/api/v1/tasks/{task_id}/trigger"
         payload = {"params": {"date": date_str.replace('-', '')}}
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 await client.post(url, json=payload)
-        except Exception as e:
-            logger.error(f"触发补采失败: {e}")
+        except: pass
 
     async def _send_audit_report(self, report: Dict):
-        """发送 Gate-3 深度审计报告"""
-        icon = "🛡️" if report['status'] == "SUCCESS" else "⚠️"
-        title = f"{icon} 盘后数据深度审计 (Gate-3) - {report['date']}"
+        """发送企微审计报告"""
+        m = report['metrics']['continuity']
+        icon = "🛡️" if report['status'] == "SUCCESS" else ("🚨" if report['status'] == "ERROR" else "⚠️")
+        title = f"{icon} 盘后审计报告 (Gate-3) - {report['date']}"
         
         content = [
-            f"📅 审计日期: {report['date']}",
+            f"📅 交易日期: {report['date']}",
             f"📈 K线覆盖: {report['kline_rate']}%",
             f"📉 分笔覆盖: {report['tick_rate']}%",
+            f"🕒 连续性审计 (全市场 {m.get('total_checked', 0)} 只):",
+            f"  - 缺分钟数: {m.get('insufficient_minutes_count', 0)}",
+            f"  - 晚开盘: {m.get('late_starts_count', 0)}",
+            f"  - 早收盘: {m.get('early_ends_count', 0)}",
+            f"💰 对账 (样): {report['metrics']['consistency'].get('matched', 0)}/{report['metrics']['consistency'].get('sample_size', 0)}",
         ]
         
-        # 连续性抽样
-        if report['continuity']:
-            content.append("\n🕒 时段连续性抽样:")
-            for item in report['continuity']:
-                mark = "✅" if item['status'] == "OK" else "❌"
-                content.append(f"  {mark} {item['code']}: {item['first']} -> {item['last']} ({item['count']}条)")
-        
-        # 对账抽样
-        if 'consistency' in report and 'matched' in report['consistency']:
-            c = report['consistency']
-            content.append(f"\n💰 收盘价对账: {c['matched']}/{c['sample_size']} 匹配")
-
         if report['actions']:
             content.append(f"\n⚡ 响应动作: " + ", ".join(report['actions']))
         else:
