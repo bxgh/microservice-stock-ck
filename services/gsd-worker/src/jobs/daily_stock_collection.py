@@ -48,11 +48,19 @@ async def fetch_stock_data():
     logger.info(f"🚀 开始从云端拉取股票列表: {CLOUD_API_URL}")
     logger.info(f"   使用代理: {HTTP_PROXY}")
     
+    # 构建查询参数：仅获取在市的 A 股股票
+    params = {
+        "security_type": "stock",  # 仅股票类型（排除指数、ETF、基金等）
+        "is_listed": "true",       # 仅在市股票（排除退市股票）
+        "is_active": "true"        # 仅活跃数据（数据维护状态良好）
+    }
+    logger.info(f"   过滤条件: {params}")
+    
     # 配置代理
     connector = aiohttp.TCPConnector()
     async with aiohttp.ClientSession(connector=connector) as session:
         try:
-            async with session.get(CLOUD_API_URL, proxy=HTTP_PROXY, timeout=30) as response:
+            async with session.get(CLOUD_API_URL, params=params, proxy=HTTP_PROXY, timeout=30) as response:
                 if response.status != 200:
                     logger.error(f"❌ API 请求失败: HTTP {response.status}")
                     return None
@@ -61,7 +69,8 @@ async def fetch_stock_data():
                 items = data.get("items", [])
                 total = data.get("total", 0)
                 
-                logger.info(f"✓ 获取成功: {len(items)} 条记录 (Total: {total})")
+                logger.info(f"✓ 获取成功: {len(items)} 条记录 (API Total: {total})")
+                logger.info(f"   已通过 API 参数过滤退市股票和非股票类型")
                 return items
         except Exception as e:
             logger.error(f"❌ 网络请求异常: {e}")
@@ -93,12 +102,18 @@ async def update_redis_cache(redis, items):
         for item in items:
             code = item.get("standard_code")
             exchange = item.get("exchange")
+            is_listed = item.get("is_listed", True)  # 默认 True 兼容旧数据
             
             if not code or not exchange:
                 continue
             
-            # 严格过滤无效 A 股 (排除已退市或历史代码)
+            # 双重校验：API 已过滤 + 本地前缀校验（防御性编程）
+            if not is_listed:
+                logger.warning(f"⚠️  跳过退市股票: {code} ({item.get('name', 'Unknown')})")
+                continue
+                
             if not is_valid_a_stock(code):
+                logger.warning(f"⚠️  跳过无效前缀: {code}")
                 continue
                 
             formatted_code = f"{code}.{exchange}"

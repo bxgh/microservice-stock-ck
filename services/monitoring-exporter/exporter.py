@@ -17,6 +17,7 @@ from clickhouse_driver import Client as ClickHouseClient
 import redis
 import subprocess
 import requests
+import json
 
 # 配置日志
 logging.basicConfig(
@@ -33,7 +34,7 @@ class MonitoringExporter:
         # 本地数据源
         self.prom = PrometheusConnect(url="http://127.0.0.1:9091")
         self.clickhouse = ClickHouseClient(host='127.0.0.1', port=9000)
-        self.redis_client = redis.Redis(host='127.0.0.1', port=6379, decode_responses=True)
+        self.redis_client = redis.Redis(host='127.0.0.1', port=6379, password='redis123', decode_responses=True)
         
         # 云端 MySQL (通过 GOST 隧道)
         self.cloud_db = None
@@ -419,39 +420,128 @@ print(json.dumps(result))
         timestamp = datetime.now()
         
         try:
-            # K线数据量 - 今日
+            # 1. K线数据量
+            # 使用 formatDateTime 确保日期对比正确
+            today_str = datetime.now().strftime('%Y%m%d')
+            
+            # 修正 ClickHouse 表 stock_data.stock_kline_daily 中的字段名为 stock_code
             kline_today = self.clickhouse.execute(
-                "SELECT count() FROM stock_data.stock_kline_daily WHERE toDate(create_time) = today()"
+                f"SELECT count() FROM stock_data.stock_kline_daily WHERE trade_date = '{today_str}'"
             )[0][0]
             
-            # K线数据量 - 总量
             kline_total = self.clickhouse.execute(
                 "SELECT count() FROM stock_data.stock_kline_daily"
             )[0][0]
             
-            # 快照数据量 - 今日
-            snapshot_today = self.clickhouse.execute(
-                "SELECT count() FROM stock_data.snapshot_data WHERE trade_date = today()"
+            stock_count = self.clickhouse.execute(
+                f"SELECT countDistinct(stock_code) FROM stock_data.stock_kline_daily WHERE trade_date >= today() - 7"
             )[0][0]
             
-            # 股票覆盖数
-            stock_count = self.clickhouse.execute(
-                "SELECT countDistinct(stock_code) FROM stock_data.stock_kline_daily WHERE trade_date >= today() - 7"
+            # 2. 分笔数据量
+            tick_today = self.clickhouse.execute(
+                f"SELECT countDistinct(stock_code) FROM stock_data.tick_data WHERE trade_date = '{today_str}'"
             )[0][0]
+            
+            # 3. 快照数据量 - 这里检查 ClickHouse 的 snapshot_data 表
+            snapshot_today = self.clickhouse.execute(
+                f"SELECT count() FROM stock_data.snapshot_data WHERE trade_date = '{today_str}'"
+            )[0][0]
+            
+            # 4. 预期股票数 (从 Redis 获取)
+            tick_expected = self.redis_client.scard('stock_list:active') or 5300
+            
+            # 5. 覆盖率计算
+            kline_coverage_rate = float(round(stock_count / 5300 * 100, 2))
+            tick_coverage_rate = float(round(tick_today / tick_expected * 100, 2)) if tick_expected > 0 else 0
+            
+            # 6. 沪深300覆盖
+            # HS300 成分股在 ClickHouse 中的表是 stock_data.hs300_constituents
+            # 增加 defensive 检查，防止表不存在导致整个导出失败
+            hs300_kline = 0
+            hs300_tick = 0
+            
+            try:
+                # 检查是否存在 hs300_constituents 表，如果不存在则从其它表近似推导或设为 0
+                tables = [t[0] for t in self.clickhouse.execute("SHOW TABLES FROM stock_data")]
+                if 'hs300_constituents' in tables:
+                    hs300_kline = self.clickhouse.execute(f"""
+                        SELECT countDistinct(stock_code) FROM stock_data.stock_kline_daily 
+                        WHERE trade_date >= '{today_str}' AND stock_code IN (
+                            SELECT ts_code FROM stock_data.hs300_constituents
+                        )
+                    """)[0][0]
+                    
+                    hs300_tick = self.clickhouse.execute(f"""
+                        SELECT countDistinct(stock_code) FROM stock_data.tick_data 
+                        WHERE trade_date = '{today_str}' AND stock_code IN (
+                            SELECT ts_code FROM stock_data.hs300_constituents
+                        )
+                    """)[0][0]
+                else:
+                    logger.warning("⚠️ 沪深300成分股表不存在，跳过覆盖率检查")
+            except Exception as e:
+                logger.warning(f"⚠️ 沪深300覆盖检查失败: {e}")
             
             cursor.execute(
                 """INSERT INTO clickhouse_business_metrics 
-                   (kline_today, kline_total, snapshot_today, stock_count, timestamp) 
-                   VALUES (%s, %s, %s, %s, %s)""",
-                (kline_today, kline_total, snapshot_today, stock_count, timestamp)
+                   (kline_today, kline_total, snapshot_today, stock_count, 
+                    tick_today, tick_expected, kline_coverage_rate, tick_coverage_rate,
+                    hs300_kline, hs300_tick, timestamp) 
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                (kline_today, kline_total, snapshot_today, stock_count,
+                 tick_today, tick_expected, kline_coverage_rate, tick_coverage_rate,
+                 hs300_kline, hs300_tick, timestamp)
             )
             
             self.cloud_db.commit()
-            logger.info(f"✅ ClickHouse 业务指标导出完成: K线今日 {kline_today}, 快照今日 {snapshot_today}")
+            logger.info(f"✅ ClickHouse 业务指标完成: K线覆盖 {kline_coverage_rate}%, 分笔覆盖 {tick_coverage_rate}%")
         
         except Exception as e:
             self.cloud_db.rollback()
             logger.error(f"❌ ClickHouse 业务指标导出失败: {e}")
+        finally:
+            cursor.close()
+
+    def export_task_execution_status(self):
+        """导出任务执行告警状态"""
+        logger.info("📡 开始监控任务执行状态...")
+        
+        # 使用 correct Cursor 类型
+        cursor = self.cloud_db.cursor(pymysql.cursors.DictCursor)
+        timestamp = datetime.now()
+        
+        try:
+            # 直接从云端 MySQL 的 alwaysup.sync_execution_logs 采集失败记录
+            # 修正字段名: task_name, execution_time, details
+            sql = """
+                SELECT `task_name`, `status`, `details`, `execution_time`
+                FROM `alwaysup`.`sync_execution_logs`
+                WHERE `status` IN ('FAILED', 'TIMEOUT', 'FAILURE')
+                AND `execution_time` > DATE_SUB(NOW(), INTERVAL 30 MINUTE)
+            """
+            cursor.execute(sql)
+            failures = cursor.fetchall()
+            
+            for f in failures:
+                # 插入到云端监测库 monitoring 的告警表
+                # 使用 INSERT IGNORE 避免重复告警，因为我们已经对 (task_id, detected_at) 加了唯一索引
+                # 这里将 task_name 作为 task_id 存入
+                cursor.execute(
+                    """INSERT IGNORE INTO `monitoring`.`task_execution_alerts` 
+                       (`task_id`, `task_name`, `status`, `error_message`, `detected_at`)
+                       VALUES (%s, %s, %s, %s, %s)""",
+                    (f['task_name'], f['task_name'], f['status'], f['details'], f['execution_time'])
+                )
+            
+            self.cloud_db.commit()
+            if failures:
+                logger.warning(f"🚨 发现 {len(failures)} 条任务失败记录已同步到告警表")
+            else:
+                logger.info("✅ 未发现新增任务失败记录")
+                
+        except Exception as e:
+            self.cloud_db.rollback()
+            logger.error(f"❌ 任务执行状态监控失败: {e}")
         finally:
             cursor.close()
     
@@ -482,6 +572,7 @@ print(json.dumps(result))
             
             # L4: 业务指标
             self.export_clickhouse_business_metrics()
+            self.export_task_execution_status()
             
             # 其他 Prometheus 指标
             self.export_prometheus_metrics()

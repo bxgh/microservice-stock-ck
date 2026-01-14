@@ -231,15 +231,23 @@ class KLineSyncService:
         Returns:
             股票代码列表
         """
-        from redis.asyncio.cluster import RedisCluster
-        
         redis_host = os.getenv("REDIS_HOST", "127.0.0.1")
         redis_port = int(os.getenv("REDIS_PORT", "16379"))
+        redis_password = os.getenv("REDIS_PASSWORD")
+        is_cluster = os.getenv("REDIS_CLUSTER", "true").lower() == "true"
         
-        redis = await RedisCluster.from_url(
-            f"redis://{redis_host}:{redis_port}",
-            decode_responses=True
-        )
+        url = f"redis://{redis_host}:{redis_port}"
+        if redis_password:
+            url = f"redis://:{redis_password}@{redis_host}:{redis_port}"
+            
+        if is_cluster:
+            from redis.asyncio.cluster import RedisCluster
+            redis = await RedisCluster.from_url(url, decode_responses=True)
+            logger.info(f"Connected to Redis Cluster: {url}")
+        else:
+            from redis.asyncio import Redis
+            redis = await Redis.from_url(url, decode_responses=True)
+            logger.info(f"Connected to Redis Standalone: {url}")
         
         try:
             if shard_index is not None:
@@ -330,10 +338,70 @@ class KLineSyncService:
                 await self._log_to_db("SUCCESS", 0, msg, duration)
 
         except Exception as e:
-            duration = (datetime.now() - start_time).total_seconds()
             await self._update_status("failed", f"智能同步失败: {str(e)}", 0.0)
             await self._log_to_db("FAILED", 0, str(e), duration)
             raise e
+
+    async def sync_by_date(self, trade_date: str, shard_index: int = None):
+        """
+        按日期同步：从MySQL同步指定日期的所有K线数据到ClickHouse
+        
+        Args:
+            trade_date: 交易日期 YYYYMMDD 或 YYYY-MM-DD
+            shard_index: 分片索引 (0/1/2)，None 表示全量
+        """
+        start_time = datetime.now()
+        shard_info = f" (Shard {shard_index})" if shard_index is not None else ""
+        logger.info(f"开始按日期同步: {trade_date}{shard_info}")
+        await self._update_status("running", f"同步日期 {trade_date}...", 0.0)
+        
+        try:
+            # 获取股票代码 (支持分片)
+            stock_codes = await self._get_stock_codes_from_redis(shard_index)
+            if not stock_codes:
+                logger.warning("没有股票代码需要同步")
+                return
+
+            # 查询 MySQL
+            placeholders = ','.join(['%s'] * len(stock_codes))
+            logger.info(f"正在查询{len(stock_codes)}只股票数据...")
+            
+            query = f"""
+                SELECT 
+                    code, trade_date, open, high, low, close,
+                    volume, amount, turnover, pct_chg
+                FROM stock_kline_daily
+                WHERE trade_date = %s
+                  AND code IN ({placeholders})
+                ORDER BY code
+            """
+            
+            rows = await self._fetch_from_mysql_with_retry(query, (trade_date, *stock_codes))
+            
+            duration = (datetime.now() - start_time).total_seconds()
+            if rows:
+                await self._insert_to_clickhouse_enhanced(rows)
+                
+                # Verify Consistency
+                await self.verify_consistency(trade_date)
+                
+                msg = f"按日期同步完成：{trade_date}, {len(rows):,} 条记录"
+                logger.info(f"✓ {msg}")
+                await self._update_status("success", msg, 100.0, {"new_records": len(rows)})
+                await self._log_to_db("SUCCESS", len(rows), msg, duration, task_name=f"kline_sync_{trade_date}")
+            else:
+                msg = f"日期 {trade_date} 无数据"
+                logger.warning(msg)
+                await self._update_status("success", msg, 100.0, {"new_records": 0})
+                await self._log_to_db("SUCCESS", 0, msg, duration, task_name=f"kline_sync_{trade_date}")
+
+        except Exception as e:
+            duration = (datetime.now() - start_time).total_seconds()
+            logger.error(f"按日期同步失败: {e}")
+            await self._update_status("failed", f"日期同步失败: {str(e)}", 0.0)
+            await self._log_to_db("FAILED", 0, str(e), duration)
+            raise e
+
     
     async def sync_by_stock_codes(self, stock_codes: list[str]):
         """

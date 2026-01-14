@@ -22,19 +22,19 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-async def main(mode: str = 'adaptive', shard_index: int = None):
+async def main(mode: str = 'adaptive', shard_index: int = None, date: str = None):
     """
     K线同步主函数
     
     Args:
-        mode: 'adaptive' (自适应调度) | 'direct' (直接同步，用于测试)
+        mode: 'adaptive' (自适应调度) | 'direct' (直接同步)
         shard_index: 分片索引 (0/1/2)，None 表示全量同步
-        
-    Returns:
-        int: 退出码 (0: 成功, 1: 失败)
+        date: 指定日期 (YYYYMMDD)，不为空时触发按日期同步
     """
     shard_info = f" (Shard {shard_index})" if shard_index is not None else ""
-    logger.info(f"启动K线同步任务 (模式={mode}{shard_info})")
+    date_info = f", 日期={date}" if date else ""
+    
+    logger.info(f"启动K线同步任务 (模式={mode}{shard_info}{date_info})")
     
     service = KLineSyncService()
     await service.initialize()
@@ -43,6 +43,14 @@ async def main(mode: str = 'adaptive', shard_index: int = None):
     start_time = datetime.now()
     
     try:
+        # 优先处理指定日期同步
+        if date:
+            logger.info(f"🔧 收到指定日期 {date}，执行按日期同步")
+            await service.sync_by_date(trade_date=date, shard_index=shard_index)
+            # 同步复权因子
+            await service.sync_adjust_factors()
+            return 0
+
         cloud_completion_time = None
         total_records = 0
         
@@ -105,7 +113,9 @@ if __name__ == "__main__":
                        help="同步模式: adaptive(自适应调度) 或 direct(直接同步)")
     parser.add_argument("--shard-index", type=int, default=None,
                        help="分片索引 (0/1/2)，不指定则全量同步")
+    parser.add_argument("--date", type=str, default=None,
+                       help="指定日期 (YYYYMMDD 或 YYYY-MM-DD)")
     args = parser.parse_args()
     
-    exit_code = asyncio.run(main(args.mode, args.shard_index))
+    exit_code = asyncio.run(main(args.mode, args.shard_index, args.date))
     sys.exit(exit_code)
