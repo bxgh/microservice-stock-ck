@@ -32,7 +32,11 @@ RUN rm -f /etc/apt/apt.conf.d/00proxy
 
 # 复制共享库并安装
 COPY libs/gsd-shared/ /app/libs/gsd-shared/
-RUN pip install --no-cache-dir -e /app/libs/gsd-shared/
+RUN if [ "$ENABLE_PROXY" = "true" ]; then \
+        http_proxy=$PROXY_URL https_proxy=$PROXY_URL pip install --no-cache-dir -e /app/libs/gsd-shared/; \
+    else \
+        pip install --no-cache-dir -e /app/libs/gsd-shared/; \
+    fi
 
 # 复制源代码和诊断工具
 COPY services/mootdx-api/src/ ./src/
