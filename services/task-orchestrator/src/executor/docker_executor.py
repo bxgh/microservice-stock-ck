@@ -1,6 +1,6 @@
 import logging
 import docker
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -14,6 +14,7 @@ class DockerExecutor:
     def run_worker(self, 
                    command: List[str], 
                    environment: Optional[Dict[str, str]] = None,
+                   volumes: Optional[Dict[str, Any]] = None,
                    name_suffix: str = "") -> str:
         """
         Run gsd-worker container
@@ -72,11 +73,14 @@ class DockerExecutor:
             })
             
             # Prepare volumes mount
-            volumes = {
-                f'{settings.BASE_DIR}/data/gsd-worker': {'bind': '/app/data', 'mode': 'rw'},
-                f'{settings.BASE_DIR}/libs/gsd-shared': {'bind': '/app/libs/gsd-shared', 'mode': 'ro'},
-                f'{settings.BASE_DIR}/services/gsd-worker/config': {'bind': '/app/config', 'mode': 'ro'}
-            }
+            vols = volumes
+            if not vols:
+                vols = {
+                    f'{settings.BASE_DIR}/data/gsd-worker': {'bind': '/app/data', 'mode': 'rw'},
+                    f'{settings.BASE_DIR}/libs/gsd-shared': {'bind': '/app/libs/gsd-shared', 'mode': 'ro'},
+                    f'{settings.BASE_DIR}/services/gsd-worker/config': {'bind': '/app/config', 'mode': 'ro'},
+                    f'{settings.BASE_DIR}/services/gsd-worker/src': {'bind': '/app/src', 'mode': 'ro'} # Added src!
+                }
 
             container = self.client.containers.run(
                 image=image,
@@ -86,7 +90,7 @@ class DockerExecutor:
                 network_mode="host" if settings.WORKER_NETWORK == "host" else None,
                 network=settings.WORKER_NETWORK if settings.WORKER_NETWORK != "host" else None,
                 name=container_name,
-                volumes=volumes,
+                volumes=vols,
                 auto_remove=False  # Keep container for log inspection
             )
             

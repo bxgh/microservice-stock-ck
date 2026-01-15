@@ -1,4 +1,5 @@
 import logging
+import os
 from contextlib import asynccontextmanager
 from typing import Optional, Dict, Any
 from fastapi import FastAPI
@@ -127,12 +128,38 @@ class GenericTaskRunner:
 
         network_mode = task.target.get('network_mode', 'host')
 
-        logger.info(f"▶️ Executing Docker task: {task.name} ({image}) net={network_mode}")
+        # 3. Prepare Volumes
+        # 汇总全局默认挂载 + 任务特定挂载
+        volumes_config = {}
+        
+        # A. 从 global.docker.default_volumes 获取 (如果有)
+        if task_config and task_config.global_ and task_config.global_.docker:
+            default_vols = task_config.global_.docker.get('default_volumes', [])
+            for v in default_vols:
+                parts = v.split(':')
+                if len(parts) >= 2:
+                    host_path = parts[0]
+                    if host_path.startswith('.'):
+                        host_path = os.path.join(settings.BASE_DIR, host_path.lstrip('./'))
+                    volumes_config[host_path] = {'bind': parts[1], 'mode': parts[2] if len(parts) > 2 else 'rw'}
+
+        # B. 从任务 target.volumes 获取
+        task_vols = task.target.get('volumes', [])
+        for v in task_vols:
+            parts = v.split(':')
+            if len(parts) >= 2:
+                host_path = parts[0]
+                if host_path.startswith('.'):
+                    host_path = os.path.join(settings.BASE_DIR, host_path.lstrip('./'))
+                volumes_config[host_path] = {'bind': parts[1], 'mode': parts[2] if len(parts) > 2 else 'rw'}
+
+        logger.info(f"▶️ Executing Docker task: {task.name} ({image}) net={network_mode} vols={len(volumes_config)}")
         try:
             container = docker_client.containers.run(
                 image=image,
                 command=command,
                 environment=env,
+                volumes=volumes_config,
                 detach=True,
                 network_mode=network_mode,
                 remove=False  # Keep container for debugging

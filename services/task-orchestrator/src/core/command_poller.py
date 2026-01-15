@@ -108,7 +108,8 @@ class CommandPoller:
                     # 查找任务定义
                     task_def = next((t for t in self.task_config.tasks if t.id == task_id), None)
                     if not task_def:
-                        raise ValueError(f"任务 {task_id} 未在本地注册")
+                        all_ids = [t.id for t in self.task_config.tasks]
+                        raise ValueError(f"任务 {task_id} 未在本地注册. 可用任务: {all_ids}")
 
                     # 如果是 Docker 任务且有参数，使用 DockerExecutor 动态执行
                     if params and self.docker_client and task_def.type == "docker":
@@ -132,9 +133,32 @@ class CommandPoller:
                         logger.info(f"🚀 动态执行任务 {task_id}: {cmd_list}")
                         
                         # 执行容器
+                        
+                        # 准备挂载 (从 task_def 获取)
+                        volumes_config = {}
+                        if self.task_config and self.task_config.global_ and self.task_config.global_.docker:
+                            default_vols = self.task_config.global_.docker.get('default_volumes', [])
+                            for v in default_vols:
+                                parts = v.split(':')
+                                if len(parts) >= 2:
+                                    host_path = parts[0]
+                                    if host_path.startswith('.'):
+                                        host_path = os.path.join(settings.BASE_DIR, host_path.lstrip('./'))
+                                    volumes_config[host_path] = {'bind': parts[1], 'mode': parts[2] if len(parts) > 2 else 'rw'}
+
+                        task_vols = task_def.target.get('volumes', [])
+                        for v in task_vols:
+                            parts = v.split(':')
+                            if len(parts) >= 2:
+                                host_path = parts[0]
+                                if host_path.startswith('.'):
+                                    host_path = os.path.join(settings.BASE_DIR, host_path.lstrip('./'))
+                                volumes_config[host_path] = {'bind': parts[1], 'mode': parts[2] if len(parts) > 2 else 'rw'}
+
                         cid = executor.run_worker(
                             command=cmd_list,
                             environment=task_def.target.get('environment'),
+                            volumes=volumes_config,
                             name_suffix=f"adhoc-{cmd_id}"
                         )
                         
@@ -174,3 +198,19 @@ class CommandPoller:
                     (status, result, cmd_id)
                 )
                 await conn.commit()
+
+                # 5. [方案 A] 自动化联动：修复任务完成后自动触发门禁审计 (Re-Audit)
+                if status == "DONE":
+                    REAUDIT_MAP = {
+                        "daily_stock_collection": "pre_market_gate",
+                        "repair_tick": "post_market_gate",
+                        "repair_kline": "post_market_gate"
+                    }
+                    if task_id in REAUDIT_MAP:
+                        gate_id = REAUDIT_MAP[task_id]
+                        logger.info(f"🔄 任务 {task_id} 执行成功，自动刷新门禁状态: {gate_id}")
+                        try:
+                            # 立即触发门禁任务 (不带参数，运行标准审计)
+                            self.scheduler.modify_job(gate_id, next_run_time=datetime.now())
+                        except Exception as e:
+                            logger.error(f"自动触发门禁 {gate_id} 失败: {e}")

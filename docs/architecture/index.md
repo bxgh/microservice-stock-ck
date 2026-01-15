@@ -1,6 +1,6 @@
 # microservice-stock 架构文档
 
-> **更新时间**: 2026-01-09  
+> **更新时间**: 2026-01-15  
 > **当前架构**: 3-Shard 高性能并行集群 (Server 41/58/111)
 
 ---
@@ -76,6 +76,14 @@ graph TD
 | 文档 | 说明 | 状态 |
 |------|------|------|
 | [tick_data_sharding_implementation.md](tick_data_sharding_implementation.md) | 分笔数据分布式 Sharding 实现 | ✅ v3.0 |
+
+### 数据质量门禁 (`data_gates/`)
+
+| 文档 | 说明 | 状态 |
+|------|------|------|
+| [01_pre_market_gate.md](../../services/task-orchestrator/docs/data_gates/01_pre_market_gate.md) | Gate-1 盘前准入逻辑 | ✅ v4.0 |
+| [02_intraday_gate.md](../../services/task-orchestrator/docs/data_gates/02_intraday_gate.md) | Gate-2 盘中监控逻辑 | 🔄 开发中 |
+| [03_post_market_gate.md](../../services/task-orchestrator/docs/data_gates/03_post_market_gate.md) | Gate-3 盘后审计逻辑 | ✅ v4.0 |
 
 
 ---

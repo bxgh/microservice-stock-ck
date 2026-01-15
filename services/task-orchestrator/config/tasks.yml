@@ -13,6 +13,7 @@ global:
     default_volumes:
       - ./libs/gsd-shared:/app/libs/gsd-shared:ro
       - ./services/gsd-worker/config:/app/config:ro
+      - ./services/gsd-worker/src:/app/src
     environment:
       PYTHONPATH: /app/src
   
