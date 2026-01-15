@@ -36,13 +36,14 @@ services:
       - REDIS_PASSWORD=redis123
       - REDIS_CLUSTER=false
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
     volumes:
       - ./logs/mootdx-api:/app/logs
       - ./libs/gsd-shared:/app/libs/gsd-shared:ro
+      - ./services/mootdx-api/src:/app/src
 
   mootdx-source:
     build:
@@ -78,6 +79,7 @@ services:
       - ORCHESTRATOR_REDIS_HOST=192.168.151.41
       - ORCHESTRATOR_REDIS_PORT=6379
       - ORCHESTRATOR_REDIS_PASSWORD=redis123
+      - ORCHESTRATOR_WORKER_MOOTDX_API_URL=http://localhost:8003
       - WORKER_CLICKHOUSE_HOST=127.0.0.1
       - WORKER_CLICKHOUSE_PORT=9000
     volumes:

@@ -111,7 +111,7 @@ async def health_check():
     # Pool Status
     if mootdx_handler:
         pool_status = mootdx_handler.get_pool_status()
-        is_healthy = pool_status.get("active_connections", 0) > 0
+        is_healthy = pool_status.get("initialized", False)
     else:
         pool_status = {}
         is_healthy = False
