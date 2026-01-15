@@ -44,3 +44,4 @@ loguru==0.7.2
 
 # Hashing (for shard allocation)
 xxhash==3.4.1
+chinesecalendar>=1.9.1
