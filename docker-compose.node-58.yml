@@ -43,7 +43,6 @@ services:
     volumes:
       - ./logs/mootdx-api:/app/logs
       - ./libs/gsd-shared:/app/libs/gsd-shared:ro
-      - ./services/mootdx-api/src:/app/src
 
   mootdx-source:
     build:
