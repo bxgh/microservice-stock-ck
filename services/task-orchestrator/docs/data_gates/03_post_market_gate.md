@@ -1,52 +1,90 @@
 # 数据门禁 (Gate-3): 盘后深度审计与对账
 
 ## 1. 目标
-在收盘且所有采集完成后 (19:18)，进行最严格的“数据大考”：
-1. **全量覆盖率校验** - 确认当日行情数据是否 100% 颗粒归仓
-2. **时段完整性检查** - 深度检查所有股票是否覆盖 09:25-15:00 无断点
-3. **价格一致性对账** - 比对分笔落表数据与日 K 线收盘价，确保无逻辑偏差
+在收盘且所有采集完成后 (19:18)，进行最严格的"数据大考"：
+1. **K线数据一致性校验** - 确认本地 ClickHouse K线数据与云端 MySQL 基准数据 100% 对齐。
+2. **分笔时段完整性检查** - 深度检查所有股票是否覆盖 09:25-15:00 无断点（标准 241 分钟）。
+3. **价格一致性对账** - 比对分笔数据与日 K 线收盘价，确保存储逻辑无偏差。
+4. **异常自动恢复** - 发现数据不一致时，自动触发"先删后补"的自愈逻辑。
 
-## 2. 执行逻辑
-- **调度时间**: 每个交易日 `19:18`
-- **校验对象**: 当日 (T) 全量历史数据
-- **核心指标**:
-    - 全市场 K线覆盖率 > 99%
-    - 全市场分笔时段覆盖率 = 100%
-    - 收盘价对账差异率 < 0.01%
+## 2. 核心校验逻辑
+- **K线覆盖率 (云端对齐)**:
+    - 基准: 查询云端 MySQL 当日 `stock_kline_daily` 记录总数。
+    - 实测: 查询本地 ClickHouse 当日 `stock_kline_daily` 记录总数。
+    - 公式: `覆盖率 = ClickHouse 计数 / MySQL 计数 * 100%`。
+    - 优势: 自动忽略停牌股票，无需维护静态名单。
+- **分笔连续性审计**: 聚合分笔数据，统计每只股票的分钟数、首笔时间及末笔时间。
+- **价格对账规则**: 抽样核心标的，校验 K 线 `close_price` 与分笔最后一笔 `price` 的差值 (< 0.011)。
 
-## 3. 修复机制
-- **即时修复**: 发现空洞立即触发 `repair_tick` 任务。
-- **报告生成**: 生成当日《数据质量审计白皮书》，作为后续回测的质量凭证。
+## 3. 自动化联动流程 (Self-Healing Loop)
 
-## 4. 告警通知
-- **深度报告**: 包含抽样对账详情及异常点分析报告。
+Gate-3 审计完成后，系统会根据检测结果自动触发对应的修复任务：
 
-## 5. 检查结果入库 (Persistence)
+| 检测项 | 判定条件 | 触发任务 |
+| :--- | :--- | :--- |
+| K线覆盖率 | < 100% | `daily_kline_sync` |
+| 分笔覆盖率 | < 95% | `repair_tick` |
+| 时段缺失股票数 | > 100 | `repair_tick` |
 
-### 5.1 云端数据表 (`alwaysup.data_gate_audits`)
-极简审计表，仅保留核心状态：
+### 3.1 K线自愈同步
+当 K 线覆盖率低于阈值时，系统执行以下自愈逻辑：
+1. 对比 ClickHouse 与 MySQL 的当日记录数。
+2. 若不一致，物理删除 ClickHouse 中当日数据 (`ALTER TABLE ... DELETE`)。
+3. 重新从云端拉取缺失数据。
 
+### 3.2 分笔补采
+当分笔覆盖率或时段完整性异常时，系统自动触发 `repair_tick` 任务，对缺失时段进行定向补采。
+
+### 3.3 手动触发
+除自动修复外，也可通过 SQL 指令手动触发特定任务：
+
+**重新执行盘后审计：**
 ```sql
-CREATE TABLE IF NOT EXISTS `data_gate_audits` (
-    `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
-    `trade_date` DATE NOT NULL COMMENT '交易日期',
-    `gate_id` VARCHAR(20) NOT NULL COMMENT 'GATE_1/2/3',
-    `is_complete` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '1: 完整, 0: 不完整',
-    `description` VARCHAR(255) COMMENT '简要结果说明 (如: K线99% 分笔100%)',
-    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE INDEX `idx_date_gate` (`trade_date`, `gate_id`)
-) COMMENT='精简版数据门禁审计历史';
+INSERT INTO alwaysup.task_commands (task_id, params, status) 
+VALUES ('post_market_audit', '{"date": "20260115"}', 'PENDING');
 ```
 
-### 5.2 入库流程 (Simplified Flow)
-1. **本地执行**: `PostMarketGateService` 完成校验。
-2. **状态判定**: 若 `status == 'SUCCESS'` 则 `is_complete = 1`，否则为 `0`。
-3. **极简写入**: 仅写入日期、门禁ID、是否完整以及一行文本摘要。
+**手动触发 K 线补采：**
+```sql
+INSERT INTO alwaysup.task_commands (task_id, params, status) 
+VALUES ('repair_kline', '{"date": "20260115"}', 'PENDING');
+```
 
-### 5.3 前端交互与任务启动
-1. **状态展示**: 小程序根据 `status` 字段渲染卡片（绿色/橙色/红色）。
-2. **详情下钻**: 点击卡片展示 `metrics` 中的异常股票详情。
-3. **二次补采**: 
-   - 对于 `WARNING/ERROR` 的记录，前端提供“一键补采”按钮。
-   - 点击按钮调用 `cloud-api` 向 `task_commands` 表插入 `repair_tick` 指令。
-   - 内网 `CommandPoller` 捕获指令并执行，形成质量闭环。
+**手动触发分笔补采：**
+```sql
+INSERT INTO alwaysup.task_commands (task_id, params, status) 
+VALUES ('repair_tick', '{"date": "20260115"}', 'PENDING');
+```
+
+## 4. 技术实现细节
+
+### 4.1 Orchestrator 隔离执行
+- **环境隔离**: 审计逻辑通过 `gsd-worker` 独立容器运行。
+- **云端连接**: 计算结果通过 SSH 隧道实时同步至云端 MySQL。
+
+### 4.2 多表智能切换
+- 审计逻辑能够自动识别当前日期，对于当日审计优先使用 `tick_data_intraday` 表，确保实时性。
+
+### 4.3 审计持久化
+审计结果最终写入云端 `alwaysup.data_gate_audits` 表，支持分布式查看。
+
+| 字段 | 说明 |
+| :--- | :--- |
+| `trade_date` | 当前交易日 |
+| `gate_id` | `GATE_3` |
+| `is_complete` | `1`: 全项通过, `0`: 异常 |
+| `description` | `K线覆盖率:100% 分笔覆盖率:98% 时段缺失:5` (详细结果) |
+
+## 5. 常见问题处理
+- **K线覆盖率不足**: 检查 `daily_kline_sync` 任务状态，或手动触发 `repair_kline`。
+- **分笔时段缺失**: 通常由网络波动导致，系统会自动触发 `repair_tick` 补采。
+- **对账失败**: 通常由收盘集合竞价的秒级延迟引起，会自动重试。
+
+## 6. 开发状态
+- K线云端对齐逻辑开发完成
+- 分笔连续性深度审计开发完成
+- 价格一致性对账逻辑开发完成
+- 自愈修复联动开发完成
+
+## 7. 完成时间
+- 2026-01-15

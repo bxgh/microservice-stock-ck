@@ -20,3 +20,26 @@
 
 ## 4. 告警通知
 - **高优先级告警**: 发生断流或延迟超过阈值时，立即通过企业微信推送。
+
+## 5. 检查结果入库 (Persistence)
+
+### 5.1 云端数据表 (`alwaysup.data_gate_audits`)
+共享极简审计表，仅记录核心就绪状态：
+
+```sql
+CREATE TABLE IF NOT EXISTS `data_gate_audits` (
+    `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+    `trade_date` DATE NOT NULL COMMENT '交易日期',
+    `gate_id` VARCHAR(20) NOT NULL COMMENT 'GATE_1/2/3',
+    `is_complete` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '1: 完整, 0: 不完整',
+    `description` VARCHAR(255) COMMENT '简要结果说明 (如: 心跳:OK 延迟:<1s 断流:无)',
+    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE INDEX `idx_date_gate` (`trade_date`, `gate_id`)
+) COMMENT='精简版数据门禁审计历史';
+```
+
+### 5.2 入库流程 (Simplified Flow)
+1. **本地执行**: 监控服务检测到异常或定时上报。
+2. **状态判定**: 若心跳正常且无断流，则 `is_complete = 1`。
+3. **文本摘要**: 在 `description` 中记录关键延迟或水位信息。
+4. **极简写入**: 异步写入云端 MySQL。

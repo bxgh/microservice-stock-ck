@@ -12,12 +12,18 @@
 - **环境一致性**: 现在所有手动触发的任务均能正确加载宿主机最新的源码 (`/app/src`)。
 - **联动触发 (Scheme A)**: 实现了修复任务成功后自动拉起门禁审计的联动逻辑。
 
-### 3. 代码质量与稳定性
-- **质控**: 完成了全量代码质控,修复了裸 `except` 等规范问题,评分 9.6/10。
+### 3. 盘后数据审计门禁 (Gate-3) 开发完成
+- **深度审计**: 实现了 K线/分笔覆盖率校验、全量分笔时段连续性审计及价格一致性抽样对账。
+- **自动闭环**: 实现了发现质量空洞后自动触发 `repair_tick` 等补采任务的逻辑。
+- **持久化**: 审计报告同步至云端 MySQL，并接入企业微信机器人实时推送。
+
+### 4. 代码质量与稳定性
+- **质控**: 完成了全量代码质量检查，修复了裸 `except` 等规范问题。
 - **组件复用**: 补齐了 `gsd-worker` 中的 `clickhouse_client` 和 `notifier` 组件。
 
 ## 📁 Updated Documents
 - [01_pre_market_gate.md](file:///home/bxgh/microservice-stock/services/task-orchestrator/docs/data_gates/01_pre_market_gate.md): 盘前门禁详细设计与流程。
+- [03_post_market_gate.md](file:///home/bxgh/microservice-stock/services/task-orchestrator/docs/data_gates/03_post_market_gate.md): 盘后门禁详细设计与流程。
 - [TASK_COMMAND_FORMAT.md](file:///home/bxgh/microservice-stock/services/task-orchestrator/docs/development/TASK_COMMAND_FORMAT.md): 修正了任务 ID 规范。
 - [walkthrough.md](file:///home/bxgh/.gemini/antigravity/brain/43506db0-f492-4e07-a6ec-25829368ba25/walkthrough.md): 全流程实证演示记录。
 
