@@ -266,10 +266,8 @@ async def register_jobs() -> None:
         
         cal_service = CalendarService()
         
-        # 只注册启用的任务
-        enabled_tasks = [t for t in task_config.tasks if t.enabled]
-        
-        for task_def in enabled_tasks:
+        # 注册所有任务
+        for task_def in task_config.tasks:
             # 1. 创建触发器
             trigger = None
             if task_def.schedule.type == ScheduleType.TRADING_CRON:
@@ -291,7 +289,6 @@ async def register_jobs() -> None:
             job_func = None
             
             # A. 优先查找是否存在特定的 Handler 函数 (job_{task_id})
-            # 这样可以保留复杂的 DAG 逻辑或特殊处理
             special_handler_name = f"job_{task_def.id}"
             if special_handler_name in globals():
                 job_func = globals()[special_handler_name]
@@ -300,8 +297,6 @@ async def register_jobs() -> None:
             # B. 如果没有特殊 Handler，使用通用 Runner
             else:
                 if task_def.type == TaskType.HTTP:
-                    # 使用闭包或 functools.partial 来绑定 task_def
-                    # 这里定义一个 wrapper
                     async def http_wrapper(t=task_def):
                         await GenericTaskRunner.run_http_task(t)
                     job_func = http_wrapper
@@ -331,7 +326,13 @@ async def register_jobs() -> None:
                 name=task_def.name,
                 replace_existing=True
             )
-            logger.info(f"  ✓ Registered: {task_def.name} ({task_def.schedule.expression})")
+            
+            # 4. 如果任务被禁用，则暂停它
+            if not task_def.enabled:
+                scheduler.pause_job(task_def.id)
+                logger.info(f"  ✓ Registered (Paused): {task_def.name}")
+            else:
+                logger.info(f"  ✓ Registered: {task_def.name} ({task_def.schedule.expression})")
         
         logger.info(f"✓ Registered all jobs from YAML")
     except Exception as e:

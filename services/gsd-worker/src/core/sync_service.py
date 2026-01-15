@@ -17,8 +17,14 @@ from tenacity import (
     before_sleep_log
 )
 from core.exceptions import DataMismatchException
+from gsd_shared.validators import is_valid_a_stock
 
 logger = logging.getLogger(__name__)
+
+# 常量定义
+CLICKHOUSE_DELETE_WAIT_SECONDS = 2  # ClickHouse 异步删除操作等待时间
+MYSQL_QUERY_RETRY_MAX_ATTEMPTS = 3  # MySQL 查询重试最大次数
+MYSQL_QUERY_RETRY_WAIT_SECONDS = 5  # MySQL 查询重试等待时间
 
 class KLineSyncService:
     """K线数据同步服务"""
@@ -157,61 +163,38 @@ class KLineSyncService:
                 return await cursor.fetchall()
 
 
-    async def sync_full(self, batch_size: int = 10000, shard_index: int = None):
+    async def sync_full(self, batch_size: int = 10000):
         """
-        全量同步：从MySQL同步所有K线数据到ClickHouse (支持分片)
-        
-        Args:
-            batch_size: 每批次同步的记录数
-            shard_index: 分片索引 (None 表示全量)
+        全量同步：从MySQL同步所有K线数据到ClickHouse
         """
-        shard_info = f" (Shard {shard_index})" if shard_index is not None else ""
-        logger.info(f"开始全量同步...{shard_info}")
-        await self._update_status("running", f"开始全量同步{shard_info}...", 0.0)
+        logger.info("开始全量同步...")
+        await self._update_status("running", "开始全量同步...", 0.0)
         
         try:
-            # 获取需要同步的股票代码列表
-            stock_codes = await self._get_stock_codes_from_redis(shard_index)
-            if not stock_codes:
-                logger.warning("没有股票代码需要同步")
-                return
-
             total_synced = 0
             
-            # 使用连接池进行操作
             async with self.mysql_pool.acquire() as mysql_conn:
                 async with mysql_conn.cursor(aiomysql.DictCursor) as cursor:
-                    # 将股票列表分批处理，避免 SQL 过长
-                    # MySQL IN 子句限制通常在 max_allowed_packet，分批处理更安全
-                    code_batch_size = 50  # 每次查询 50 只股票的全部历史数据
+                    query = """
+                        SELECT 
+                            code, trade_date, open, high, low, close,
+                            volume, amount, turnover, pct_chg
+                        FROM stock_kline_daily
+                        ORDER BY trade_date, code
+                    """
                     
-                    for i in range(0, len(stock_codes), code_batch_size):
-                        batch_codes = stock_codes[i:i + code_batch_size]
-                        placeholders = ','.join(['%s'] * len(batch_codes))
-                        
-                        # 查询这批股票的所有历史数据
-                        query = f"""
-                            SELECT 
-                                code, trade_date, open, high, low, close,
-                                volume, amount, turnover, pct_chg
-                            FROM stock_kline_daily
-                            WHERE code IN ({placeholders})
-                            ORDER BY code, trade_date
-                        """
-                        
-                        await cursor.execute(query, batch_codes)
-                        
-                        while True:
-                            # 游标分批读取，避免一次加载过多数据到内存
-                            rows = await cursor.fetchmany(batch_size)
-                            if not rows:
-                                break
-                                
-                            await self._insert_to_clickhouse(rows)
-                            total_synced += len(rows)
+                    await cursor.execute(query)
+                    
+                    while True:
+                        rows = await cursor.fetchmany(batch_size)
+                        if not rows:
+                            break
                             
-                            logger.info(f"已同步: {total_synced:,} 条")
-                            await self._update_status("running", f"同步中: {total_synced:,}", 0.0)
+                        await self._insert_to_clickhouse_enhanced(rows)
+                        total_synced += len(rows)
+                        
+                        logger.info(f"已同步: {total_synced:,} 条")
+                        await self._update_status("running", f"同步中: {total_synced:,}", 0.0)
 
             logger.info(f"✓ 全量同步完成，共 {total_synced:,} 条")
             await self._update_status("success", f"全量同步完成，共 {total_synced:,} 条", 100.0)
@@ -221,107 +204,92 @@ class KLineSyncService:
             await self._update_status("failed", f"全量同步失败: {str(e)}", 0.0)
             raise e
     
-    async def _get_stock_codes_from_redis(self, shard_index: int = None) -> list:
+    async def sync_smart_incremental(self):
         """
-        从 Redis 获取股票代码列表
-        
-        Args:
-            shard_index: 分片索引 (0/1/2)，None 表示获取全量
-        
-        Returns:
-            股票代码列表
-        """
-        redis_host = os.getenv("REDIS_HOST", "127.0.0.1")
-        redis_port = int(os.getenv("REDIS_PORT", "16379"))
-        redis_password = os.getenv("REDIS_PASSWORD")
-        is_cluster = os.getenv("REDIS_CLUSTER", "true").lower() == "true"
-        
-        url = f"redis://{redis_host}:{redis_port}"
-        if redis_password:
-            url = f"redis://:{redis_password}@{redis_host}:{redis_port}"
-            
-        if is_cluster:
-            from redis.asyncio.cluster import RedisCluster
-            redis = await RedisCluster.from_url(url, decode_responses=True)
-            logger.info(f"Connected to Redis Cluster: {url}")
-        else:
-            from redis.asyncio import Redis
-            redis = await Redis.from_url(url, decode_responses=True)
-            logger.info(f"Connected to Redis Standalone: {url}")
-        
-        try:
-            if shard_index is not None:
-                key = f"metadata:stock_codes:shard:{shard_index}"
-            else:
-                key = "metadata:stock_codes"
-            
-            codes = await redis.smembers(key)
-            logger.info(f"从 Redis 获取股票: {len(codes)} 只 (Key: {key})")
-            return list(codes)
-        finally:
-            await redis.aclose()
-    
-    async def sync_smart_incremental(self, shard_index: int = None):
-        """
-        智能增量同步：基于ClickHouse最大日期自动同步新数据
-        
-        Args:
-            shard_index: 分片索引 (0/1/2)，None 表示全量同步
+        智能增量同步（自愈版）：
+        1. 查询 ClickHouse 最大日期及其记录数
+        2. 与 MySQL 云端数据对比，如果不一致则删除该日期数据
+        3. 同步所有大于最大日期的数据
         """
         start_time = datetime.now()
-        shard_info = f" (Shard {shard_index})" if shard_index is not None else ""
-        logger.info(f"开始智能增量同步...{shard_info}")
-        await self._update_status("running", "正在检查新数据...", 0.0)
+        duration = 0.0
+        logger.info("开始智能增量同步（自愈模式）...")
+        await self._update_status("running", "正在检查数据完整性...", 0.0)
         
         try:
-            # 第1步：查询ClickHouse中的最大交易日期
+            # 第1步：查询 ClickHouse 中的最大交易日期及其记录数
             async with self.clickhouse_pool.acquire() as ch_conn:
                 async with ch_conn.cursor() as cursor:
-                    query = "SELECT MAX(trade_date) as max_date FROM stock_kline_daily"
-                    await cursor.execute(query)
+                    await cursor.execute("SELECT MAX(trade_date) as max_date FROM stock_kline_daily")
                     result = await cursor.fetchone()
-                    ch_max_date = result[0] if result and result[0] else None
+                    clickhouse_max_date = result[0] if result and result[0] else None
             
-            if ch_max_date:
-                logger.info(f"ClickHouse最大日期: {ch_max_date}")
-            if not ch_max_date:
-                logger.info("ClickHouse 为空，执行全量同步")
-                await self.sync_full(shard_index=shard_index)
+            if not clickhouse_max_date:
+                logger.warning("ClickHouse 表为空，将执行全量同步")
+                await self.sync_full()
                 return
             
-            # 第2步：从 Redis 获取股票列表 (支持分片)
-            stock_codes = await self._get_stock_codes_from_redis(shard_index)
+            logger.info(f"ClickHouse 最大日期: {clickhouse_max_date}")
             
-            if not stock_codes:
-                logger.warning("未获取到股票代码，跳过同步")
-                await self._update_status("success", "无股票代码可同步", 100.0)
-                return
+            # 第2步：查询该日期在 ClickHouse 和 MySQL 中的记录数
+            async with self.clickhouse_pool.acquire() as clickhouse_conn:
+                async with clickhouse_conn.cursor() as cursor:
+                    await cursor.execute(
+                        "SELECT count() FROM stock_kline_daily WHERE trade_date = %(date)s",
+                        {'date': clickhouse_max_date}
+                    )
+                    clickhouse_record_count = (await cursor.fetchone())[0]
             
-            # 第3步：从MySQL查询大于此日期的数据 (仅查询本分片的股票)
-            placeholders = ','.join(['%s'] * len(stock_codes))
-            query = f"""
+            async with self.mysql_pool.acquire() as mysql_conn:
+                async with mysql_conn.cursor() as cursor:
+                    await cursor.execute(
+                        "SELECT COUNT(*) FROM stock_kline_daily WHERE trade_date = %s",
+                        (clickhouse_max_date,)
+                    )
+                    mysql_record_count = (await cursor.fetchone())[0]
+            
+            logger.info(f"最大日期 {clickhouse_max_date} 记录数对比: ClickHouse={clickhouse_record_count}, MySQL={mysql_record_count}")
+            
+            # 第3步：如果不一致，删除 ClickHouse 中该日期的数据
+            if clickhouse_record_count != mysql_record_count:
+                logger.warning(f"⚠️ 数据不一致，删除 ClickHouse 中 {clickhouse_max_date} 的数据并重新同步")
+                await self.delete_kline_by_date(clickhouse_max_date)
+                
+                # 重新查询最大日期（删除后可能变化）
+                async with self.clickhouse_pool.acquire() as clickhouse_conn:
+                    async with clickhouse_conn.cursor() as cursor:
+                        await cursor.execute("SELECT MAX(trade_date) FROM stock_kline_daily")
+                        result = await cursor.fetchone()
+                        clickhouse_max_date = result[0] if result and result[0] else None
+                
+                if clickhouse_max_date:
+                    logger.info(f"删除后新的最大日期: {clickhouse_max_date}")
+                else:
+                    logger.info("删除后表为空，将同步全部数据")
+            
+            # 第4步：同步所有大于最大日期的数据
+            query = """
                 SELECT 
                     code, trade_date, open, high, low, close,
                     volume, amount, turnover, pct_chg
                 FROM stock_kline_daily
                 WHERE trade_date > %s
-                  AND code IN ({placeholders})
+                ORDER BY trade_date, code
+            """ if clickhouse_max_date else """
+                SELECT 
+                    code, trade_date, open, high, low, close,
+                    volume, amount, turnover, pct_chg
+                FROM stock_kline_daily
                 ORDER BY trade_date, code
             """
             
-            rows = await self._fetch_from_mysql_with_retry(query, (ch_max_date, *stock_codes))
-
+            params = (clickhouse_max_date,) if clickhouse_max_date else ()
+            rows = await self._fetch_from_mysql_with_retry(query, params)
             
-            # 第4步：同步新数据 (使用增强验证)
             duration = (datetime.now() - start_time).total_seconds()
             if rows:
                 await self._insert_to_clickhouse_enhanced(rows)
                 
-                # [NEW] Verify Consistency
-                distinct_dates = sorted(list(set(row['trade_date'] for row in rows)))
-                for d in distinct_dates:
-                     await self.verify_consistency(d)
-
                 min_date = min(row['trade_date'] for row in rows)
                 max_date = max(row['trade_date'] for row in rows)
                 msg = f"智能增量同步完成：{len(rows):,} 条记录 ({min_date} ~ {max_date})"
@@ -329,90 +297,50 @@ class KLineSyncService:
                 await self._update_status("success", msg, 100.0, {"new_records": len(rows), "date_range": f"{min_date}~{max_date}"})
                 await self._log_to_db("SUCCESS", len(rows), msg, duration)
             else:
-                msg = "无新数据需要同步，ClickHouse已是最新状态"
+                msg = "无新数据需要同步，ClickHouse 已是最新状态"
                 logger.info(f"✓ {msg}")
-                await self._update_status("success", msg, 100.0, {
-                    "new_records": 0,
-                    "date": datetime.now().strftime('%Y-%m-%d')
-                })
+                await self._update_status("success", msg, 100.0, {"new_records": 0})
                 await self._log_to_db("SUCCESS", 0, msg, duration)
 
         except Exception as e:
+            duration = (datetime.now() - start_time).total_seconds()
             await self._update_status("failed", f"智能同步失败: {str(e)}", 0.0)
             await self._log_to_db("FAILED", 0, str(e), duration)
             raise e
+    
+    async def delete_kline_by_date(self, trade_date):
+        """物理删除 ClickHouse 中指定日期的数据"""
+        logger.info(f"正在删除 ClickHouse 中的数据: {trade_date}")
+        async with self.clickhouse_pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(
+                    "ALTER TABLE stock_kline_daily_local ON CLUSTER stock_cluster DELETE WHERE trade_date = %(date)s",
+                    {'date': trade_date}
+                )
+                logger.info(f"✓ 已发送删除指令 (trade_date={trade_date})，等待异步处理...")
+                await asyncio.sleep(CLICKHOUSE_DELETE_WAIT_SECONDS)
 
-    async def sync_by_date(self, trade_date: str, shard_index: int = None):
+    async def sync_by_date(self, trade_date: str = None):
         """
-        按日期同步：从MySQL同步指定日期的所有K线数据到ClickHouse
+        按日期修复（已废弃参数，现在统一使用智能同步）
         
         Args:
-            trade_date: 交易日期 YYYYMMDD 或 YYYY-MM-DD
-            shard_index: 分片索引 (0/1/2)，None 表示全量
+            trade_date: 保留参数用于兼容性，实际不使用
         """
-        start_time = datetime.now()
-        shard_info = f" (Shard {shard_index})" if shard_index is not None else ""
-        logger.info(f"开始按日期同步: {trade_date}{shard_info}")
-        await self._update_status("running", f"同步日期 {trade_date}...", 0.0)
+        if trade_date:
+            logger.info(f"收到日期参数 {trade_date}，但现在使用智能自愈同步，将自动检测并修复所有不一致数据")
         
-        try:
-            # 获取股票代码 (支持分片)
-            stock_codes = await self._get_stock_codes_from_redis(shard_index)
-            if not stock_codes:
-                logger.warning("没有股票代码需要同步")
-                return
+        # 直接调用智能同步，它会自动检测并修复不一致的数据
+        await self.sync_smart_incremental()
 
-            # 查询 MySQL
-            placeholders = ','.join(['%s'] * len(stock_codes))
-            logger.info(f"正在查询{len(stock_codes)}只股票数据...")
-            
-            query = f"""
-                SELECT 
-                    code, trade_date, open, high, low, close,
-                    volume, amount, turnover, pct_chg
-                FROM stock_kline_daily
-                WHERE trade_date = %s
-                  AND code IN ({placeholders})
-                ORDER BY code
-            """
-            
-            rows = await self._fetch_from_mysql_with_retry(query, (trade_date, *stock_codes))
-            
-            duration = (datetime.now() - start_time).total_seconds()
-            if rows:
-                await self._insert_to_clickhouse_enhanced(rows)
-                
-                # Verify Consistency
-                await self.verify_consistency(trade_date)
-                
-                msg = f"按日期同步完成：{trade_date}, {len(rows):,} 条记录"
-                logger.info(f"✓ {msg}")
-                await self._update_status("success", msg, 100.0, {"new_records": len(rows)})
-                await self._log_to_db("SUCCESS", len(rows), msg, duration, task_name=f"kline_sync_{trade_date}")
-            else:
-                msg = f"日期 {trade_date} 无数据"
-                logger.warning(msg)
-                await self._update_status("success", msg, 100.0, {"new_records": 0})
-                await self._log_to_db("SUCCESS", 0, msg, duration, task_name=f"kline_sync_{trade_date}")
-
-        except Exception as e:
-            duration = (datetime.now() - start_time).total_seconds()
-            logger.error(f"按日期同步失败: {e}")
-            await self._update_status("failed", f"日期同步失败: {str(e)}", 0.0)
-            await self._log_to_db("FAILED", 0, str(e), duration)
-            raise e
-
-    
     async def sync_by_stock_codes(self, stock_codes: list[str]):
         """
         按股票代码同步：从MySQL同步指定股票的全部历史数据到ClickHouse
         
         用途: 个股数据重建后的同步
-        
-        Args:
-            stock_codes: 股票代码列表，如 ['sh.600519', 'sz.000001']
         """
         start_time = datetime.now()
+        duration = 0.0
         logger.info(f"开始按股票代码同步: {stock_codes}")
         await self._update_status("running", f"正在同步 {len(stock_codes)} 只股票...", 0.0)
         
@@ -618,6 +546,30 @@ class KLineSyncService:
             await self._update_status("failed", f"同步出错: {str(e)}", 0.0)
             await self._log_to_db("FAILED", 0, str(e), duration)
             raise e
+    
+    def _normalize_code_for_mysql(self, code: str) -> str:
+        """
+        归一化股票代码用于 MySQL 查询
+        600000.SH -> sh.600000
+        000001.SZ -> sz.000001
+        """
+        if not code:
+            return code
+        
+        code = code.strip().upper()
+        if '.' in code:
+            parts = code.split('.')
+            if len(parts) == 2:
+                # 处理 600000.SH 这种格式
+                if parts[1] in ['SH', 'SZ', 'BJ']:
+                    symbol, market = parts
+                    return f"{market.lower()}.{symbol}"
+                # 处理 SH.600000 这种格式
+                elif parts[0] in ['SH', 'SZ', 'BJ']:
+                    market, symbol = parts
+                    return f"{market.lower()}.{symbol}"
+        
+        return code.lower()
 
     async def _insert_factors_to_clickhouse(self, rows: list):
         """批量插入复权因子到 ClickHouse"""

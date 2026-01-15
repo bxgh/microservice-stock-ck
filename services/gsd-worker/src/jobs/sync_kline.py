@@ -31,6 +31,7 @@ async def main(mode: str = 'adaptive', shard_index: int = None, date: str = None
         shard_index: 分片索引 (0/1/2)，None 表示全量同步
         date: 指定日期 (YYYYMMDD)，不为空时触发按日期同步
     """
+    start_time = datetime.now()
     shard_info = f" (Shard {shard_index})" if shard_index is not None else ""
     date_info = f", 日期={date}" if date else ""
     
@@ -43,48 +44,16 @@ async def main(mode: str = 'adaptive', shard_index: int = None, date: str = None
     start_time = datetime.now()
     
     try:
-        # 优先处理指定日期同步
+        # 优先处理指定日期同步（现在统一使用智能同步）
         if date:
-            logger.info(f"🔧 收到指定日期 {date}，执行按日期同步")
-            await service.sync_by_date(trade_date=date, shard_index=shard_index)
-            # 同步复权因子
-            await service.sync_adjust_factors()
-            return 0
-
-        cloud_completion_time = None
-        total_records = 0
+            logger.info(f"🔧 收到日期参数 {date}，使用智能自愈同步（自动检测并修复不一致数据）")
         
-        if mode == 'adaptive':
-            # 自适应调度模式
-            logger.info("🔧 使用自适应调度模式")
-            scheduler = AdaptiveKLineSyncScheduler(service.mysql_pool)
-            
-            try:
-                # 等待云端完成信号
-                cloud_completion_time, total_records = await scheduler.execute()
-                logger.info(f"✓ 云端数据已就绪，开始本地同步...")
-            except CloudSyncException as e:
-                logger.error(f"❌ 云端同步异常: {e}")
-                duration = (datetime.now() - start_time).total_seconds()
-                await task_logger.log_execution(
-                    "kline_daily_sync", 
-                    "FAILED", 
-                    0, 
-                    duration, 
-                    start_time, 
-                    f"云端同步异常: {str(e)}"
-                )
-                return 1
-        else:
-            # 直接同步模式（用于测试或手动触发）
-            logger.info("🔧 使用直接同步模式（跳过云端信号检测）")
+        # 统一使用智能增量同步（自带自愈功能）
+        await service.sync_smart_incremental()
         
-        # 单机模式：智能增量同步 (支持分片)
-        await service.sync_smart_incremental(shard_index=shard_index)
         # 同步复权因子
         await service.sync_adjust_factors()
         
-        # 成功日志由 sync_service 内部记录，这里不需要重复记录，以免重复
         logger.info("✅ K线同步任务完成")
         return 0
     except Exception as e:

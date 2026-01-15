@@ -1,9 +1,11 @@
 import asyncio
 import logging
 import json
+import os
 from datetime import datetime
 import aiomysql
 from typing import Optional
+from config.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +111,7 @@ class CommandPoller:
                     task_def = next((t for t in self.task_config.tasks if t.id == task_id), None)
                     if not task_def:
                         all_ids = [t.id for t in self.task_config.tasks]
+                        logger.error(f"❌ 任务 {task_id} 未找到. 当前可用任务: {all_ids}")
                         raise ValueError(f"任务 {task_id} 未在本地注册. 可用任务: {all_ids}")
 
                     # 如果是 Docker 任务且有参数，使用 DockerExecutor 动态执行
@@ -192,6 +195,15 @@ class CommandPoller:
                     result = str(e)
                     logger.error(f"❌ 命令 #{cmd_id} 执行失败: {e}")
                 
+                # [Fix] 移除结果中的 4字节 UTF-8 字符 (如 emoji)，防止 utf8 字符集的 MySQL 报错
+                import re
+                try:
+                    # 匹配任何非 BMP 字符 (U+10000 及以上)
+                    non_bmp = re.compile(r'[^\u0000-\uFFFF]')
+                    result = non_bmp.sub('', result)
+                except Exception as e:
+                    logger.warning(f"清洗结果字符串失败: {e}")
+
                 # 4. 更新结果
                 await cursor.execute(
                     "UPDATE alwaysup.task_commands SET status=%s, result=%s WHERE id=%s",

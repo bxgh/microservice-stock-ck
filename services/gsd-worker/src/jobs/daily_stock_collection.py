@@ -102,20 +102,12 @@ async def update_redis_cache(redis, items):
         for item in items:
             code = item.get("standard_code")
             exchange = item.get("exchange")
-            is_listed = item.get("is_listed", True)  # 默认 True 兼容旧数据
             
             if not code or not exchange:
                 continue
             
-            # 双重校验：API 已过滤 + 本地前缀校验（防御性编程）
-            if not is_listed:
-                logger.warning(f"⚠️  跳过退市股票: {code} ({item.get('name', 'Unknown')})")
-                continue
-                
-            if not is_valid_a_stock(code):
-                logger.warning(f"⚠️  跳过无效前缀: {code}")
-                continue
-                
+            # 改为全量同步：不再在这里进行 A 股前缀过滤
+            # 这种设计允许 Redis 存储全量权威名单，具体的采集范围由各采集任务内部自行过滤
             formatted_code = f"{code}.{exchange}"
             stock_codes.append(formatted_code)
             

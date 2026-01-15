@@ -83,6 +83,9 @@ class Settings(BaseSettings):
     monitoring_enabled: bool = True
     metrics_path: str = "/api/v1/metrics"
     health_check_interval: int = 30
+    
+    # 告警配置
+    notifier_webhook_url: Optional[str] = os.getenv("NOTIFIER_WEBHOOK_URL")
 
     # 股票数据请求配置
     default_timeout: int = 30

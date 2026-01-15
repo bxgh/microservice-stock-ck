@@ -7,6 +7,9 @@ import os
 import pytz
 import json
 import aiomysql
+import redis.asyncio as redis
+from redis.asyncio.cluster import RedisCluster, ClusterNode
+from gsd_shared.validators import is_valid_a_stock
 
 from core.clickhouse_client import ClickHouseClient
 from core.notifier import Notifier
@@ -45,15 +48,33 @@ class PostMarketGateService:
             "autocommit": True
         }
         
+        # Redis 配置
+        self.redis_client = None
+        self.redis_mode_is_cluster = os.getenv("REDIS_CLUSTER", "false").lower() == "true"
+        self.redis_host = os.getenv("REDIS_HOST", "127.0.0.1")
+        self.redis_port = int(os.getenv("REDIS_PORT", "6379"))
+        self.redis_password = os.getenv("REDIS_PASSWORD", "redis123")
+        self.redis_nodes = os.getenv("REDIS_NODES", "192.168.151.41:6379,192.168.151.58:6379,192.168.151.111:6379")
+        
     async def initialize(self):
         """初始化资源"""
         await self.ch_client.connect()
+        
+        # 初始化 Redis
+        if self.redis_mode_is_cluster:
+            nodes = [ClusterNode(h_p.split(':')[0], int(h_p.split(':')[1])) for h_p in self.redis_nodes.split(',')]
+            self.redis_client = RedisCluster(startup_nodes=nodes, decode_responses=True, password=self.redis_password)
+        else:
+            self.redis_client = redis.Redis(host=self.redis_host, port=self.redis_port, password=self.redis_password, decode_responses=True)
+            
         logger.info("✅ PostMarketGateService 初始化完成")
 
     async def close(self):
         """释放资源"""
         self.ch_client.disconnect()
-        logger.info("✅ ClickHouse 连接已关闭")
+        if self.redis_client:
+            await self.redis_client.aclose()
+        logger.info("✅ 资源连接已释放")
 
     async def run_gate_check(self) -> Dict[str, Any]:
         """执行 Gate-3 审计流程"""
@@ -110,24 +131,72 @@ class PostMarketGateService:
         await self._send_audit_report(report)
         return report
 
+    async def _get_effective_stock_count(self) -> int:
+        """获取有效的 A 股总数 (动态计算)"""
+        try:
+            # 从 Redis 获取全量名单
+            codes = await self.redis_client.smembers("metadata:stock_codes")
+            if not codes:
+                return 5499 # 降级容错
+            
+            # 过滤 A 股
+            count = 0
+            for c in codes:
+                pure_code = c.split('.')[0] if '.' in c else c
+                if is_valid_a_stock(pure_code):
+                    count += 1
+            return count
+        except Exception as e:
+            logger.warning(f"获取有效股票计数异常: {e}")
+            return 5499
+
     async def _check_kline_coverage(self, date_str: str) -> float:
-        """K线覆盖率"""
+        """K线覆盖率: 对比本地 ClickHouse 与云端 MySQL 的记录数"""
+        # 1. 获取云端 MySQL 的 K线总数 (作为基准)
+        mysql_count = await self._get_mysql_kline_count(date_str)
+        if mysql_count == 0:
+            logger.warning(f"⚠️ 云端 MySQL 在 {date_str} 无 K线数据，无法计算覆盖率")
+            return 0.0
+        
+        # 2. 获取本地 ClickHouse 的 K线总数
         query = f"SELECT countDistinct(stock_code) FROM stock_data.stock_kline_daily WHERE trade_date = '{date_str.replace('-', '')}'"
         try:
             result = self.ch_client.client.execute(query)
-            count = result[0][0]
-            return round(count / 5350 * 100, 2)
+            ch_count = result[0][0]
+            
+            rate = round(ch_count / mysql_count * 100, 2)
+            logger.info(f"📊 K线覆盖率审计: ClickHouse={ch_count}, MySQL={mysql_count}, Rate={rate}%")
+            return rate
         except Exception as e:
-            logger.error(f"K线覆盖率检查失败: {e}")
+            logger.error(f"❌ K线覆盖率检查失败: {e}")
             return 0.0
+
+    async def _get_mysql_kline_count(self, date_str: str) -> int:
+        """获取云端 MySQL 中的 K 线记录数"""
+        try:
+            conn = await aiomysql.connect(**self.mysql_config)
+            async with conn.cursor() as cur:
+                sql = "SELECT COUNT(*) FROM stock_kline_daily WHERE trade_date = %s"
+                await cur.execute(sql, (date_str,))
+                res = await cur.fetchone()
+                return res[0] if res else 0
+            await conn.ensure_closed()
+        except Exception as e:
+            logger.error(f"❌ 获取云端 MySQL K线记录数失败: {e}")
+            return 0
 
     async def _check_tick_coverage(self, date_str: str) -> float:
         """分笔覆盖率"""
-        query = f"SELECT countDistinct(stock_code) FROM stock_data.tick_data WHERE trade_date = '{date_str.replace('-', '')}'"
+        total_a = await self._get_effective_stock_count()
+        # 确定表名: 如果是今天，使用 intraday 表
+        is_today = date_str == datetime.now(CST).strftime('%Y-%m-%d')
+        tick_table = "stock_data.tick_data_intraday" if is_today else "stock_data.tick_data"
+        
+        query = f"SELECT countDistinct(stock_code) FROM {tick_table} WHERE trade_date = '{date_str.replace('-', '')}'"
         try:
             result = self.ch_client.client.execute(query)
             count = result[0][0]
-            return round(count / 5350 * 100, 2)
+            return round(count / total_a * 100, 2)
         except Exception as e:
             logger.error(f"分笔覆盖率检查失败: {e}")
             return 0.0
@@ -136,6 +205,10 @@ class PostMarketGateService:
         """全量检查分笔时段完整性 (ClickHouse 分片聚合)"""
         # 核心逻辑：检查每只股票的分钟数
         # 正常交易日应有 120 (AM) + 120 (PM) + 1 (9:25) = 241 分钟
+        # 确定表名: 如果是今天，使用 intraday 表
+        is_today = date_str == datetime.now(CST).strftime('%Y-%m-%d')
+        tick_table = "stock_data.tick_data_intraday" if is_today else "stock_data.tick_data"
+
         query = f"""
         SELECT 
             countDistinct(stock_code) as total,
@@ -148,7 +221,7 @@ class PostMarketGateService:
                 min(tick_time) as first_tick,
                 max(tick_time) as last_tick,
                 countDistinct(toStartOfMinute(toDateTime(concat('2000-01-01 ', tick_time)))) as active_minutes
-            FROM stock_data.tick_data 
+            FROM {tick_table} 
             WHERE trade_date = '{date_str.replace('-', '')}'
             GROUP BY stock_code
         )
@@ -175,9 +248,12 @@ class PostMarketGateService:
             # 抽样 10 只
             stocks = ['600519', '000001', '601318', '000333', '600036', '000858', '600276', '601998', '000002', '300750']
             matches = 0
+            is_today = date_str == datetime.now(CST).strftime('%Y-%m-%d')
+            tick_table = "stock_data.tick_data_intraday" if is_today else "stock_data.tick_data"
+            
             for code in stocks:
-                k_query = f"SELECT close FROM stock_data.stock_kline_daily WHERE stock_code='{code}' AND trade_date='{ds}' LIMIT 1"
-                t_query = f"SELECT price FROM stock_data.tick_data WHERE stock_code='{code}' AND trade_date='{ds}' ORDER BY tick_time DESC LIMIT 1"
+                k_query = f"SELECT close_price FROM stock_data.stock_kline_daily WHERE stock_code='{code}' AND trade_date='{ds}' LIMIT 1"
+                t_query = f"SELECT price FROM {tick_table} WHERE stock_code='{code}' AND trade_date='{ds}' ORDER BY tick_time DESC LIMIT 1"
                 
                 k_res = self.ch_client.client.execute(k_query)
                 t_res = self.ch_client.client.execute(t_query)
@@ -196,7 +272,7 @@ class PostMarketGateService:
             is_complete = 1 if report['status'] == "SUCCESS" else 0
             # 构建简要说明
             m = report['metrics']['continuity']
-            desc = f"K:{report['kline_rate']}% T:{report['tick_rate']}% 缺时段:{m.get('failed_count', 0)}"
+            desc = f"K线覆盖率:{report['kline_rate']}% 分笔覆盖率:{report['tick_rate']}% 时段缺失:{m.get('failed_count', 0)}"
             
             conn = await aiomysql.connect(**self.mysql_config)
             async with conn.cursor() as cur:
@@ -244,8 +320,8 @@ class PostMarketGateService:
             f"💰 对账 (样): {report['metrics']['consistency'].get('matched', 0)}/{report['metrics']['consistency'].get('sample_size', 0)}",
         ]
         
-        if report['actions']:
-            content.append(f"\n⚡ 响应动作: " + ", ".join(report['actions']))
+        if report['actions_taken']:
+            content.append(f"\n⚡ 响应动作: " + ", ".join(report['actions_taken']))
         else:
             content.append("\n✨ 今日数据质量完美，审计通过。")
             
