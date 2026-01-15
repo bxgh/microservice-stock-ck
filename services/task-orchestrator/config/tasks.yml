@@ -33,7 +33,7 @@ tasks:
     enabled: true
     schedule:
       type: cron
-      expression: "5 9 * * *"
+      expression: "45 8 * * *" # 08:45 每日拉取
     target:
       command: ["jobs.daily_stock_collection"]
       network_mode: "host"
@@ -92,7 +92,7 @@ tasks:
     enabled: true
     schedule:
       type: trading_cron
-      expression: "0 9 * * 1-5" # 09:00 交易日
+      expression: "0 9 * * 1-5" # 09:00 归档昨日数据
     target:
       # 直接调用 ClickHouse HTTP 接口执行迁移逻辑
       url: "http://127.0.0.1:8123/?multiquery=true"
@@ -222,7 +222,7 @@ tasks:
     enabled: true
     schedule:
       type: trading_cron
-      expression: "0 9 * * 1-5"  # 09:00 交易日
+      expression: "20 9 * * 1-5"  # 09:20 预热
     target:
       service: gsd-api
       endpoint: /api/v1/internal/warmup
@@ -277,7 +277,7 @@ tasks:
     enabled: true
     schedule:
       type: trading_cron
-      expression: "0 8 * * 1-5"  # 08:00 交易日
+      expression: "15 9 * * 1-5"  # 09:15 进行最后名单与系统准入核查
     target:
       command: ["jobs.pre_market_gate"]
       environment:
