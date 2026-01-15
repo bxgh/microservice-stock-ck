@@ -17,6 +17,14 @@ from core.notifier import Notifier
 logger = logging.getLogger(__name__)
 CST = pytz.timezone('Asia/Shanghai')
 
+# 常量定义
+DEFAULT_KLINE_THRESHOLD = 98.0
+DEFAULT_TICK_THRESHOLD = 95.0
+DEFAULT_STOCK_COUNT_FALLBACK = 5499
+STANDARD_TRADING_MINUTES = 241
+PRICE_CONSISTENCY_THRESHOLD = 0.011
+HTTP_CLIENT_TIMEOUT_SECONDS = 10.0
+
 class PostMarketGateService:
     """
     盘后数据审计门禁 (Gate-3)
@@ -30,12 +38,12 @@ class PostMarketGateService:
     """
     
     def __init__(self):
-        self.ch_client = ClickHouseClient()
+        self.clickhouse_client = ClickHouseClient()
         self.notifier = Notifier()
         
         # 配置阈值
-        self.kline_threshold = float(os.getenv("KLINE_THRESHOLD", "98.0"))
-        self.tick_threshold = float(os.getenv("TICK_THRESHOLD", "95.0"))
+        self.kline_threshold = float(os.getenv("KLINE_THRESHOLD", str(DEFAULT_KLINE_THRESHOLD)))
+        self.tick_threshold = float(os.getenv("TICK_THRESHOLD", str(DEFAULT_TICK_THRESHOLD)))
         self.orchestrator_url = os.getenv("ORCHESTRATOR_URL", "http://127.0.0.1:18000")
         
         # 云端 MySQL 配置 (通过隧道)
@@ -58,7 +66,7 @@ class PostMarketGateService:
         
     async def initialize(self):
         """初始化资源"""
-        await self.ch_client.connect()
+        await self.clickhouse_client.connect()
         
         # 初始化 Redis
         if self.redis_mode_is_cluster:
@@ -71,7 +79,7 @@ class PostMarketGateService:
 
     async def close(self):
         """释放资源"""
-        self.ch_client.disconnect()
+        self.clickhouse_client.disconnect()
         if self.redis_client:
             await self.redis_client.aclose()
         logger.info("✅ 资源连接已释放")
@@ -137,7 +145,7 @@ class PostMarketGateService:
             # 从 Redis 获取全量名单
             codes = await self.redis_client.smembers("metadata:stock_codes")
             if not codes:
-                return 5499 # 降级容错
+                return DEFAULT_STOCK_COUNT_FALLBACK # 降级容错
             
             # 过滤 A 股
             count = 0
@@ -148,7 +156,7 @@ class PostMarketGateService:
             return count
         except Exception as e:
             logger.warning(f"获取有效股票计数异常: {e}")
-            return 5499
+            return DEFAULT_STOCK_COUNT_FALLBACK
 
     async def _check_kline_coverage(self, date_str: str) -> float:
         """K线覆盖率: 对比本地 ClickHouse 与云端 MySQL 的记录数"""
@@ -161,11 +169,11 @@ class PostMarketGateService:
         # 2. 获取本地 ClickHouse 的 K线总数
         query = f"SELECT countDistinct(stock_code) FROM stock_data.stock_kline_daily WHERE trade_date = '{date_str.replace('-', '')}'"
         try:
-            result = self.ch_client.client.execute(query)
-            ch_count = result[0][0]
+            result = self.clickhouse_client.client.execute(query)
+            clickhouse_count = result[0][0]
             
-            rate = round(ch_count / mysql_count * 100, 2)
-            logger.info(f"📊 K线覆盖率审计: ClickHouse={ch_count}, MySQL={mysql_count}, Rate={rate}%")
+            rate = round(clickhouse_count / mysql_count * 100, 2)
+            logger.info(f"📊 K线覆盖率审计: ClickHouse={clickhouse_count}, MySQL={mysql_count}, Rate={rate}%")
             return rate
         except Exception as e:
             logger.error(f"❌ K线覆盖率检查失败: {e}")
@@ -194,7 +202,7 @@ class PostMarketGateService:
         
         query = f"SELECT countDistinct(stock_code) FROM {tick_table} WHERE trade_date = '{date_str.replace('-', '')}'"
         try:
-            result = self.ch_client.client.execute(query)
+            result = self.clickhouse_client.client.execute(query)
             count = result[0][0]
             return round(count / total_a * 100, 2)
         except Exception as e:
@@ -227,7 +235,7 @@ class PostMarketGateService:
         )
         """
         try:
-            res = self.ch_client.client.execute(query)
+            res = self.clickhouse_client.client.execute(query)
             total, insufficient, late, early = res[0]
             failed_codes = insufficient + late + early # 可能有重合，但在 Gate-3 关心总量
             return {
@@ -255,11 +263,11 @@ class PostMarketGateService:
                 k_query = f"SELECT close_price FROM stock_data.stock_kline_daily WHERE stock_code='{code}' AND trade_date='{ds}' LIMIT 1"
                 t_query = f"SELECT price FROM {tick_table} WHERE stock_code='{code}' AND trade_date='{ds}' ORDER BY tick_time DESC LIMIT 1"
                 
-                k_res = self.ch_client.client.execute(k_query)
-                t_res = self.ch_client.client.execute(t_query)
+                k_res = self.clickhouse_client.client.execute(k_query)
+                t_res = self.clickhouse_client.client.execute(t_query)
                 
                 if k_res and t_res:
-                    if abs(float(k_res[0][0]) - float(t_res[0][0])) < 0.011:
+                    if abs(float(k_res[0][0]) - float(t_res[0][0])) < PRICE_CONSISTENCY_THRESHOLD:
                         matches += 1
             return {"sample_size": len(stocks), "matched": matches}
         except Exception as e:
@@ -299,7 +307,7 @@ class PostMarketGateService:
         url = f"{self.orchestrator_url}/api/v1/tasks/{task_id}/trigger"
         payload = {"params": {"date": date_str.replace('-', '')}}
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=HTTP_CLIENT_TIMEOUT_SECONDS) as client:
                 await client.post(url, json=payload)
         except: pass
 

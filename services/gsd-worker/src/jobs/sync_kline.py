@@ -41,7 +41,6 @@ async def main(mode: str = 'adaptive', shard_index: int = None, date: str = None
     await service.initialize()
     
     task_logger = TaskLogger(service.mysql_pool)
-    start_time = datetime.now()
     
     try:
         # 优先处理指定日期同步（现在统一使用智能同步）
