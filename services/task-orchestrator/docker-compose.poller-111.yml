@@ -1,4 +1,3 @@
-version: '3.8'
 
 services:
   shard-poller:
@@ -8,8 +7,8 @@ services:
     environment:
       - MYSQL_HOST=127.0.0.1
       - MYSQL_PORT=36301
-      - MYSQL_USER=${MYSQL_USER}
-      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      - MYSQL_USER=${MYSQL_USER:-root}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-alwaysup@888}
       - MYSQL_DATABASE=task_orchestrator
       - DOCKER_HOST=unix:///var/run/docker.sock
       - TZ=Asia/Shanghai

@@ -29,7 +29,9 @@ async def main():
     parser.add_argument("--date-range", type=str, help="指定日期范围 (YYYYMMDD-YYYYMMDD)")
     parser.add_argument("--priority", type=str, default="normal", help="任务优先级")
     
-    args = parser.parse_args()
+    args, unknown = parser.parse_known_args()
+    if unknown:
+        logger.info(f"Ignored unknown arguments: {unknown}")
     
     # 构建参数字典
     params = {
