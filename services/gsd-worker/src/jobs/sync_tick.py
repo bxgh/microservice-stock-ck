@@ -59,15 +59,16 @@ async def main(
         elif distributed_source == "redis" and distributed_role == "consumer":
             stock_codes = []
             logger.info("Consumer 模式: 跳过本地股票列表获取，将直接从 Redis 消费")
-        elif scope == "all" and shard_index is not None:
+        elif distributed_source == "redis" and scope == "all" and shard_index is not None:
             # 新架构: 直接从 Redis 获取已分片的股票列表
             logger.info(f"使用新架构分片: 从 Redis 获取 Shard {shard_index} 股票")
             stock_codes = await service.get_sharded_stocks(shard_index)
         else:
+            # 默认逻辑：本地获取股票列表
             stock_codes = await service.get_all_stocks() if scope == "all" else await service.get_stock_pool()
         
-        # 应用分片过滤 (仅当使用旧逻辑且未通过 Redis 获取分片时)
-        if shard_index is not None and shard_total is not None and stock_codes and scope != "all":
+        # 应用本地分片过滤 (当未通过 Redis 获取预分片数据时)
+        if shard_index is not None and shard_total is not None and stock_codes and distributed_source != "redis":
             original_count = len(stock_codes)
             stock_codes = [
                 code for code in stock_codes 
