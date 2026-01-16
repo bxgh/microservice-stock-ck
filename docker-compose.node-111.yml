@@ -74,10 +74,13 @@ services:
       - ./services/mootdx-source/src:/app/src
 
   # ---------------------------------------------------------------------------
-  # 任务调度 (111 节点)
+  # 任务调度 (111 节点 - 已禁用，由 Server 41 统一调度或手动触发)
   # ---------------------------------------------------------------------------
   
   task-orchestrator:
+    # profiles: ["disabled"] # 显式禁用，防止自动启动冲突
+    deploy:
+      replicas: 0
     build:
       context: .
       dockerfile: services/task-orchestrator/Dockerfile
