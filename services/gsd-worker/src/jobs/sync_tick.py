@@ -248,9 +248,19 @@ if __name__ == "__main__":
         default=None,
         help="手动指定股票代码，逗号分隔"
     )
+    parser.add_argument(
+        "--shard-id",
+        type=int,
+        default=None,
+        help="分片ID (Alias for shard-index)"
+    )
     args, unknown = parser.parse_known_args()
     if unknown:
         logger.info(f"Ignored unknown arguments: {unknown}")
+    
+    # 兼容处理 shard_id -> shard_index
+    if args.shard_index is None and args.shard_id is not None:
+        args.shard_index = args.shard_id
     
     # 解析股票代码
     passed_codes = None
