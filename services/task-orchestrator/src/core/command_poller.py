@@ -187,29 +187,38 @@ class CommandPoller:
                                     host_path = os.path.join(settings.BASE_DIR, host_path.lstrip('./'))
                                 volumes_config[host_path] = {'bind': parts[1], 'mode': parts[2] if len(parts) > 2 else 'rw'}
 
-                        cid = executor.run_worker(
-                            command=cmd_list,
-                            environment=task_def.target.get('environment'),
-                            volumes=volumes_config,
-                            name_suffix=f"adhoc-{cmd_id}"
-                        )
-                        
-                        # 等待执行完成 (会阻塞轮询线程，但 Poller 本身是独立的 Task)
-                        wait_res = executor.wait_for_container(cid)
-                        exit_code = wait_res.get('StatusCode', 1)
-                        
-                        # 获取日志
+                        cid = None
                         try:
-                            container = self.docker_client.containers.get(cid)
-                            logs = container.logs().decode('utf-8')[-2000:] # 取最后2000字符
-                            container.remove() # 清理容器
-                        except Exception as e:
-                            logs = f"无法获取日志: {e}"
+                            cid = executor.run_worker(
+                                command=cmd_list,
+                                environment=task_def.target.get('environment'),
+                                volumes=volumes_config,
+                                name_suffix=f"adhoc-{cmd_id}"
+                            )
                             
-                        if exit_code != 0:
-                            raise Exception(f"容器退出码 {exit_code}.\nLogs:\n{logs}")
+                            # 等待执行完成
+                            wait_res = executor.wait_for_container(cid)
+                            exit_code = wait_res.get('StatusCode', 1)
                             
-                        result = f"Success (Ad-hoc). Logs tail:\n{logs[-500:]}"
+                            # 获取日志
+                            try:
+                                container = self.docker_client.containers.get(cid)
+                                logs = container.logs().decode('utf-8')[-2000:] 
+                            except Exception as e:
+                                logs = f"无法获取日志: {e}"
+                                
+                            if exit_code != 0:
+                                raise Exception(f"容器退出码 {exit_code}.\nLogs:\n{logs}")
+                                
+                            result = f"Success (Ad-hoc). Logs tail:\n{logs[-500:]}"
+                        finally:
+                            if cid:
+                                try:
+                                    container = self.docker_client.containers.get(cid)
+                                    container.remove(force=True)
+                                    logger.info(f"🗑️ 已清理临时容器: {cid[:12]}")
+                                except:
+                                    pass
                         
                     else:
                         # 默认回退到 Scheduler 触发 (不支持参数或非 Docker 任务)
