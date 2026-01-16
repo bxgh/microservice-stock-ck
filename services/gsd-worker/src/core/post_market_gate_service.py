@@ -204,10 +204,10 @@ class PostMarketGateService:
 
     async def _check_kline_coverage(self, date_str: str) -> float:
         """K线覆盖率: 对比本地 ClickHouse 与云端 MySQL 的记录数"""
-        # 1. 获取云端 MySQL 的 K线总数 (作为基准)
-        mysql_count = await self._get_mysql_kline_count(date_str)
-        if mysql_count == 0:
-            logger.warning(f"⚠️ 云端 MySQL 在 {date_str} 无 K线数据，无法计算覆盖率")
+        # 1. 获取有效 A 股总数 (作为基准: 5000+)
+        total_stocks = await self._get_effective_stock_count()
+        if total_stocks == 0:
+            logger.warning(f"⚠️ 无法获取有效 A 股数量，无法计算 K线覆盖率")
             return 0.0
         
         # 2. 获取本地 ClickHouse 的 K线总数
@@ -216,8 +216,8 @@ class PostMarketGateService:
             result = self.clickhouse_client.client.execute(query)
             clickhouse_count = result[0][0]
             
-            rate = round(clickhouse_count / mysql_count * 100, 2)
-            logger.info(f"📊 K线覆盖率审计: ClickHouse={clickhouse_count}, MySQL={mysql_count}, Rate={rate}%")
+            rate = round(clickhouse_count / total_stocks * 100, 2)
+            logger.info(f"📊 K线覆盖率审计: ClickHouse={clickhouse_count}, Total_AShares={total_stocks}, Rate={rate}%")
             return rate
         except Exception as e:
             logger.error(f"❌ K线覆盖率检查失败: {e}")
@@ -249,13 +249,11 @@ class PostMarketGateService:
         ds = date_str.replace('-', '')
         
         try:
-            # 分母: 从 K线表获取当日实际交易的股票数
-            kline_query = f"SELECT countDistinct(stock_code) FROM stock_data.stock_kline_daily WHERE trade_date = '{ds}'"
-            kline_result = self.clickhouse_client.client.execute(kline_query)
-            total_kline = kline_result[0][0] if kline_result else 0
+            # 分母: 从云端 MySQL 获取当日实际交易的股票数 (基准)
+            total_kline = await self._get_mysql_kline_count(date_str)
             
             if total_kline == 0:
-                logger.warning(f"⚠️ K线表中 {date_str} 无数据，无法计算分笔覆盖率")
+                logger.warning(f"⚠️ 云端 MySQL 在 {date_str} 无 K线数据，无法计算分笔覆盖率")
                 return 0.0
             
             # 分子: 有 Tick 数据的股票数
@@ -264,7 +262,7 @@ class PostMarketGateService:
             total_tick = tick_result[0][0] if tick_result else 0
             
             rate = round(total_tick / total_kline * 100, 2)
-            logger.info(f"📊 分笔覆盖率: Tick={total_tick}, K线={total_kline}, Rate={rate}%")
+            logger.info(f"📊 分笔覆盖率: Tick={total_tick}, MySQL_KLine={total_kline}, Rate={rate}%")
             return rate
         except Exception as e:
             logger.error(f"分笔覆盖率检查失败: {e}")
