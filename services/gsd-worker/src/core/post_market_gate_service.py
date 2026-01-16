@@ -86,11 +86,46 @@ class PostMarketGateService:
         if self.redis_client:
             await self.redis_client.aclose()
         logger.info("✅ 资源连接已释放")
+    
+    async def _get_all_stock_codes(self) -> List[str]:
+        """从 MySQL 获取全部A股代码"""
+        try:
+            conn = await aiomysql.connect(**self.mysql_config)
+            async with conn.cursor() as cur:
+                await cur.execute("""
+                    SELECT stock_code FROM alwaysup.stock_list 
+                    WHERE status = 'active'
+                    ORDER BY stock_code
+                """)
+                rows = await cur.fetchall()
+            conn.close()
+            return [row[0] for row in rows]
+        except Exception as e:
+            logger.error(f"获取股票列表失败: {e}")
+            return []
+    
+    def _get_target_trading_date(self) -> str:
+        """
+        获取目标交易日期
+        规则：6:00 AM 之前返回前一日，之后返回当日
+        
+        Returns:
+            日期字符串 (YYYY-MM-DD)
+        """
+        now = datetime.now(CST)
+        
+        # 如果当前时间在 6:00 AM 之前，使用前一天
+        if now.hour < 6:
+            target_date = now - timedelta(days=1)
+            logger.info(f"⏰ 当前时间 {now.strftime('%H:%M')} < 06:00，使用前一交易日")
+        else:
+            target_date = now
+        
+        return target_date.strftime('%Y-%m-%d')
 
     async def run_gate_check(self) -> Dict[str, Any]:
         """执行 Gate-3 审计流程"""
-        today_obj = datetime.now(CST)
-        today = today_obj.strftime('%Y-%m-%d')
+        today = self._get_target_trading_date()
         logger.info(f"🛡️ 开始盘后深度审计, 目标日期: {today}")
         
         # 1. 基础覆盖率检查
@@ -367,10 +402,25 @@ class PostMarketGateService:
             return []
 
     async def _trigger_shard_repair(self, date_str: str, shard_id: int, codes: Optional[List[str]]):
-        """发送定向/全量分片修复指令到 MySQL"""
+        """
+        发送分片修复指令到 MySQL
+        如果 codes 为 None，会先查询该分片中不达标的股票，再插入任务
+        """
         conn = None
         try:
             ds = date_str.replace('-', '')
+            
+            # 如果未指定股票列表，先查询该分片中哪些股票需要修复
+            if codes is None:
+                logger.info(f"🔍 查询 Shard {shard_id} 中需要修复的股票...")
+                codes = await self._get_shard_stocks_need_repair(ds, shard_id)
+                
+                if not codes:
+                    logger.info(f"✅ Shard {shard_id} 所有股票均已达标，无需修复")
+                    return
+                
+                logger.info(f"📋 Shard {shard_id} 需修复 {len(codes)} 只股票")
+            
             params = {"date": ds, "shard_id": shard_id}
             if codes:
                 params["stock_codes"] = ",".join(codes)
@@ -397,12 +447,118 @@ class PostMarketGateService:
                 sql = "INSERT INTO alwaysup.task_commands (task_id, params, status) VALUES (%s, %s, %s)"
                 await cur.execute(sql, ("repair_tick", json.dumps(params), "PENDING"))
             await conn.commit()
-            logger.info(f"✅ 已插入 repair_tick 指令: shard={shard_id}, codes_count={len(codes) if codes else 'FULL'}")
+            logger.info(f"✅ 已插入 repair_tick 指令: shard={shard_id}, stocks={len(codes)}")
         except Exception as e:
             logger.error(f"❌ 插入修复指令失败: {e}")
         finally:
             if conn:
                 conn.close()
+
+    async def _get_shard_stocks_need_repair(self, date_str: str, shard_id: int, min_tick_count: int = 2000) -> List[str]:
+        """
+        查询指定分片中需要修复的股票列表
+        
+        Returns:
+            需要修复的股票代码列表
+        """
+        try:
+            # 1. 优先从当天K线数据获取股票列表（实际交易的股票）
+            trade_date = datetime.strptime(date_str, "%Y%m%d").strftime("%Y-%m-%d")
+            all_stocks = await self._get_stocks_from_kline(trade_date)
+            
+            # 2. 降级逻辑：如果K线数据不可用，使用 stock_list
+            if not all_stocks:
+                logger.warning(f"⚠️ 无法从K线获取股票列表，降级到 stock_list")
+                all_stocks = await self._get_all_stock_codes()
+            
+            # 3. 应用分片过滤
+            shard_stocks = [
+                code for code in all_stocks
+                if xxhash.xxh64(code).intdigest() % 3 == shard_id
+            ]
+            
+            if not shard_stocks:
+                return []
+            
+            # 4. 批量查询质量状态
+            codes_str = "','".join(shard_stocks)
+            
+            async with self.clickhouse_pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute(f"""
+                        SELECT 
+                            stock_code,
+                            count() as tick_count,
+                            min(tick_time) as min_time,
+                            max(tick_time) as max_time
+                        FROM tick_data_local
+                        WHERE stock_code IN ('{codes_str}')
+                          AND trade_date = '{trade_date}'
+                        GROUP BY stock_code
+                    """)
+                    rows = await cursor.fetchall()
+            
+            # 5. 找出已达标的股票
+            qualified = set()
+            for row in rows:
+                stock_code, tick_count, min_time, max_time = row
+                if tick_count >= min_tick_count:
+                    if min_time and max_time:
+                        if min_time <= "10:00:00" and max_time >= "14:30:00":
+                            qualified.add(stock_code)
+                    else:
+                        qualified.add(stock_code)
+            
+            # 6. 返回需要修复的（未采集 + 不达标）
+            need_repair = [code for code in shard_stocks if code not in qualified]
+            
+            logger.info(
+                f"Shard {shard_id}: {len(shard_stocks)} 只 → "
+                f"已达标 {len(qualified)} 只, 需修复 {len(need_repair)} 只"
+            )
+            
+            return need_repair
+            
+        except Exception as e:
+            logger.error(f"查询 Shard {shard_id} 修复列表失败: {e}")
+            return []  # 失败时返回空列表，避免触发不必要的修复
+
+    async def _get_stocks_from_kline(self, trade_date: str) -> List[str]:
+        """
+        从当天K线数据获取实际交易的股票列表
+        
+        Args:
+            trade_date: 交易日期 (YYYY-MM-DD)
+            
+        Returns:
+            股票代码列表
+        """
+        try:
+            async with self.clickhouse_pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute(f"""
+                        SELECT DISTINCT stock_code
+                        FROM kline_data_local
+                        WHERE trade_date = '{trade_date}'
+                        ORDER BY stock_code
+                    """)
+                    rows = await cursor.fetchall()
+            
+            # 标准化股票代码格式（移除可能的市场前缀 sh/sz）
+            stocks = []
+            for row in rows:
+                code = row[0]
+                # 移除 sh/sz 前缀（如果存在）
+                if code.startswith('sh') or code.startswith('sz'):
+                    code = code[2:]
+                stocks.append(code)
+            
+            logger.info(f"📊 从K线数据获取到 {len(stocks)} 只当天交易股票")
+            return stocks
+            
+        except Exception as e:
+            logger.error(f"从K线获取股票列表失败: {e}")
+            return []
 
     async def _trigger_targeted_supplement(self, date_str: str, codes: List[str], shard_id: Optional[int] = None):
         """

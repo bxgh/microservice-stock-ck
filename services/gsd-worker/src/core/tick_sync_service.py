@@ -497,8 +497,8 @@ class TickSyncService:
         else:
             return 2  # 中性
     
-    async def check_data_exists(self, stock_code: str, trade_date: str) -> bool:
-        """检查 ClickHouse 中是否已存在当日数据"""
+    async def check_data_quality(self, stock_code: str, trade_date: str, min_tick_count: int = 2000) -> bool:
+        """检查 ClickHouse 中数据是否存在且符合质量标准"""
         try:
             # 兼容格式
             trade_date_str = datetime.strptime(
@@ -507,14 +507,161 @@ class TickSyncService:
             
             async with self.clickhouse_pool.acquire() as conn:
                 async with conn.cursor() as cursor:
-                    await cursor.execute(
-                        f"SELECT count() FROM tick_data_local WHERE stock_code = '{stock_code}' AND trade_date = '{trade_date_str}' LIMIT 1"
-                    )
+                    # 检查数据量和时间范围
+                    await cursor.execute(f"""
+                        SELECT 
+                            count() as tick_count,
+                            min(tick_time) as min_time,
+                            max(tick_time) as max_time
+                        FROM tick_data_local 
+                        WHERE stock_code = '{stock_code}' 
+                          AND trade_date = '{trade_date_str}'
+                    """)
                     row = await cursor.fetchone()
-                    return row[0] > 0 if row else False
+                    
+                    if not row or row[0] == 0:
+                        return False  # 无数据
+                    
+                    tick_count, min_time, max_time = row
+                    
+                    # 质量标准：
+                    # 1. tick数量 >= min_tick_count (默认2000)
+                    # 2. 时间范围覆盖早盘 (有09:30左右的数据)
+                    # 3. 时间范围覆盖尾盘 (有14:45后的数据)
+                    if tick_count < min_tick_count:
+                        logger.debug(f"{stock_code} 数据量不足: {tick_count} < {min_tick_count}")
+                        return False
+                    
+                    if min_time and max_time:
+                        # 简单检查：最早时间应在10:00前，最晚时间应在14:30后
+                        if min_time > "10:00:00" or max_time < "14:30:00":
+                            logger.debug(f"{stock_code} 时间范围不完整: {min_time} ~ {max_time}")
+                            return False
+                    
+                    logger.debug(f"✓ {stock_code} 数据已达标: {tick_count} ticks, {min_time}~{max_time}")
+                    return True
+                    
         except Exception as e:
-            logger.error(f"检查数据存在失败 {stock_code}: {e}")
+            logger.error(f"检查数据质量失败 {stock_code}: {e}")
             return False
+
+    async def filter_stocks_need_repair(
+        self, 
+        stock_codes: list, 
+        trade_date: str, 
+        min_tick_count: int = 2000
+    ) -> list:
+        """
+        批量筛选出需要补采的股票（不达标 + 未采集）
+        
+        Args:
+            stock_codes: 待检查的股票列表
+            trade_date: 交易日期
+            min_tick_count: 最小tick数量阈值
+            
+        Returns:
+            需要补采的股票代码列表
+        """
+        if not stock_codes:
+            return []
+        
+        try:
+            trade_date_str = datetime.strptime(
+                trade_date.replace("-", ""), "%Y%m%d"
+            ).strftime("%Y-%m-%d")
+            
+            # 构建 IN 条件
+            codes_str = "','".join(stock_codes)
+            
+            async with self.clickhouse_pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    # 批量查询所有股票的质量状态
+                    await cursor.execute(f"""
+                        SELECT 
+                            stock_code,
+                            count() as tick_count,
+                            min(tick_time) as min_time,
+                            max(tick_time) as max_time
+                        FROM tick_data_local
+                        WHERE stock_code IN ('{codes_str}')
+                          AND trade_date = '{trade_date_str}'
+                        GROUP BY stock_code
+                    """)
+                    rows = await cursor.fetchall()
+                    
+                    # 构建已达标股票集合
+                    qualified_stocks = set()
+                    for row in rows:
+                        stock_code, tick_count, min_time, max_time = row
+                        
+                        # 应用质量标准
+                        if tick_count >= min_tick_count:
+                            if min_time and max_time:
+                                if min_time <= "10:00:00" and max_time >= "14:30:00":
+                                    qualified_stocks.add(stock_code)
+                            else:
+                                qualified_stocks.add(stock_code)
+                    
+                    # 筛选出需要补采的
+                    need_repair = [code for code in stock_codes if code not in qualified_stocks]
+                    
+                    logger.info(
+                        f"📊 质量筛选: {len(stock_codes)} 只 → "
+                        f"已达标 {len(qualified_stocks)} 只, "
+                        f"需补采 {len(need_repair)} 只"
+                    )
+                    
+                    return need_repair
+                    
+        except Exception as e:
+            logger.error(f"批量筛选失败: {e}，回退到全量列表")
+            return stock_codes  # 失败时返回全量，避免遗漏
+
+    async def get_stocks_from_kline_or_fallback(self, trade_date: str) -> list:
+        """
+        优先从K线数据获取股票列表，失败则降级到 stock_list
+        
+        Args:
+            trade_date: 交易日期 (YYYYMMDD)
+            
+        Returns:
+            股票代码列表
+        """
+        try:
+            # 1. 尝试从K线数据获取
+            trade_date_str = datetime.strptime(
+                trade_date.replace("-", ""), "%Y%m%d"
+            ).strftime("%Y-%m-%d")
+            
+            async with self.clickhouse_pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute(f"""
+                        SELECT DISTINCT stock_code
+                        FROM kline_data_local
+                        WHERE trade_date = '{trade_date_str}'
+                        ORDER BY stock_code
+                    """)
+                    rows = await cursor.fetchall()
+            
+            if rows:
+                # 标准化股票代码格式（移除可能的市场前缀 sh/sz）
+                stocks = []
+                for row in rows:
+                    code = row[0]
+                    # 移除 sh/sz 前缀（如果存在）
+                    if code.startswith('sh') or code.startswith('sz'):
+                        code = code[2:]
+                    stocks.append(code)
+                
+                logger.info(f"📊 从K线数据获取到 {len(stocks)} 只当天交易股票")
+                return stocks
+            else:
+                logger.warning(f"⚠️ K线数据为空，降级到 stock_list")
+                return await self.get_all_stocks()
+                
+        except Exception as e:
+            logger.error(f"从K线获取股票列表失败: {e}，降级到 stock_list")
+            return await self.get_all_stocks()
 
     async def _update_sync_status(
         self, 
@@ -557,9 +704,12 @@ class TickSyncService:
         target_table = "tick_data_intraday" if trade_date == today_str else "tick_data"
         
         try:
-            # 1. 检查是否已存在 (全量覆盖模式下，实际上 ReplacingMergeTree 会处理，但为了效率可以先查)
-            # exists = await self.check_data_exists(stock_code, trade_date)
-            # if exists: return -1
+            # 1. 质量预检：如果数据已符合标准，跳过采集
+            quality_ok = await self.check_data_quality(stock_code, trade_date, min_tick_count=2000)
+            if quality_ok:
+                logger.info(f"⏭️  {stock_code} 数据已达标，跳过补采")
+                await self._update_sync_status(stock_code, trade_date, "skipped", 0)
+                return -1  # 返回 -1 表示跳过
 
             # 2. 采集数据
             tick_data = await self.fetch_tick_data(stock_code, trade_date)

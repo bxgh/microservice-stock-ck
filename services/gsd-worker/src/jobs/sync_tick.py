@@ -8,7 +8,7 @@ import sys
 import asyncio
 import logging
 import argparse
-from datetime import datetime
+from datetime import datetime, timedelta
 import xxhash
 import pytz
 from core.tick_sync_service import TickSyncService
@@ -42,8 +42,20 @@ async def main(
     分笔数据同步主函数
     """
     shard_info = f", 分片={shard_index}/{shard_total}" if shard_index is not None else ""
-    today_str = datetime.now(CST).strftime("%Y%m%d")
-    target_date = date if date else today_str
+    
+    # 获取目标日期：6:00 AM 之前使用前一日
+    now = datetime.now(CST)
+    if date:
+        # 如果明确指定了日期，使用指定日期
+        target_date = date
+    else:
+        # 未指定日期时，应用 6AM 规则
+        if now.hour < 6:
+            yesterday = now - timedelta(days=1)
+            target_date = yesterday.strftime("%Y%m%d")
+            logger.info(f"⏰ 当前时间 {now.strftime('%H:%M')} < 06:00，使用前一交易日 {target_date}")
+        else:
+            target_date = now.strftime("%Y%m%d")
     
     logger.info(f"启动分笔数据同步任务 (模式={mode}, 日期={target_date}, 范围={scope}{shard_info}, 并发={concurrency})")
     
@@ -65,7 +77,18 @@ async def main(
             stock_codes = await service.get_sharded_stocks(shard_index)
         else:
             # 默认逻辑：本地获取股票列表
-            stock_codes = await service.get_all_stocks() if scope == "all" else await service.get_stock_pool()
+            if scope == "all":
+                # 优先从K线获取（实际交易股票），失败降级到 stock_list
+                stock_codes = await service.get_stocks_from_kline_or_fallback(target_date)
+            else:
+                stock_codes = await service.get_stock_pool()
+        
+        # 批量质量筛选：过滤出真正需要补采的股票（优化性能）
+        if stock_codes and mode == "incremental":
+            original_count = len(stock_codes)
+            stock_codes = await service.filter_stocks_need_repair(stock_codes, target_date, min_tick_count=2000)
+            if len(stock_codes) < original_count:
+                logger.info(f"💡 质量筛选优化: {original_count} 只 → {len(stock_codes)} 只需补采")
         
         # 应用本地分片过滤 (当未通过 Redis 获取预分片数据时)
         if shard_index is not None and shard_total is not None and stock_codes and distributed_source != "redis":

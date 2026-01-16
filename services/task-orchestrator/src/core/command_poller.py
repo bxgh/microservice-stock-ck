@@ -113,11 +113,58 @@ class CommandPoller:
                     "UPDATE alwaysup.task_commands SET status='RUNNING', executed_at=NOW() WHERE id=%s",
                     (cmd_id,)
                 )
-                await conn.commit()
                 
-                # 3. 执行任务
-                status = "DONE"
-                result = "SUCCESS"
+                # 2.5. 智能拆分逻辑：repair_tick 无 shard_id 的全量/大批量请求拆分为 3 个分片
+                if task_id == "repair_tick" and params and params.get("shard_id") is None:
+                    stock_codes = params.get("stock_codes") or params.get("stocks")
+                    
+                    # 判断是否需要分片执行
+                    should_split = False
+                    if not stock_codes:
+                        # 无指定股票 = 全量补采
+                        should_split = True
+                        reason = "全量补采"
+                    else:
+                        # 有指定股票，计算数量
+                        if isinstance(stock_codes, str):
+                            stock_list = [s.strip() for s in stock_codes.split(',') if s.strip()]
+                        else:
+                            stock_list = stock_codes
+                        
+                        stock_count = len(stock_list)
+                        SPLIT_THRESHOLD = 1666  # 约为全市场5000只的1/3
+                        
+                        if stock_count > SPLIT_THRESHOLD:
+                            should_split = True
+                            reason = f"大批量补采 ({stock_count} 只 > {SPLIT_THRESHOLD})"
+                        else:
+                            logger.info(f"📌 少量补采 ({stock_count} 只)，单节点执行")
+                    
+                    if should_split:
+                        logger.info(f"🔀 检测到 {reason}，自动拆分为 3 个分片任务")
+                        date_str = params.get("date")
+                        
+                        # 插入 3 个分片任务
+                        for shard_id in range(3):
+                            shard_params = {"date": date_str, "shard_id": shard_id}
+                            # 如果有指定股票列表，也传递下去（各分片会自动过滤属于自己的）
+                            if stock_codes:
+                                shard_params["stock_codes"] = stock_codes
+                            
+                            await cursor.execute(
+                                "INSERT INTO alwaysup.task_commands (task_id, params, status) VALUES (%s, %s, %s)",
+                                (task_id, json.dumps(shard_params), "PENDING")
+                            )
+                        await conn.commit()
+                        
+                        # 标记原任务为完成
+                        await cursor.execute(
+                            "UPDATE alwaysup.task_commands SET status='DONE', result=%s WHERE id=%s",
+                            (f"Auto-split to 3 shard tasks ({reason})", cmd_id)
+                        )
+                        await conn.commit()
+                        logger.info(f"✅ 已拆分并插入 3 个分片任务 (Shard 0, 1, 2)")
+                        return  # 跳过当前任务执行，由新任务接管
                 
                 # 3. 执行任务
                 status = "DONE"
