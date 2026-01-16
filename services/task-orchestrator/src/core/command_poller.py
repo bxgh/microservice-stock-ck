@@ -253,7 +253,7 @@ class CommandPoller:
                 if status == "DONE":
                     REAUDIT_MAP = {
                         "daily_stock_collection": "pre_market_gate",
-                        "repair_tick": "post_market_gate",
+                        # "repair_tick": "post_market_gate",  # DISABLED: 防止无限循环
                         "repair_kline": "post_market_gate"
                     }
                     if task_id in REAUDIT_MAP and self.scheduler:

@@ -368,8 +368,6 @@ class PostMarketGateService:
 
     async def _trigger_shard_repair(self, date_str: str, shard_id: int, codes: Optional[List[str]]):
         """发送定向/全量分片修复指令到 MySQL"""
-        # 注意：这里我们直接操作 MySQL 插入 task_commands 表，而不是调 API
-        # 因为 API 触发目前不支持带复杂参数，直接写库更灵活
         conn = None
         try:
             ds = date_str.replace('-', '')
@@ -379,6 +377,23 @@ class PostMarketGateService:
             
             conn = await aiomysql.connect(**self.mysql_config)
             async with conn.cursor() as cur:
+                # 去重检查：避免重复插入相同的修复任务
+                check_sql = """
+                    SELECT id, status FROM alwaysup.task_commands 
+                    WHERE task_id = 'repair_tick' 
+                      AND JSON_EXTRACT(params, '$.date') = %s 
+                      AND JSON_EXTRACT(params, '$.shard_id') = %s
+                      AND created_at > DATE_SUB(NOW(), INTERVAL 5 MINUTE)
+                    ORDER BY id DESC LIMIT 1
+                """
+                await cur.execute(check_sql, (ds, shard_id))
+                existing = await cur.fetchone()
+                
+                if existing:
+                    logger.info(f"⏭️  跳过重复任务: shard={shard_id}, 已有任务 #{existing[0]} (状态: {existing[1]})")
+                    return
+                
+                # 插入新任务
                 sql = "INSERT INTO alwaysup.task_commands (task_id, params, status) VALUES (%s, %s, %s)"
                 await cur.execute(sql, ("repair_tick", json.dumps(params), "PENDING"))
             await conn.commit()
@@ -396,7 +411,7 @@ class PostMarketGateService:
         Args:
             date_str: 交易日期 (YYYY-MM-DD)
             codes: 需要补充的股票代码列表
-            shard_id: 可选，指定在哪个分片节点执行 (当前版本暂不使用)
+            shard_id: 可选，指定在哪个分片节点执行
         """
         conn = None
         try:
@@ -406,15 +421,31 @@ class PostMarketGateService:
             params = {
                 "stocks": codes,
                 "date": ds,
-                "data_types": ["tick"]  # 默认补tick，可根据需要扩展
+                "data_types": ["tick"]
             }
             
             if shard_id is not None:
-                # 如果指定了分片，可以在参数中标记（供未来跨节点执行使用）
                 params["shard_id"] = shard_id
             
             conn = await aiomysql.connect(**self.mysql_config)
             async with conn.cursor() as cur:
+                # 去重检查
+                stock_list = ",".join(sorted(codes))
+                check_sql = """
+                    SELECT id, status FROM alwaysup.task_commands 
+                    WHERE task_id = 'stock_data_supplement' 
+                      AND JSON_EXTRACT(params, '$.date') = %s
+                      AND created_at > DATE_SUB(NOW(), INTERVAL 5 MINUTE)
+                    LIMIT 1
+                """
+                await cur.execute(check_sql, (ds,))
+                existing = await cur.fetchone()
+                
+                if existing:
+                    logger.info(f"⏭️  跳过重复补充任务: {len(codes)} 只股票, 已有任务 #{existing[0]}")
+                    return
+                
+                # 插入新任务
                 sql = "INSERT INTO alwaysup.task_commands (task_id, params, status) VALUES (%s, %s, %s)"
                 await cur.execute(sql, ("stock_data_supplement", json.dumps(params), "PENDING"))
             await conn.commit()
