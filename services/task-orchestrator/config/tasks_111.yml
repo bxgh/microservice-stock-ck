@@ -48,3 +48,18 @@ tasks:
     retry:
       max_attempts: 2
       backoff_seconds: 300
+
+  # 分笔按日补采
+  - id: repair_tick
+    name: 分笔数据补采
+    type: docker
+    enabled: false # 不自动调度，仅手动/API触发
+    schedule:
+      type: cron
+      expression: "0 0 1 1 *" # Dummy schedule
+    target:
+      command: ["jobs.sync_tick"]
+      environment:
+        TICK_THRESHOLD: "95"
+    retry:
+      max_attempts: 1
