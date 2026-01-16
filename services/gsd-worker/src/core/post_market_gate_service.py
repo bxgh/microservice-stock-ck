@@ -392,19 +392,21 @@ class PostMarketGateService:
                 
                 logger.info(f"分片 {sid} 覆盖率: {coverage:.2f}% ({actual_count}/{expected_count})")
                 
+                # 统一使用已计算好的 failed_codes 列表，不再传 None 重新查询
+                shard_failed = failed_by_shard[sid]
+                
                 if actual_count == 0:
-                    logger.error(f"🚨 Shard {sid} 节点似乎完全离线")
-                    await self._trigger_shard_repair(date_str, sid, None)
-                    actions.append(f"分片{sid}全量重采(离线)")
+                    logger.error(f"🚨 Shard {sid} 节点似乎完全离线，定向补采 {len(shard_failed)} 只")
+                    await self._trigger_shard_repair(date_str, sid, shard_failed)
+                    actions.append(f"分片{sid}定向补采(离线,{len(shard_failed)}只)")
                 elif coverage < self.shard_repair_threshold:
-                    logger.warning(f"⚠️ Shard {sid} 覆盖率过低，触发全分片重采")
-                    await self._trigger_shard_repair(date_str, sid, None)
-                    actions.append(f"分片{sid}全量重采")
+                    logger.warning(f"⚠️ Shard {sid} 覆盖率过低，定向补采 {len(shard_failed)} 只")
+                    await self._trigger_shard_repair(date_str, sid, shard_failed)
+                    actions.append(f"分片{sid}定向补采(低覆盖,{len(shard_failed)}只)")
                 else:
-                    # 虽然总数多，但该分片尚可，只补缺失的
-                    logger.info(f"Shard {sid} 覆盖率尚可，定向补采 {len(failed_by_shard[sid])} 只")
-                    await self._trigger_shard_repair(date_str, sid, failed_by_shard[sid])
-                    actions.append(f"分片{sid}定向补采")
+                    logger.info(f"Shard {sid} 覆盖率尚可，定向补采 {len(shard_failed)} 只")
+                    await self._trigger_shard_repair(date_str, sid, shard_failed)
+                    actions.append(f"分片{sid}定向补采({len(shard_failed)}只)")
             
             return actions
         
