@@ -361,7 +361,7 @@ tasks:
       type: cron
       expression: "0 0 1 1 *" # Dummy schedule
     target:
-      command: ["jobs.sync_tick", "--scope", "config", "--distributed-source", "none"]
+      command: ["jobs.sync_tick"]
       environment:
         TICK_THRESHOLD: "95"
     retry:
