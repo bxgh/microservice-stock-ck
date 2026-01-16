@@ -15,12 +15,13 @@ class CommandPoller:
     仅当 status='PENDING' 时提取并执行。
     """
     
-    def __init__(self, mysql_pool, scheduler, docker_client=None, task_config=None, poll_interval: int = 15):
+    def __init__(self, mysql_pool, scheduler, docker_client=None, task_config=None, poll_interval: int = 15, shard_id: Optional[int] = None):
         self.mysql_pool = mysql_pool
         self.scheduler = scheduler
         self.docker_client = docker_client
         self.task_config = task_config
         self.poll_interval = poll_interval
+        self.shard_id = shard_id
         self._running = False
         self._task: Optional[asyncio.Task] = None
     
@@ -61,15 +62,31 @@ class CommandPoller:
         
         async with self.mysql_pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cursor:
-                # 1. 获取一条 PENDING 命令 (FOR UPDATE 锁行)
-                # 使用 alwaysup 数据库名
-                await cursor.execute("""
-                    SELECT id, task_id, params 
-                    FROM alwaysup.task_commands 
-                    WHERE status = 'PENDING' 
-                    ORDER BY created_at ASC
-                    LIMIT 1 FOR UPDATE
-                """)
+                # 1. 获取针对当前分片的 PENDING 命令 (FOR UPDATE 锁行)
+                if self.shard_id is None:
+                    # 主控节点: 处理全局任务 (无 shard_id) 或 Shard 0 任务
+                    sql = """
+                        SELECT id, task_id, params 
+                        FROM alwaysup.task_commands 
+                        WHERE status = 'PENDING' 
+                          AND (JSON_EXTRACT(params, '$.shard_id') IS NULL 
+                               OR JSON_EXTRACT(params, '$.shard_id') = 0)
+                        ORDER BY created_at ASC
+                        LIMIT 1 FOR UPDATE
+                    """
+                    await cursor.execute(sql)
+                else:
+                    # 远程分片节点: 仅处理匹配自己 id 的任务
+                    sql = """
+                        SELECT id, task_id, params 
+                        FROM alwaysup.task_commands 
+                        WHERE status = 'PENDING' 
+                          AND JSON_EXTRACT(params, '$.shard_id') = %s
+                        ORDER BY created_at ASC
+                        LIMIT 1 FOR UPDATE
+                    """
+                    await cursor.execute(sql, (self.shard_id,))
+                
                 cmd = await cursor.fetchone()
                 
                 if not cmd:
@@ -218,7 +235,7 @@ class CommandPoller:
                         "repair_tick": "post_market_gate",
                         "repair_kline": "post_market_gate"
                     }
-                    if task_id in REAUDIT_MAP:
+                    if task_id in REAUDIT_MAP and self.scheduler:
                         gate_id = REAUDIT_MAP[task_id]
                         logger.info(f"🔄 任务 {task_id} 执行成功，自动刷新门禁状态: {gate_id}")
                         try:

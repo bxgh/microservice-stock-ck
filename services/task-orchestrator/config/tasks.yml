@@ -69,7 +69,7 @@ tasks:
   - id: daily_tick_sync_shard_0
     name: 盘后分笔采集与补采(Shard-0)
     type: workflow
-    enabled: true
+    enabled: false
     schedule:
       type: trading_cron
       expression: "35 15 * * 1-5"

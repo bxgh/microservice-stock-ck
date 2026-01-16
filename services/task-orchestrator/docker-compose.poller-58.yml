@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  shard-poller:
+    image: ${DOCKER_REGISTRY}/task-orchestrator:latest
+    container_name: gsd-shard-poller
+    command: ["python", "-m", "shard_poller", "--shard", "1"]
+    environment:
+      - MYSQL_HOST=127.0.0.1
+      - MYSQL_PORT=36301
+      - MYSQL_USER=${MYSQL_USER}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      - MYSQL_DATABASE=task_orchestrator
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - TZ=Asia/Shanghai
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./config/tasks.yml:/app/config/tasks.yml
+    network_mode: host
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

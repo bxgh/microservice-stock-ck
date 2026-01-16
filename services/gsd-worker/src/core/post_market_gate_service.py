@@ -1,7 +1,7 @@
 import logging
 import asyncio
 from datetime import datetime, time
-from typing import Tuple, Dict, Any, List
+from typing import Tuple, Dict, Any, List, Optional
 import httpx
 import os
 import pytz
@@ -10,6 +10,7 @@ import aiomysql
 import redis.asyncio as redis
 from redis.asyncio.cluster import RedisCluster, ClusterNode
 from gsd_shared.validators import is_valid_a_stock
+import xxhash
 
 from core.clickhouse_client import ClickHouseClient
 from core.notifier import Notifier
@@ -24,6 +25,7 @@ DEFAULT_STOCK_COUNT_FALLBACK = 5499
 STANDARD_TRADING_MINUTES = 241
 PRICE_CONSISTENCY_THRESHOLD = 0.011
 HTTP_CLIENT_TIMEOUT_SECONDS = 10.0
+DEFAULT_SHARD_REPAIR_THRESHOLD = 50.0
 
 class PostMarketGateService:
     """
@@ -44,6 +46,7 @@ class PostMarketGateService:
         # 配置阈值
         self.kline_threshold = float(os.getenv("KLINE_THRESHOLD", str(DEFAULT_KLINE_THRESHOLD)))
         self.tick_threshold = float(os.getenv("TICK_THRESHOLD", str(DEFAULT_TICK_THRESHOLD)))
+        self.shard_repair_threshold = float(os.getenv("SHARD_REPAIR_THRESHOLD", str(DEFAULT_SHARD_REPAIR_THRESHOLD)))
         self.orchestrator_url = os.getenv("ORCHESTRATOR_URL", "http://127.0.0.1:18000")
         
         # 云端 MySQL 配置 (通过隧道)
@@ -104,13 +107,19 @@ class PostMarketGateService:
         actions = []
         if kline_rate < self.kline_threshold:
             logger.warning(f"⚠️ 当日 K线覆盖率 {kline_rate}% 不足")
-            await self._trigger_recovery("daily_kline_sync", today)
+            await self._trigger_recovery("repair_kline", today)
             actions.append("当日K线补采")
             
-        if tick_rate < self.tick_threshold or continuity_summary['failed_count'] > 100:
-            logger.warning(f"⚠️ 当日分笔异常: 覆盖率={tick_rate}%, 缺时段股票数={continuity_summary['failed_count']}")
-            await self._trigger_recovery("repair_tick", today)
-            actions.append("应当分笔补采")
+        # 4.2 分级补采逻辑
+        # 只有在分片级别异常时才触发对应的修复策略
+        # continuity_summary['failed_codes'] 包含了所有异常股票
+        failed_codes = continuity_summary.get('failed_codes', [])
+        
+        if tick_rate < self.tick_threshold or len(failed_codes) > 0:
+            logger.warning(f"⚠️ 当日分笔异常: 覆盖率={tick_rate}%, 异常股票数={len(failed_codes)}")
+            # 按分片分组处理
+            grouped_results = await self._process_tiered_repair(today, failed_codes)
+            actions.extend(grouped_results)
 
         # 5. 生成报告并持久化
         status = "SUCCESS"
@@ -211,18 +220,16 @@ class PostMarketGateService:
 
     async def _check_all_ticks_continuity(self, date_str: str) -> Dict[str, Any]:
         """全量检查分笔时段完整性 (ClickHouse 分片聚合)"""
-        # 核心逻辑：检查每只股票的分钟数
-        # 正常交易日应有 120 (AM) + 120 (PM) + 1 (9:25) = 241 分钟
-        # 确定表名: 如果是今天，使用 intraday 表
         is_today = date_str == datetime.now(CST).strftime('%Y-%m-%d')
         tick_table = "stock_data.tick_data_intraday" if is_today else "stock_data.tick_data"
 
+        # 1. 聚合查询统计每个股票的情况并返回异常代码
         query = f"""
         SELECT 
-            countDistinct(stock_code) as total,
-            countIf(active_minutes < 235) as insufficient_minutes,
-            countIf(first_tick > '09:25:05') as late_starts,
-            countIf(last_tick < '14:59:55') as early_ends
+            stock_code,
+            first_tick,
+            last_tick,
+            active_minutes
         FROM (
             SELECT 
                 stock_code,
@@ -233,21 +240,122 @@ class PostMarketGateService:
             WHERE trade_date = '{date_str.replace('-', '')}'
             GROUP BY stock_code
         )
+        WHERE active_minutes < 235 
+           OR first_tick > '09:25:05' 
+           OR last_tick < '14:59:55'
         """
         try:
             res = self.clickhouse_client.client.execute(query)
-            total, insufficient, late, early = res[0]
-            failed_codes = insufficient + late + early # 可能有重合，但在 Gate-3 关心总量
+            failed_codes = [row[0] for row in res]
+            
+            # 为了保持向前兼容，也统计计数
+            insufficient = sum(1 for row in res if row[3] < 235)
+            late = sum(1 for row in res if row[1] > '09:25:05')
+            early = sum(1 for row in res if row[2] < '14:59:55')
+            
+            # 获取当前节点覆盖到的股票总数作为参照
+            total_query = f"SELECT countDistinct(stock_code) FROM {tick_table} WHERE trade_date = '{date_str.replace('-', '')}'"
+            total_checked = self.clickhouse_client.client.execute(total_query)[0][0]
+
             return {
-                "total_checked": total,
+                "total_checked": total_checked,
                 "insufficient_minutes_count": insufficient,
                 "late_starts_count": late,
                 "early_ends_count": early,
-                "failed_count": failed_codes
+                "failed_count": len(failed_codes),
+                "failed_codes": failed_codes
             }
         except Exception as e:
             logger.error(f"全量分笔连续性审计失败: {e}")
-            return {"error": str(e), "failed_count": 0}
+            return {"error": str(e), "failed_count": 0, "failed_codes": []}
+
+    async def _process_tiered_repair(self, date_str: str, failed_codes: List[str]) -> List[str]:
+        """
+        实现分级修复逻辑
+        1. 获取各分片基准名单
+        2. 计算各分片实际覆盖率
+        3. 根据策略触发修复
+        """
+        actions = []
+        # 1. 获取全量名单 (已分片)
+        all_shards_stocks = {}
+        try:
+            for i in range(3):
+                # 虽然这个类主要在 Server 41 运行，但它能通过 Redis 获取所有分片的配置名单
+                codes = await self.redis_client.smembers(f"metadata:stock_codes:shard:{i}")
+                all_shards_stocks[i] = set(codes)
+        except Exception as e:
+            logger.error(f"❌ 获取分片股票列表失败: {e}")
+            # 降级: 如果无法获取分片列表，则无法执行分级修复
+            return ["分片列表获取失败，跳过分级修复"]
+
+        # 2. 对失败股票按分片分组
+        failed_by_shard = {0: [], 1: [], 2: []}
+        for code in failed_codes:
+            sid = xxhash.xxh64(code).intdigest() % 3
+            failed_by_shard[sid].append(code)
+
+        # 3. 计算每个分片的实测成功数 (从 ClickHouse 全局查)
+        is_today = date_str == datetime.now(CST).strftime('%Y-%m-%d')
+        tick_table = "stock_data.tick_data_intraday" if is_today else "stock_data.tick_data"
+        ds = date_str.replace('-', '')
+        
+        # 批量获取所有有数据的股票
+        data_query = f"SELECT DISTINCT stock_code FROM {tick_table} WHERE trade_date = '{ds}'"
+        actual_stocks = set(row[0] for row in self.clickhouse_client.client.execute(data_query))
+
+        for sid in range(3):
+            expected_set = all_shards_stocks[sid]
+            expected_count = len(expected_set)
+            if expected_count == 0: continue
+            
+            actual_set = actual_stocks.intersection(expected_set)
+            actual_count = len(actual_set)
+            
+            coverage = (actual_count / expected_count) * 100
+            failed_in_shard = failed_by_shard[sid]
+            
+            logger.info(f"分片 {sid} 覆盖率详情: 实测={actual_count}, 期望={expected_count}, 覆盖率={coverage:.2f}%")
+            
+            if actual_count == 0:
+                msg = f"Shard {sid} 节点似乎完全离线 (数据 0)"
+                logger.error(f"🚨 {msg}")
+                actions.append(f"分片{sid}离线告警")
+                # 即使离线也要尝试发一个全量重采指令，万一重启了呢
+                await self._trigger_shard_repair(date_str, sid, None)
+            elif coverage < self.shard_repair_threshold:
+                logger.warning(f"⚠️ Shard {sid} 覆盖率极低 ({coverage:.2f}%), 触发全分片重采 (阈值: {self.shard_repair_threshold}%)")
+                await self._trigger_shard_repair(date_str, sid, None)
+                actions.append(f"分片{sid}全分片重采")
+            elif failed_in_shard:
+                logger.info(f"🔍 Shard {sid} 个别缺失 ({len(failed_in_shard)} 只), 触发定向补采")
+                await self._trigger_shard_repair(date_str, sid, failed_in_shard)
+                actions.append(f"分片{sid}定向补采")
+                
+        return actions
+
+    async def _trigger_shard_repair(self, date_str: str, shard_id: int, codes: Optional[List[str]]):
+        """发送定向/全量分片修复指令到 MySQL"""
+        # 注意：这里我们直接操作 MySQL 插入 task_commands 表，而不是调 API
+        # 因为 API 触发目前不支持带复杂参数，直接写库更灵活
+        conn = None
+        try:
+            ds = date_str.replace('-', '')
+            params = {"date": ds, "shard_id": shard_id}
+            if codes:
+                params["stock_codes"] = ",".join(codes)
+            
+            conn = await aiomysql.connect(**self.mysql_config)
+            async with conn.cursor() as cur:
+                sql = "INSERT INTO alwaysup.task_commands (task_id, params, status) VALUES (%s, %s, %s)"
+                await cur.execute(sql, ("repair_tick", json.dumps(params), "PENDING"))
+            await conn.commit()
+            logger.info(f"✅ 已插入 repair_tick 指令: shard={shard_id}, codes_count={len(codes) if codes else 'FULL'}")
+        except Exception as e:
+            logger.error(f"❌ 插入修复指令失败: {e}")
+        finally:
+            if conn:
+                conn.close()
 
     async def _check_price_consistency(self, date_str: str) -> Dict:
         """抽样对账"""
