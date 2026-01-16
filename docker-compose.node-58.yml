@@ -58,39 +58,39 @@ services:
       - ./logs/mootdx-source:/app/logs
 
   # ---------------------------------------------------------------------------
-  # 任务调度 (58 节点)
+  # 任务调度 (仅 41 运行 - 本节点禁用)
   # ---------------------------------------------------------------------------
   
-  task-orchestrator:
-    build:
-      context: .
-      dockerfile: services/task-orchestrator/Dockerfile
-    image: task-orchestrator:latest
-    container_name: task-orchestrator
-    network_mode: host
-    restart: unless-stopped
-    environment:
-      - ORCHESTRATOR_DEBUG=false
-      - ORCHESTRATOR_DOCKER_HOST=unix:///var/run/docker.sock
-      - ORCHESTRATOR_BASE_DIR=${PWD}
-      - ORCHESTRATOR_WORKER_IMAGE=gsd-worker:latest
-      - ORCHESTRATOR_WORKER_NETWORK=host
-      - ORCHESTRATOR_REDIS_HOST=192.168.151.41
-      - ORCHESTRATOR_REDIS_PORT=6379
-      - ORCHESTRATOR_REDIS_PASSWORD=redis123
-      - ORCHESTRATOR_WORKER_MOOTDX_API_URL=http://localhost:8003
-      - WORKER_CLICKHOUSE_HOST=127.0.0.1
-      - WORKER_CLICKHOUSE_PORT=9000
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ./libs/gsd-shared:/app/libs/gsd-shared:ro
-      - ./logs/task-orchestrator:/app/logs
-      - ./services/task-orchestrator/config/tasks_58.yml:/app/config/tasks.yml:ro
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:18000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+  # task-orchestrator:
+  #   build:
+  #     context: .
+  #     dockerfile: services/task-orchestrator/Dockerfile
+  #   image: task-orchestrator:latest
+  #   container_name: task-orchestrator
+  #   network_mode: host
+  #   restart: no
+  #   environment:
+  #     - ORCHESTRATOR_DEBUG=false
+  #     - ORCHESTRATOR_DOCKER_HOST=unix:///var/run/docker.sock
+  #     - ORCHESTRATOR_BASE_DIR=${PWD}
+  #     - ORCHESTRATOR_WORKER_IMAGE=gsd-worker:latest
+  #     - ORCHESTRATOR_WORKER_NETWORK=host
+  #     - ORCHESTRATOR_REDIS_HOST=192.168.151.41
+  #     - ORCHESTRATOR_REDIS_PORT=6379
+  #     - ORCHESTRATOR_REDIS_PASSWORD=redis123
+  #     - ORCHESTRATOR_WORKER_MOOTDX_API_URL=http://localhost:8003
+  #     - WORKER_CLICKHOUSE_HOST=127.0.0.1
+  #     - WORKER_CLICKHOUSE_PORT=9000
+  #   volumes:
+  #     - /var/run/docker.sock:/var/run/docker.sock
+  #     - ./libs/gsd-shared:/app/libs/gsd-shared:ro
+  #     - ./logs/task-orchestrator:/app/logs
+  #     - ./services/task-orchestrator/config/tasks_58.yml:/app/config/tasks.yml:ro
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:18000/health"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
 
   # ---------------------------------------------------------------------------
   # GitLab (仅 58 运行)
