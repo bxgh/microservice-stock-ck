@@ -23,7 +23,7 @@ logger = logging.getLogger("jobs.supplement_stock")
 async def main():
     parser = argparse.ArgumentParser(description="定向个股数据补充任务")
     
-    parser.add_argument("--stocks", nargs="+", required=True, help="股票代码列表 (e.g. 000001 600519)")
+    parser.add_argument("--stocks", nargs="*", help="股票代码列表 (e.g. 000001,600519 or 000001 600519)")
     parser.add_argument("--data-types", nargs="+", default=["tick"], help="数据类型 (e.g. tick kline financial)")
     parser.add_argument("--date", type=str, help="指定单日 (YYYYMMDD)")
     parser.add_argument("--date-range", type=str, help="指定日期范围 (YYYYMMDD-YYYYMMDD)")
@@ -33,10 +33,15 @@ async def main():
     if unknown:
         logger.info(f"Ignored unknown arguments: {unknown}")
     
-    # 处理逗号分隔的股票代码（来自 CommandPoller）
-    stocks_list = args.stocks
+    # 处理股票代码参数（支持多种格式）
+    stocks_list = args.stocks if args.stocks else []
     if len(stocks_list) == 1 and ',' in stocks_list[0]:
-        stocks_list = [s.strip() for s in stocks_list[0].split(',')]
+        # 逗号分隔格式（来自 CommandPoller）
+        stocks_list = [s.strip() for s in stocks_list[0].split(',') if s.strip()]
+    elif not stocks_list:
+        # 如果没有提供 stocks，报错
+        logger.error("错误: 必须提供 --stocks 参数")
+        sys.exit(1)
     
     # 构建参数字典
     params = {
