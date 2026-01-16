@@ -144,11 +144,23 @@ class CommandPoller:
                         else:
                             cmd_list = list(original_cmd)
                             
-                        # 追加参数: --key value
+                        # 追加参数: --key value (支持列表参数)
                         for k, v in params.items():
                             cmd_list.append(f"--{k}")
                             if v is not None and str(v) != "":
-                                cmd_list.append(str(v))
+                                # 处理列表参数：转换为逗号分隔字符串或多个值
+                                if isinstance(v, list):
+                                    # 对于 stocks/stock-codes 等参数，使用逗号分隔
+                                    if k in ['stocks', 'stock_codes', 'stock-codes']:
+                                        cmd_list.append(','.join(str(item) for item in v))
+                                    # 对于 data-types 等参数，展开为多个值
+                                    elif k in ['data_types', 'data-types']:
+                                        cmd_list.extend(str(item) for item in v)
+                                    else:
+                                        # 其他列表默认转 JSON
+                                        cmd_list.append(json.dumps(v))
+                                else:
+                                    cmd_list.append(str(v))
                         
                         logger.info(f"🚀 动态执行任务 {task_id}: {cmd_list}")
                         

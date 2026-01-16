@@ -33,9 +33,14 @@ async def main():
     if unknown:
         logger.info(f"Ignored unknown arguments: {unknown}")
     
+    # 处理逗号分隔的股票代码（来自 CommandPoller）
+    stocks_list = args.stocks
+    if len(stocks_list) == 1 and ',' in stocks_list[0]:
+        stocks_list = [s.strip() for s in stocks_list[0].split(',')]
+    
     # 构建参数字典
     params = {
-        "stocks": args.stocks,
+        "stocks": stocks_list,
         "data_types": args.data_types,
         "priority": args.priority
     }

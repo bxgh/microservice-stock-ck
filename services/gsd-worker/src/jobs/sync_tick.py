@@ -248,7 +248,9 @@ if __name__ == "__main__":
         default=None,
         help="手动指定股票代码，逗号分隔"
     )
-    args = parser.parse_args()
+    args, unknown = parser.parse_known_args()
+    if unknown:
+        logger.info(f"Ignored unknown arguments: {unknown}")
     
     # 解析股票代码
     passed_codes = None
