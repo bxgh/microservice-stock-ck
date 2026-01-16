@@ -346,12 +346,23 @@ class PostMarketGateService:
         # 策略 3: 大量异常 (> 200 只) - 全量修复
         elif failed_count > 200:
             logger.warning(f"🚨 异常数量过多 ({failed_count} 只)，触发全量修复 (repair_tick)")
-            # 获取各分片基准名单
-            all_shards_stocks = {}
+            # 获取各分片基准名单 (使用统一的 K线/StockList 逻辑，替代 Redis 元数据)
+            all_shards_stocks = {0: set(), 1: set(), 2: set()}
             try:
-                for i in range(3):
-                    codes = await self.redis_client.smembers(f"metadata:stock_codes:shard:{i}")
-                    all_shards_stocks[i] = set(codes)
+                # 获取全量基准股票代码 (已标准化，无前缀)
+                 # 转换日期格式 (YYYY-MM-DD)
+                query_date = datetime.strptime(date_str, "%Y%m%d").strftime("%Y-%m-%d")
+                base_stocks = await self._get_stocks_from_kline(query_date)
+                
+                if not base_stocks:
+                    logger.warning("⚠️ 无法从K线获取基准股票，降级到 stock_list")
+                    base_stocks = await self._get_all_stock_codes()
+                
+                # 按分片分组
+                for code in base_stocks:
+                    sid = xxhash.xxh64(code).intdigest() % 3
+                    all_shards_stocks[sid].add(code)
+                    
             except Exception as e:
                 logger.error(f"❌ 获取分片股票列表失败: {e}")
                 return ["分片列表获取失败，跳过分级修复"]
