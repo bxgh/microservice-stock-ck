@@ -7,8 +7,9 @@ global:
     image: gsd-worker:latest
     network_mode: host
     default_volumes:
-      - ./libs/gsd-shared:/app/libs/gsd-shared:ro
-      - ./services/gsd-worker/config:/app/config:ro
+      - /home/bxgh/microservice-stock/libs/gsd-shared:/app/libs/gsd-shared:ro
+      - /home/bxgh/microservice-stock/services/gsd-worker/config:/app/config:ro
+      - /home/bxgh/microservice-stock/services/gsd-worker/src:/app/src
     environment:
       PYTHONPATH: /app/src
 

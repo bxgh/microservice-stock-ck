@@ -16,7 +16,7 @@ services:
       - ORCHESTRATOR_WORKER_NETWORK=host
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./config/tasks.yml:/app/config/tasks.yml
+      - ./config/tasks_111.yml:/app/config/tasks.yml:ro
     network_mode: host
     restart: always
     logging:
