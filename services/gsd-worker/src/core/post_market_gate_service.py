@@ -411,7 +411,7 @@ class PostMarketGateService:
             
             if shard_id is not None:
                 # 如果指定了分片，可以在参数中标记（供未来跨节点执行使用）
-                params["shard_hint"] = shard_id
+                params["shard_id"] = shard_id
             
             conn = await aiomysql.connect(**self.mysql_config)
             async with conn.cursor() as cur:
