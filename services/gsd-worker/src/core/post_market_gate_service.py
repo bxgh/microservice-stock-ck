@@ -238,17 +238,34 @@ class PostMarketGateService:
             return 0
 
     async def _check_tick_coverage(self, date_str: str) -> float:
-        """分笔覆盖率"""
-        total_a = await self._get_effective_stock_count()
+        """
+        分笔覆盖率
+        分子: 有 Tick 数据的股票数
+        分母: 有 K线数据的股票数（实际交易的股票）
+        """
         # 确定表名: 如果是今天，使用 intraday 表
         is_today = date_str == datetime.now(CST).strftime('%Y-%m-%d')
         tick_table = "stock_data.tick_data_intraday" if is_today else "stock_data.tick_data"
+        ds = date_str.replace('-', '')
         
-        query = f"SELECT countDistinct(stock_code) FROM {tick_table} WHERE trade_date = '{date_str.replace('-', '')}'"
         try:
-            result = self.clickhouse_client.client.execute(query)
-            count = result[0][0]
-            return round(count / total_a * 100, 2)
+            # 分母: 从 K线表获取当日实际交易的股票数
+            kline_query = f"SELECT countDistinct(stock_code) FROM stock_data.stock_kline_daily WHERE trade_date = '{ds}'"
+            kline_result = self.clickhouse_client.client.execute(kline_query)
+            total_kline = kline_result[0][0] if kline_result else 0
+            
+            if total_kline == 0:
+                logger.warning(f"⚠️ K线表中 {date_str} 无数据，无法计算分笔覆盖率")
+                return 0.0
+            
+            # 分子: 有 Tick 数据的股票数
+            tick_query = f"SELECT countDistinct(stock_code) FROM {tick_table} WHERE trade_date = '{ds}'"
+            tick_result = self.clickhouse_client.client.execute(tick_query)
+            total_tick = tick_result[0][0] if tick_result else 0
+            
+            rate = round(total_tick / total_kline * 100, 2)
+            logger.info(f"📊 分笔覆盖率: Tick={total_tick}, K线={total_kline}, Rate={rate}%")
+            return rate
         except Exception as e:
             logger.error(f"分笔覆盖率检查失败: {e}")
             return 0.0
