@@ -132,38 +132,21 @@ Gate-3 审计完成后，系统根据结果自动触发对应的修复任务。
     - 对每只异常股票重新执行 **"智能搜索矩阵"** (Smart Search Matrix) 采集策略。
     - **数据去重**: ClickHouse 的 `ReplacingMergeTree` 引擎确保补采数据不会产生冲突。
 
-#### 3.2.3 分布式分片补采
+#### 3.2.3 动态分级修复策略 (Tiered Repair Strategy)
 
-分笔数据采用 **3 分片分布式采集** 架构：
+Gate-3 根据失败股票数量动态选择修复策略，以平衡效率与资源：
 
-| 节点 | IP | Shard ID | 补采触发方式 |
-| :--- | :--- | :---: | :--- |
-| **Server 41** | 192.168.151.41 | 0 | `CommandPoller` 自动 |
-| **Server 58** | 192.168.151.58 | 1 | 手动 SSH |
-| **Server 111** | 192.168.151.111 | 2 | 手动 SSH |
+| 异常数量 | 策略类型 | 执行任务 | 参数说明 | 执行位置 |
+| :--- | :--- | :--- | :--- | :--- |
+| **1-50 只** | **精准定向** | `stock_data_supplement` | `{"stocks": [code1, code2], "data_types": ["tick"]}` | **Server 41 (主节点)** |
+| **51-200 只** | **分片并行** | `stock_data_supplement` | `{"stocks": [code1...], "priority": "high"}`<br>按 `xxhash % 3` 分组下发 | **Server 41/58/111** (通过 `CommandPoller`) |
+| **> 200 只** | **全量重采** | `repair_tick` | `{"date": "YYYYMMDD"}` | **Server 41** (触发全分片扫描) |
 
-> [!WARNING]
-> **当前限制**: `repair_tick` 任务仅能在 Server 41 执行 Shard 0 的补采。Shard 1/2 的数据缺失需要**手动 SSH 到对应节点触发**。
-
-**远程节点手动补采命令**：
-```bash
-# Server 58 (Shard 1)
-ssh 192.168.151.58
-cd /path/to/microservice-stock
-docker compose -f docker-compose.node-58.yml run --rm gsd-worker \
-    python -m jobs.sync_tick --scope all --shard-index 1 --shard-total 3 --date YYYYMMDD
-
-# Server 111 (Shard 2)
-ssh 192.168.151.111
-cd /path/to/microservice-stock
-docker compose -f docker-compose.node-111.yml run --rm gsd-worker \
-    python -m jobs.sync_tick --scope all --shard-index 2 --shard-total 3 --date YYYYMMDD
-```
-
-#### 3.2.4 计划优化：Shard Poller
-
-> [!NOTE]
-> **待开发**: 计划在 Server 58/111 部署轻量级 `ShardPoller`，使其可监听云端指令并自动执行分片补采，实现真正的跨节点自动修复。
+**执行流程**:
+1. 审计发现异常，计算异常股票总数。
+2. 若数量少 (<=50)，直接在主节点调用新的 `SupplementEngine` 进行快速补漏。
+3. 若数量中等 (51-200)，将股票按分片规则分组，分别为每个分片插入一条 `stock_data_supplement` 任务指令 (待 `ShardPoller` 支持)。
+4. 若数量巨大 (>200)，回退到传统的 `repair_tick` 任务，进行全量扫描修复。
 
 ---
 

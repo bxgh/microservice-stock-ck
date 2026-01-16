@@ -178,21 +178,27 @@ INSERT INTO alwaysup.task_commands (task_id, params, status) VALUES (
 
 ### 4.3 data_types 枚举
 
-| 值 | 说明 | 实现状态 |
-| :--- | :--- | :---: |
-| `tick` | 分笔数据 | ✅ |
-| `kline` | 日 K 线 | ✅ |
-| `minute_kline` | 分钟 K 线 | ⚠️ 待实现 |
-| `order_book` | 盘口深度 | ⚠️ 待实现 |
-| `capital_flow` | 资金流向 | ⚠️ 待实现 |
-| `block_trade` | 大宗交易 | ⚠️ 待实现 |
-| `margin` | 融资融券 | ⚠️ 待实现 |
-| `top_list` | 龙虎榜 | ⚠️ 待实现 |
-| `financial` | 财务数据 | ⚠️ 待实现 |
-| `valuation` | 估值指标 | ⚠️ 待实现 |
-| `shareholder` | 股东数据 | ⚠️ 待实现 |
-| `dividend` | 分红配股 | ⚠️ 待实现 |
-| `announcement` | 公告 | ⚠️ 待实现 |
+| 值 | 说明 | 数据源 | 实现状态 |
+| :--- | :--- | :---: | :---: |
+| `tick` | 分笔数据 | **Local** (TDX) | ✅ |
+| `kline` | 日 K 线 | **Cloud** (API) | ✅ |
+| `minute_kline` | 分钟 K 线 | **Local** (Calc) | ⚠️ 待实现 |
+| `order_book` | 盘口深度 | **Local** (TDX) | ⚠️ 待实现 |
+| `capital_flow` | 资金流向 | **Cloud** (API) | ✅ |
+| `block_trade` | 大宗交易 | **Cloud** (API) | ✅ |
+| `margin` | 融资融券 | **Cloud** (API) | ✅ |
+| `top_list` | 龙虎榜 | **Cloud** (API) | ✅ |
+| `financial` | 财务数据 | **Cloud** (API) | ✅ |
+| `valuation` | 估值指标 | **Cloud** (API) | ✅ |
+| `shareholder` | 股东数据 | **Cloud** (API) | ✅ |
+| `dividend` | 分红配股 | **Cloud** (API) | ✅ |
+| `announcement` | 公告 | **Cloud** (API) | ⚠️ 待实现 |
+
+> [!NOTE]
+> **数据源说明**:
+> - **Local**: 容器直接连接外部数据源 (如 TDX 服务器)，可能需要配置 `HTTP_PROXY` 或 `SOCKS5`。
+> - **Cloud**: 从项目核心云端 API (`CLOUD_API_URL`) 拉取清洗后的数据。
+
 
 ---
 
@@ -223,13 +229,17 @@ class SupplementEngine:
     
     # 采集器注册表
     collectors = {
-        "tick": TickCollector,           # ✅ 复用现有
-        "kline": KlineCollector,         # ✅ 复用现有
-        "minute_kline": None,            # ⚠️ 待实现
-        "order_book": None,              # ⚠️ 待实现
-        "capital_flow": None,            # ⚠️ 待实现
-        "financial": None,               # ⚠️ 待实现
-        "valuation": None,               # ⚠️ 待实现
+        # Local Collectors (Direct to External)
+        "tick": TickCollector,           # ✅ Local: TDX
+        "order_book": None,              # ⚠️ Local: TDX
+        "minute_kline": None,            # ⚠️ Local: Calc from Tick
+        
+        # Cloud Collectors (From Internal API)
+        "kline": KlineCollector,         # ✅ Cloud: API
+        "capital_flow": None,            # ⚠️ Cloud: API
+        "financial": None,               # ⚠️ Cloud: API
+        "valuation": None,               # ⚠️ Cloud: API
+        # ... others
     }
     
     async def run(self, params: dict) -> dict:
@@ -337,41 +347,18 @@ async def _trigger_targeted_supplement(self, failed_codes: List[str], date_str: 
 
 ## 8. 实现路线图
 
-### 8.1 Phase 1: 核心框架 (本期)
+### 8.1 Phase 1-5: 已完成
+- [x] 核心引擎 `SupplementEngine`
+- [x] 任务入口 `supplement_stock.py`
+- [x] 动态分级修复 Gate-3 集成
+- [x] 云端数据采集器 (Financial, CapitalFlow, Valuation, TopList, BlockTrade, Margin, Dividend, Shareholder)
+- [x] 代码质量控制 (Unit Tests, Logging, Type Hints)
 
-- [x] 设计方案文档
-- [ ] `SupplementEngine` 核心引擎
-- [ ] `supplement_stock.py` 任务入口
-- [ ] 复用现有 Tick 和 K 线采集器
-- [ ] Gate-3 集成
-
-**工作量**: ~5 小时
-
-### 8.2 Phase 2: 分钟 K 线 (待排期)
-
-- [ ] 设计 `stock_kline_minute` 表结构
-- [ ] 实现 `MinuteKlineCollector`
-- [ ] 支持 1/5/15/30/60 分钟周期
-
-### 8.3 Phase 3: 盘口深度 (待排期)
-
-- [ ] 设计 `order_book` 表结构
-- [ ] 实现 `OrderBookCollector`
-- [ ] 评估实时采集 vs 快照采集
-
-### 8.4 Phase 4: 资金数据 (待排期)
-
-- [ ] 资金流向 (`CapitalFlowCollector`)
-- [ ] 大宗交易 (`BlockTradeCollector`)
-- [ ] 融资融券 (`MarginCollector`)
-- [ ] 龙虎榜 (`TopListCollector`)
-
-### 8.5 Phase 5: 基本面数据 (待排期)
-
-- [ ] 财务数据 (`FinancialCollector`)
-- [ ] 估值指标 (`ValuationCollector`)
-- [ ] 股东数据 (`ShareholderCollector`)
-- [ ] 分红配股 (`DividendCollector`)
+### 8.2 Phase X: 未来扩展 (待排期)
+- [ ] 分钟 K 线 (`MinuteKlineCollector`)
+- [ ] 盘口深度 (`OrderBookCollector`)
+- [ ] 板块行业 (`SectorCollector`)
+- [ ] 研报公告 (`AnnouncementCollector`)
 
 ---
 

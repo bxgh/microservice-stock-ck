@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   shard-poller:
-    image: ${DOCKER_REGISTRY}/task-orchestrator:latest
+    image: task-orchestrator:latest
     container_name: gsd-shard-poller
     command: ["python", "-m", "shard_poller", "--shard", "1"]
     environment:

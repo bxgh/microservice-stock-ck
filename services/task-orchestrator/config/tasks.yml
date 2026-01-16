@@ -366,3 +366,21 @@ tasks:
         TICK_THRESHOLD: "95"
     retry:
       max_attempts: 1
+
+  # 定向个股数据补充 (NEW)
+  - id: stock_data_supplement
+    name: 定向个股数据补充
+    type: docker
+    enabled: false # 不自动调度，仅手动/API/Gate-3触发
+    schedule:
+      type: cron
+      expression: "0 0 1 1 *" # Dummy schedule
+    target:
+      command: ["jobs.supplement_stock"]
+      # 命令行参数通过 task_commands.params 动态传入
+      # 例如: {"stocks": ["000001"], "data_types": ["tick", "financial"], "date": "20260115"}
+      environment:
+        PYTHONPATH: "/app/src"
+    retry:
+      max_attempts: 2
+      backoff_seconds: 300

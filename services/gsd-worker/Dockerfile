@@ -43,6 +43,13 @@ RUN if [ "$ENABLE_PROXY" = "true" ]; then \
         pip install --prefix=/install --no-cache-dir -r requirements.txt; \
     fi
 
+# 安装测试依赖
+RUN if [ "$ENABLE_PROXY" = "true" ]; then \
+        http_proxy=$PROXY_URL https_proxy=$PROXY_URL pip install --prefix=/install --no-cache-dir pytest pytest-asyncio pytest-cov; \
+    else \
+        pip install --prefix=/install --no-cache-dir pytest pytest-asyncio pytest-cov; \
+    fi
+
 # 安装 gsd-shared
 COPY libs/gsd-shared /tmp/gsd-shared
 RUN if [ "$ENABLE_PROXY" = "true" ]; then \

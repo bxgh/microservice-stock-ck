@@ -271,68 +271,100 @@ class PostMarketGateService:
 
     async def _process_tiered_repair(self, date_str: str, failed_codes: List[str]) -> List[str]:
         """
-        实现分级修复逻辑
-        1. 获取各分片基准名单
-        2. 计算各分片实际覆盖率
-        3. 根据策略触发修复
+        实现分级修复逻辑 (动态分片策略)
+        
+        策略:
+        - 1-50 只: 单节点定向补充 (stock_data_supplement)
+        - 51-200 只: 分片并行补充 (按 shard 分组后各自触发 stock_data_supplement)
+        - > 200 只: 全量修复 (repair_tick)
         """
         actions = []
-        # 1. 获取全量名单 (已分片)
-        all_shards_stocks = {}
-        try:
-            for i in range(3):
-                # 虽然这个类主要在 Server 41 运行，但它能通过 Redis 获取所有分片的配置名单
-                codes = await self.redis_client.smembers(f"metadata:stock_codes:shard:{i}")
-                all_shards_stocks[i] = set(codes)
-        except Exception as e:
-            logger.error(f"❌ 获取分片股票列表失败: {e}")
-            # 降级: 如果无法获取分片列表，则无法执行分级修复
-            return ["分片列表获取失败，跳过分级修复"]
-
-        # 2. 对失败股票按分片分组
-        failed_by_shard = {0: [], 1: [], 2: []}
-        for code in failed_codes:
-            sid = xxhash.xxh64(code).intdigest() % 3
-            failed_by_shard[sid].append(code)
-
-        # 3. 计算每个分片的实测成功数 (从 ClickHouse 全局查)
-        is_today = date_str == datetime.now(CST).strftime('%Y-%m-%d')
-        tick_table = "stock_data.tick_data_intraday" if is_today else "stock_data.tick_data"
-        ds = date_str.replace('-', '')
+        failed_count = len(failed_codes)
         
-        # 批量获取所有有数据的股票
-        data_query = f"SELECT DISTINCT stock_code FROM {tick_table} WHERE trade_date = '{ds}'"
-        actual_stocks = set(row[0] for row in self.clickhouse_client.client.execute(data_query))
-
-        for sid in range(3):
-            expected_set = all_shards_stocks[sid]
-            expected_count = len(expected_set)
-            if expected_count == 0: continue
+        logger.info(f"🔍 异常股票数量: {failed_count} 只")
+        
+        # 策略 1: 少量异常 (1-50 只) - 单节点定向补充
+        if 1 <= failed_count <= 50:
+            logger.info(f"✅ 触发单节点定向补充 (stock_data_supplement)")
+            await self._trigger_targeted_supplement(date_str, failed_codes)
+            actions.append(f"单节点定向补充 ({failed_count}只)")
+            return actions
+        
+        # 策略 2: 中量异常 (51-200 只) - 分片并行补充
+        elif 51 <= failed_count <= 200:
+            logger.info(f"⚡ 触发分片并行补充 (按 shard 分组)")
+            # 按分片分组
+            failed_by_shard = {0: [], 1: [], 2: []}
+            for code in failed_codes:
+                sid = xxhash.xxh64(code).intdigest() % 3
+                failed_by_shard[sid].append(code)
             
-            actual_set = actual_stocks.intersection(expected_set)
-            actual_count = len(actual_set)
+            # 为每个有异常的分片触发独立的 supplement 任务
+            for sid in range(3):
+                if failed_by_shard[sid]:
+                    logger.info(f"  Shard {sid}: {len(failed_by_shard[sid])} 只")
+                    await self._trigger_targeted_supplement(date_str, failed_by_shard[sid], shard_id=sid)
+                    actions.append(f"Shard{sid}定向补充 ({len(failed_by_shard[sid])}只)")
             
-            coverage = (actual_count / expected_count) * 100
-            failed_in_shard = failed_by_shard[sid]
+            return actions
+        
+        # 策略 3: 大量异常 (> 200 只) - 全量修复
+        elif failed_count > 200:
+            logger.warning(f"🚨 异常数量过多 ({failed_count} 只)，触发全量修复 (repair_tick)")
+            # 获取各分片基准名单
+            all_shards_stocks = {}
+            try:
+                for i in range(3):
+                    codes = await self.redis_client.smembers(f"metadata:stock_codes:shard:{i}")
+                    all_shards_stocks[i] = set(codes)
+            except Exception as e:
+                logger.error(f"❌ 获取分片股票列表失败: {e}")
+                return ["分片列表获取失败，跳过分级修复"]
             
-            logger.info(f"分片 {sid} 覆盖率详情: 实测={actual_count}, 期望={expected_count}, 覆盖率={coverage:.2f}%")
+            # 按分片分组
+            failed_by_shard = {0: [], 1: [], 2: []}
+            for code in failed_codes:
+                sid = xxhash.xxh64(code).intdigest() % 3
+                failed_by_shard[sid].append(code)
             
-            if actual_count == 0:
-                msg = f"Shard {sid} 节点似乎完全离线 (数据 0)"
-                logger.error(f"🚨 {msg}")
-                actions.append(f"分片{sid}离线告警")
-                # 即使离线也要尝试发一个全量重采指令，万一重启了呢
-                await self._trigger_shard_repair(date_str, sid, None)
-            elif coverage < self.shard_repair_threshold:
-                logger.warning(f"⚠️ Shard {sid} 覆盖率极低 ({coverage:.2f}%), 触发全分片重采 (阈值: {self.shard_repair_threshold}%)")
-                await self._trigger_shard_repair(date_str, sid, None)
-                actions.append(f"分片{sid}全分片重采")
-            elif failed_in_shard:
-                logger.info(f"🔍 Shard {sid} 个别缺失 ({len(failed_in_shard)} 只), 触发定向补采")
-                await self._trigger_shard_repair(date_str, sid, failed_in_shard)
-                actions.append(f"分片{sid}定向补采")
+            # 计算各分片覆盖率并决定是否需要全量
+            is_today = date_str == datetime.now(CST).strftime('%Y-%m-%d')
+            tick_table = "stock_data.tick_data_intraday" if is_today else "stock_data.tick_data"
+            ds = date_str.replace('-', '')
+            
+            data_query = f"SELECT DISTINCT stock_code FROM {tick_table} WHERE trade_date = '{ds}'"
+            actual_stocks = set(row[0] for row in self.clickhouse_client.client.execute(data_query))
+            
+            for sid in range(3):
+                expected_set = all_shards_stocks[sid]
+                expected_count = len(expected_set)
+                if expected_count == 0: continue
                 
-        return actions
+                actual_set = actual_stocks.intersection(expected_set)
+                actual_count = len(actual_set)
+                coverage = (actual_count / expected_count) * 100
+                
+                logger.info(f"分片 {sid} 覆盖率: {coverage:.2f}% ({actual_count}/{expected_count})")
+                
+                if actual_count == 0:
+                    logger.error(f"🚨 Shard {sid} 节点似乎完全离线")
+                    await self._trigger_shard_repair(date_str, sid, None)
+                    actions.append(f"分片{sid}全量重采(离线)")
+                elif coverage < self.shard_repair_threshold:
+                    logger.warning(f"⚠️ Shard {sid} 覆盖率过低，触发全分片重采")
+                    await self._trigger_shard_repair(date_str, sid, None)
+                    actions.append(f"分片{sid}全量重采")
+                else:
+                    # 虽然总数多，但该分片尚可，只补缺失的
+                    logger.info(f"Shard {sid} 覆盖率尚可，定向补采 {len(failed_by_shard[sid])} 只")
+                    await self._trigger_shard_repair(date_str, sid, failed_by_shard[sid])
+                    actions.append(f"分片{sid}定向补采")
+            
+            return actions
+        
+        else:
+            logger.info("✅ 无异常股票，无需补采")
+            return []
 
     async def _trigger_shard_repair(self, date_str: str, shard_id: int, codes: Optional[List[str]]):
         """发送定向/全量分片修复指令到 MySQL"""
@@ -353,6 +385,43 @@ class PostMarketGateService:
             logger.info(f"✅ 已插入 repair_tick 指令: shard={shard_id}, codes_count={len(codes) if codes else 'FULL'}")
         except Exception as e:
             logger.error(f"❌ 插入修复指令失败: {e}")
+        finally:
+            if conn:
+                conn.close()
+
+    async def _trigger_targeted_supplement(self, date_str: str, codes: List[str], shard_id: Optional[int] = None):
+        """
+        触发定向个股数据补充任务 (stock_data_supplement)
+        
+        Args:
+            date_str: 交易日期 (YYYY-MM-DD)
+            codes: 需要补充的股票代码列表
+            shard_id: 可选，指定在哪个分片节点执行 (当前版本暂不使用)
+        """
+        conn = None
+        try:
+            ds = date_str.replace('-', '')
+            
+            # 构建任务参数
+            params = {
+                "stocks": codes,
+                "date": ds,
+                "data_types": ["tick"]  # 默认补tick，可根据需要扩展
+            }
+            
+            if shard_id is not None:
+                # 如果指定了分片，可以在参数中标记（供未来跨节点执行使用）
+                params["shard_hint"] = shard_id
+            
+            conn = await aiomysql.connect(**self.mysql_config)
+            async with conn.cursor() as cur:
+                sql = "INSERT INTO alwaysup.task_commands (task_id, params, status) VALUES (%s, %s, %s)"
+                await cur.execute(sql, ("stock_data_supplement", json.dumps(params), "PENDING"))
+            await conn.commit()
+            
+            logger.info(f"✅ 已插入 stock_data_supplement 指令: {len(codes)} 只股票, shard_hint={shard_id}")
+        except Exception as e:
+            logger.error(f"❌ 插入定向补充指令失败: {e}")
         finally:
             if conn:
                 conn.close()
