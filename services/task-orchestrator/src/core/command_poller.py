@@ -64,15 +64,18 @@ class CommandPoller:
             async with conn.cursor(aiomysql.DictCursor) as cursor:
                 # 1. 获取针对当前分片的 PENDING 命令 (FOR UPDATE 锁行)
                 if self.shard_id is None:
-                    # 主控节点: 处理全局任务 (无 shard_id) 或 Shard 0 任务
+                    # 主控节点: 处理全局任务 (无 shard_id/shard_index) 或 Shard 0 任务
                     sql = """
                         SELECT id, task_id, params 
                         FROM alwaysup.task_commands 
                         WHERE status = 'PENDING' 
-                          AND (JSON_EXTRACT(params, '$.shard_id') IS NULL 
-                               OR JSON_EXTRACT(params, '$.shard_id') = 0)
+                          AND (
+                              (JSON_EXTRACT(params, '$.shard_id') IS NULL AND JSON_EXTRACT(params, '$.shard_index') IS NULL)
+                              OR JSON_EXTRACT(params, '$.shard_id') = 0
+                              OR JSON_EXTRACT(params, '$.shard_index') = 0
+                          )
                         ORDER BY created_at ASC
-                        LIMIT 1 FOR UPDATE
+                        LIMIT 1 FOR UPDATE SKIP LOCKED
                     """
                     await cursor.execute(sql)
                 else:
@@ -81,11 +84,12 @@ class CommandPoller:
                         SELECT id, task_id, params 
                         FROM alwaysup.task_commands 
                         WHERE status = 'PENDING' 
-                          AND JSON_EXTRACT(params, '$.shard_id') = %s
+                          AND (JSON_EXTRACT(params, '$.shard_id') = %s
+                               OR JSON_EXTRACT(params, '$.shard_index') = %s)
                         ORDER BY created_at ASC
-                        LIMIT 1 FOR UPDATE
+                        LIMIT 1 FOR UPDATE SKIP LOCKED
                     """
-                    await cursor.execute(sql, (self.shard_id,))
+                    await cursor.execute(sql, (self.shard_id, self.shard_id))
                 
                 cmd = await cursor.fetchone()
                 
@@ -108,7 +112,12 @@ class CommandPoller:
                 
                 logger.info(f"⚡ 收到命令 #{cmd_id}: {task_id} params={params}")
 
-                # 2. 更新状态为 RUNNING
+                # 2. 参数标准化: shard_index -> shard_id (向后兼容)
+                if params and 'shard_index' in params and 'shard_id' not in params:
+                    params['shard_id'] = params['shard_index']
+                    logger.debug(f"参数标准化: shard_index={params['shard_index']} -> shard_id={params['shard_id']}")
+
+                # 3. 更新状态为 RUNNING
                 await cursor.execute(
                     "UPDATE alwaysup.task_commands SET status='RUNNING', executed_at=NOW() WHERE id=%s",
                     (cmd_id,)
