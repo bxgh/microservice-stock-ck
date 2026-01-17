@@ -3,6 +3,7 @@ import logging
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 import asynch
+from asynch.pool import Pool as AsynchPool
 import pytz
 
 logger = logging.getLogger(__name__)
@@ -16,7 +17,7 @@ class TickWriter:
     2. 写入 ClickHouse (Intraday/History 表)
     """
 
-    def __init__(self, clickhouse_pool: Optional[asynch.Pool]):
+    def __init__(self, clickhouse_pool: Optional[AsynchPool]):
         self.ch_pool = clickhouse_pool
 
     async def write(self, stock_code: str, trade_date: str, data: List[Dict[str, Any]]) -> int:

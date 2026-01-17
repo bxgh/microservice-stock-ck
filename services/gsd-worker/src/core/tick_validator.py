@@ -3,6 +3,7 @@ import logging
 from datetime import datetime
 from typing import Optional, List, Set
 import asynch
+from asynch.pool import Pool as AsynchPool
 import pytz
 
 logger = logging.getLogger(__name__)
@@ -22,7 +23,7 @@ class TickDataValidator:
         '300059', '000725', '600000', '000858', '600276'
     }
 
-    def __init__(self, clickhouse_pool: Optional[asynch.Pool]):
+    def __init__(self, clickhouse_pool: Optional[AsynchPool]):
         self.ch_pool = clickhouse_pool
 
     async def check_quality(self, stock_code: str, trade_date: str, min_tick_count: int = 2000) -> bool:
