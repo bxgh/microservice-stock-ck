@@ -202,7 +202,9 @@ class CommandPoller:
                             
                         # 追加参数: --key value (支持列表参数)
                         for k, v in params.items():
-                            cmd_list.append(f"--{k}")
+                            # 将下划线转换为破折号 (argparse 兼容: shard_index -> shard-index)
+                            cli_key = k.replace('_', '-')
+                            cmd_list.append(f"--{cli_key}")
                             if v is not None and str(v) != "":
                                 # 处理列表参数：转换为逗号分隔字符串或多个值
                                 if isinstance(v, list):
