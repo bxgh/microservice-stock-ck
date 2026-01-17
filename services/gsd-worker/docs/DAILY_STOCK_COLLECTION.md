@@ -1,8 +1,8 @@
 # 每日股票代码采集任务文档
 
 > **任务名称**: `daily_stock_collection`  
-> **版本**: 1.0  
-> **创建日期**: 2026-01-09
+> **版本**: 1.1  
+> **更新日期**: 2026-01-17
 
 ---
 
@@ -11,7 +11,8 @@
 从腾讯云 API 拉取全市场股票代码列表，缓存到本地 Redis Cluster，供 `gsd-worker` 各分片任务使用。
 
 ### 核心功能
-1. ✅ 从云端 API 获取全量股票代码 (7300+ 只)
+1. ✅ 从云端 API 获取全量股票代码 (约 5500+ A股，总量 7300+)
+   - 过滤条件: `security_type="stock"`, `is_listed="true"`, `is_active="true"`
 2. ✅ 格式化为标准格式 (如 `000001.SZ`)
 3. ✅ 缓存到 Redis Cluster (支持 3 节点集群)
 4. ✅ 智能容错：下载失败时保留旧数据
@@ -24,13 +25,13 @@
 
 | 任务 | 执行时间 | 时区 | 说明 |
 |:-----|:---------|:-----|:-----|
-| **云端采集** | 09:00 | Asia/Shanghai | 腾讯云服务器采集股票代码 |
-| **本地同步** | **09:05** | Asia/Shanghai | 本地从云端拉取并缓存 |
+| **云端采集** | 08:30 | Asia/Shanghai | 腾讯云服务器采集股票代码 |
+| **本地同步** | **08:45** | Asia/Shanghai | 本地从云端拉取并缓存 |
 
-**为什么本地延迟 5 分钟？**
-- 云端任务需要时间完成数据采集和入库
-- 网络传输和 API 响应需要缓冲时间
-- 避免拉取到不完整的数据
+**为什么配置为 08:45？**
+- 确保在 09:00 开盘前元数据已就绪
+- 避开 09:00 归档任务的 IO 高峰
+- 云端任务在 08:30 左右完成数据刷新
 
 ### task-orchestrator 配置示例
 
@@ -38,7 +39,7 @@
 # services/task-orchestrator/config/tasks.yml
 daily_stock_collection:
   task_id: daily_stock_collection
-  schedule: "5 9 * * *"  # 每天 09:05
+  schedule: "45 8 * * *"  # 每天 08:45
   timezone: Asia/Shanghai
   type: docker
   image: gsd-worker:latest
@@ -46,7 +47,8 @@ daily_stock_collection:
   network_mode: host
   environment:
     REDIS_HOST: 127.0.0.1
-    REDIS_PORT: 16379
+    REDIS_PORT: 6379
+    REDIS_CLUSTER: "false"
     HTTP_PROXY: http://192.168.151.18:3128
     CLOUD_API_URL: http://124.221.80.250:8000/api/v1/stocks/all
 ```
@@ -145,7 +147,8 @@ redis-cli -c TTL metadata:stock_codes
 docker run --rm \
   --network host \
   -e REDIS_HOST=127.0.0.1 \
-  -e REDIS_PORT=16379 \
+  -e REDIS_PORT=6379 \
+  -e REDIS_CLUSTER=false \
   -e HTTP_PROXY=http://192.168.151.18:3128 \
   -e CLOUD_API_URL=http://124.221.80.250:8000/api/v1/stocks/all \
   gsd-worker:latest \

@@ -365,9 +365,8 @@ class PostMarketGateService:
             all_shards_stocks = {0: set(), 1: set(), 2: set()}
             try:
                 # 获取全量基准股票代码 (已标准化，无前缀)
-                 # 转换日期格式 (YYYY-MM-DD)
-                query_date = datetime.strptime(date_str, "%Y%m%d").strftime("%Y-%m-%d")
-                base_stocks = await self._get_stocks_from_kline(query_date)
+                # date_str 已经是 YYYY-MM-DD 格式，直接使用
+                base_stocks = await self._get_stocks_from_kline(date_str)
                 
                 if not base_stocks:
                     logger.warning("⚠️ 无法从K线获取基准股票，降级到 stock_list")
@@ -491,8 +490,8 @@ class PostMarketGateService:
         """
         try:
             # 1. 优先从当天K线数据获取股票列表（实际交易的股票）
-            trade_date = datetime.strptime(date_str, "%Y%m%d").strftime("%Y-%m-%d")
-            all_stocks = await self._get_stocks_from_kline(trade_date)
+            # trade_date 已经是 YYYY-MM-DD
+            all_stocks = await self._get_stocks_from_kline(date_str)
             
             # 2. 降级逻辑：如果K线数据不可用，使用 stock_list
             if not all_stocks:
@@ -509,22 +508,30 @@ class PostMarketGateService:
                 return []
             
             # 4. 批量查询质量状态
+            # 动态选择表名 (Intraday vs History)
+            is_today = date_str == datetime.now(CST).strftime('%Y-%m-%d')
+            tick_table = "stock_data.tick_data_intraday" if is_today else "stock_data.tick_data"
+            ds = date_str.replace('-', '') # ClickHouse Date usually accepts YYYY-MM-DD but string compare needs match if str. 
+                                         # But here we pass '{trade_date}' in query. 
+                                         # Using YYYY-MM-DD string with Date column works.
+            
             codes_str = "','".join(shard_stocks)
             
-            async with self.clickhouse_pool.acquire() as conn:
-                async with conn.cursor() as cursor:
-                    await cursor.execute(f"""
-                        SELECT 
-                            stock_code,
-                            count() as tick_count,
-                            min(tick_time) as min_time,
-                            max(tick_time) as max_time
-                        FROM tick_data_local
-                        WHERE stock_code IN ('{codes_str}')
-                          AND trade_date = '{trade_date}'
-                        GROUP BY stock_code
-                    """)
-                    rows = await cursor.fetchall()
+            # 改用同步客户端执行
+            query = f"""
+                SELECT 
+                    stock_code,
+                    count() as tick_count,
+                    min(tick_time) as min_time,
+                    max(tick_time) as max_time
+                FROM {tick_table}
+                WHERE stock_code IN ('{codes_str}')
+                  AND trade_date = '{date_str}' 
+                GROUP BY stock_code
+            """
+            
+            # 由于是同步调用，不需要 await (但放在 async 函数中 ok)
+            rows = self.clickhouse_client.client.execute(query)
             
             # 5. 找出已达标的股票
             qualified = set()
@@ -562,15 +569,15 @@ class PostMarketGateService:
             股票代码列表
         """
         try:
-            async with self.clickhouse_pool.acquire() as conn:
-                async with conn.cursor() as cursor:
-                    await cursor.execute(f"""
-                        SELECT DISTINCT stock_code
-                        FROM kline_data_local
-                        WHERE trade_date = '{trade_date}'
-                        ORDER BY stock_code
-                    """)
-                    rows = await cursor.fetchall()
+            # 使用同步客户端 + 分布式表
+            query = f"""
+                SELECT DISTINCT stock_code
+                FROM stock_data.stock_kline_daily
+                WHERE trade_date = '{trade_date}'
+                ORDER BY stock_code
+            """
+            
+            rows = self.clickhouse_client.client.execute(query)
             
             # 标准化股票代码格式（移除可能的市场前缀 sh/sz）
             stocks = []
@@ -581,7 +588,7 @@ class PostMarketGateService:
                     code = code[2:]
                 stocks.append(code)
             
-            logger.info(f"📊 从K线数据获取到 {len(stocks)} 只当天交易股票")
+            logger.info(f"📊 从K线数据(Distributed)获取到 {len(stocks)} 只当天交易股票")
             return stocks
             
         except Exception as e:
