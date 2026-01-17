@@ -141,7 +141,7 @@ class StockRosterService:
                 async with conn.cursor() as cursor:
                     await cursor.execute("""
                         SELECT DISTINCT stock_code
-                        FROM kline_data_local
+                        FROM stock_kline_daily_local
                         WHERE trade_date = %(trade_date)s
                         ORDER BY stock_code
                     """, {"trade_date": trade_date_str})
