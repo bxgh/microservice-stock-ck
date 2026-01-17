@@ -141,7 +141,7 @@ class StockRosterService:
                 async with conn.cursor() as cursor:
                     await cursor.execute("""
                         SELECT DISTINCT stock_code
-                        FROM stock_kline_daily_local
+                        FROM stock_kline_daily
                         WHERE trade_date = %(trade_date)s
                           AND stock_code NOT LIKE '.%%'
                           AND stock_code NOT LIKE '399%%'
