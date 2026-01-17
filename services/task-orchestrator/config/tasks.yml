@@ -79,7 +79,7 @@ tasks:
         command: ["jobs.sync_tick", "--scope", "all", "--shard-index", "0", "--shard-total", "3"]
       - id: retry
         name: 自动补采
-        command: ["jobs.retry_tick", "--concurrency", "5"]
+        command: ["jobs.retry_tick", "--concurrency", "50"]
         depends_on: [collect]
     retry:
       max_attempts: 2
@@ -362,6 +362,21 @@ tasks:
       expression: "0 0 1 1 *" # Dummy schedule
     target:
       command: ["jobs.sync_tick", "--scope", "all", "--distributed-source", "none"]
+      environment:
+        TICK_THRESHOLD: "95"
+    retry:
+      max_attempts: 1
+
+  # 分笔指定日期分片采集 (用于分布式精准调度)
+  - id: collect_tick_sharded
+    name: 分笔数据指定日期分片采集
+    type: docker
+    enabled: false
+    schedule: 
+      type: cron
+      expression: "0 0 1 1 *"
+    target:
+      command: ["jobs.sync_tick", "--scope", "all"]
       environment:
         TICK_THRESHOLD: "95"
     retry:
