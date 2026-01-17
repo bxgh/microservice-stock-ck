@@ -11,6 +11,7 @@
 import asyncio
 import aiohttp
 import asynch
+from asynch.pool import Pool as AsynchPool
 import os
 import logging
 import pytz
@@ -41,7 +42,7 @@ class TickSyncService:
         self._lock = asyncio.Lock()
         
         # Resources
-        self.clickhouse_pool: Optional[asynch.Pool] = None
+        self.clickhouse_pool: Optional[AsynchPool] = None
         self.http_session: Optional[aiohttp.ClientSession] = None
         self.redis_client: Optional[redis.Redis] = None
         

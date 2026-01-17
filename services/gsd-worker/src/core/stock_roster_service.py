@@ -6,6 +6,7 @@ import json
 import yaml
 import aiohttp
 import asynch
+from asynch.pool import Pool as AsynchPool
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
@@ -27,7 +28,7 @@ class StockRosterService:
         self, 
         redis_client: Optional[redis.Redis], 
         http_session: Optional[aiohttp.ClientSession], 
-        clickhouse_pool: Optional[asynch.Pool],
+        clickhouse_pool: Optional[AsynchPool],
         mootdx_api_url: str
     ):
         self.redis = redis_client
