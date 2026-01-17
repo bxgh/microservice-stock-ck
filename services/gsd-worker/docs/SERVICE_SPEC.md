@@ -397,6 +397,7 @@ python -m jobs.sync_kline --mode adaptive
 
 | 文档 | 路径 |
 |------|------|
+| 采集策略与并发指南 | `TICK_ACQUISITION_STRATEGY_AND_CONCURRENCY.md` |
 | 每日分笔同步场景 | `docs/SCENARIO_DAILY_TICK_SYNC.md` |
 | 指定日期分笔场景 | `docs/SCENARIO_SPECIFIED_DATE_TICK.md` |
 | 分笔服务重构说明 | `docs/REFACTORING_TICK_SYNC_SERVICE.md` |

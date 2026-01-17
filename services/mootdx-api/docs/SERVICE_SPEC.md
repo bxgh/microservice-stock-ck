@@ -392,6 +392,8 @@ python src/main.py
 
 | 文档 | 路径 |
 |------|------|
+| TDX 连接池文档 | `docs/TDX_CONNECTION_POOL.md` |
+| 采集策略与并发指南 | `../../gsd-worker/docs/TICK_ACQUISITION_STRATEGY_AND_CONCURRENCY.md` |
 | TDX 节点列表 | `tdx_ip.md` |
 | 诊断工具 | `diagnostics/` |
 | 连接池测试 | `tests/` |
