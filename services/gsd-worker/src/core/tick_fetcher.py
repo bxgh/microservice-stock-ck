@@ -39,6 +39,9 @@ class TickFetcher:
         start_time = asyncio.get_running_loop().time()
         all_frames = []
         
+        # Strip leading dot from stock code (K-line table format: .600001, API needs: 600001)
+        clean_code = stock_code.lstrip('.')
+        
         today_str = datetime.now(CST).strftime("%Y%m%d")
         is_today = (trade_date == today_str)
 
@@ -46,10 +49,10 @@ class TickFetcher:
             try:
                 # 路由选择
                 if is_today:
-                    url = f"{self.api_url}/api/v1/tick/{stock_code}"
+                    url = f"{self.api_url}/api/v1/tick/{clean_code}"
                     params = {"start": start, "offset": offset}
                 else:
-                    url = f"{self.api_url}/api/v1/tick/{stock_code}"
+                    url = f"{self.api_url}/api/v1/tick/{clean_code}"
                     params = {"date": int(trade_date), "start": start, "offset": offset}
                 
                 if not self.http:
