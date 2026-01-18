@@ -57,6 +57,9 @@ class TickFetcher:
                      logger.error("HTTP session is None")
                      break
 
+                # Debug: log the actual request URL and params
+                logger.debug(f"{stock_code}: GET {url} params={params}")
+
                 async with self.http.get(url, params=params, timeout=12) as response:
                     if response.status != 200:
                         continue
