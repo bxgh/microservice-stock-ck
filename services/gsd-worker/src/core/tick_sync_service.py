@@ -23,7 +23,7 @@ from redis.asyncio.cluster import RedisCluster, ClusterNode
 # 子组件
 from core.task_queue import TickTaskQueue
 from core.stock_roster_service import StockRosterService
-from core.tick_validator import TickDataValidator
+from gsd_shared.validation.tick_validator import TickValidator
 from core.tick_fetcher import TickFetcher
 from core.tick_writer import TickWriter
 from core.sync_status import SyncStatusTracker
@@ -60,7 +60,7 @@ class TickSyncService:
         # Components (Initialized in initialize())
         self.task_queue: Optional[TickTaskQueue] = None
         self.roster: Optional[StockRosterService] = None
-        self.validator: Optional[TickDataValidator] = None
+        self.validator: Optional[TickValidator] = None
         self.fetcher: Optional[TickFetcher] = None
         self.writer: Optional[TickWriter] = None
         self.tracker: Optional[SyncStatusTracker] = None
@@ -114,7 +114,7 @@ class TickSyncService:
             self.roster = StockRosterService(
                 self.redis_client, self.http_session, self.clickhouse_pool, self.mootdx_api_url
             )
-            self.validator = TickDataValidator(self.clickhouse_pool)
+            self.validator = TickValidator(self.clickhouse_pool)
             self.fetcher = TickFetcher(self.http_session, self.mootdx_api_url)
             self.writer = TickWriter(self.clickhouse_pool)
             self.tracker = SyncStatusTracker(self.redis_client)
@@ -159,8 +159,8 @@ class TickSyncService:
     async def recover_processing_tasks(self) -> List[str]:
         return await self.task_queue.recover()
 
-    async def filter_stocks_need_repair(self, stock_codes: list, trade_date: str, min_tick_count: int = 2000) -> list:
-        return await self.validator.filter_need_repair(stock_codes, trade_date, min_tick_count)
+    async def filter_stocks_need_repair(self, stock_codes: list, trade_date: str) -> list:
+        return await self.validator.filter_need_repair(stock_codes, trade_date)
 
     async def sync_stock(self, stock_code: str, trade_date: str) -> int:
         """同步单只股票 (Orchestration Logic)"""

@@ -28,7 +28,6 @@ class SyncRecord(BaseModel):
     failed_count: int = Field(0, description="失败记录数")
     error_message: Optional[str] = Field(None, description="错误信息")
     
-    class Config:
-        json_encoders = {
-            datetime: lambda v: v.isoformat() if v else None
-        }
+    model_config = {
+        "from_attributes": True
+    }

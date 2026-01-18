@@ -26,10 +26,16 @@ class KLineRecord(BaseModel):
     turnover_rate: Optional[float] = Field(None, description="换手率（%）")
     change_pct: Optional[float] = Field(None, description="涨跌幅（%）")
     
-    class Config:
-        json_encoders = {
-            date: lambda v: v.isoformat()
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "stock_code": "600519",
+                "trade_date": "2023-01-01",
+                "open_price": 1700.0,
+                "close_price": 1750.0
+            }
         }
+    }
     
     @classmethod
     def from_mysql(cls, row: dict) -> "KLineRecord":

@@ -1,20 +1,27 @@
-
 import logging
 from datetime import datetime
-from typing import Optional, List, Set
-import asynch
-from asynch.pool import Pool as AsynchPool
+from typing import Optional, List, Set, Any
 import pytz
+
+# 尝试导入 asynch，如果不可用(如在纯逻辑环境中)则忽略，但在运行时需保证可用
+try:
+    from asynch.pool import Pool as AsynchPool
+except ImportError:
+    AsynchPool = Any
+
+from gsd_shared.validation.standards import TickStandards
 
 logger = logging.getLogger(__name__)
 CST = pytz.timezone('Asia/Shanghai')
 
-class TickDataValidator:
+
+class TickValidator:
     """
-    分笔数据质量校验器
+    分笔数据校验器 (从 gsd-worker 迁移并标准化)
+    
     职责:
-    1. 采前校验: 检查是否已达标 (check_quality, filter_need_repair)
-    2. 采后校验: 金丝雀校验 (validate_canary)
+    1. 采前/采中校验: 检查数据是否已达标 (基于 TickStandards.Loose)
+    2. 采后校验: 金丝雀校验
     """
     
     # 核心权重股 (金丝雀)
@@ -26,8 +33,12 @@ class TickDataValidator:
     def __init__(self, clickhouse_pool: Optional[AsynchPool]):
         self.ch_pool = clickhouse_pool
 
-    async def check_quality(self, stock_code: str, trade_date: str, min_tick_count: int = 2000) -> bool:
-        """检查 ClickHouse 中数据是否存在且符合质量标准"""
+    async def check_quality(self, stock_code: str, trade_date: str) -> bool:
+        """
+        检查 ClickHouse 中数据是否存在且符合质量标准 (宽松标准)
+        
+        用于采集前的幂等性检查。
+        """
         if not self.ch_pool:
             return False
 
@@ -54,15 +65,17 @@ class TickDataValidator:
                     
                     tick_count, min_time, max_time = row
                     
-                    # 质量标准
-                    if tick_count < min_tick_count:
+                    # 使用标准化的宽松标准
+                    if tick_count < TickStandards.Loose.MIN_COUNT:
                         return False
                     
                     if min_time and max_time:
-                        if min_time > "10:00:00" or max_time < "14:30:00":
+                        # 只要在 10:00 - 14:30 之间有数据覆盖即可视为"存在"
+                        # 避免因 9:25 缺失导致无限重采
+                        if min_time > TickStandards.Loose.MIN_TIME or max_time < TickStandards.Loose.MAX_TIME:
                             return False
                     
-                    logger.debug(f"✓ {stock_code} 数据已达标: {tick_count} ticks")
+                    logger.debug(f"✓ {stock_code} 数据已达标(宽松): {tick_count} ticks")
                     return True
         except Exception as e:
             logger.error(f"检查数据质量失败 {stock_code}: {e}")
@@ -71,10 +84,9 @@ class TickDataValidator:
     async def filter_need_repair(
         self, 
         stock_codes: List[str], 
-        trade_date: str, 
-        min_tick_count: int = 2000
+        trade_date: str
     ) -> List[str]:
-        """批量筛选出需要补采的股票"""
+        """批量筛选出需要补采的股票 (基于宽松标准)"""
         if not stock_codes or not self.ch_pool:
             return stock_codes
         
@@ -82,9 +94,6 @@ class TickDataValidator:
             trade_date_str = datetime.strptime(
                 trade_date.replace("-", ""), "%Y%m%d"
             ).strftime("%Y-%m-%d")
-            
-            # 构建 IN 条件
-            codes_str = "','".join(stock_codes)
             
             # 使用参数化查询防止SQL注入
             placeholders = ','.join(['%(code{})s'.format(i) for i in range(len(stock_codes))])
@@ -105,15 +114,17 @@ class TickDataValidator:
                     qualified_stocks = set()
                     for row in rows:
                         code, count, min_t, max_t = row
-                        if count >= min_tick_count:
+                        
+                        # 应用宽松标准
+                        if count >= TickStandards.Loose.MIN_COUNT:
                             if min_t and max_t:
-                                if min_t <= "10:00:00" and max_t >= "14:30:00":
+                                if min_t <= TickStandards.Loose.MIN_TIME and max_t >= TickStandards.Loose.MAX_TIME:
                                     qualified_stocks.add(code)
                             else:
                                 qualified_stocks.add(code)
                                 
             need_repair = [c for c in stock_codes if c not in qualified_stocks]
-            logger.info(f"📊 质量筛选: {len(stock_codes)} -> 需补采 {len(need_repair)}")
+            logger.info(f"📊 质量筛选(Loose): {len(stock_codes)} -> 需补采 {len(need_repair)}")
             return need_repair
             
         except Exception as e:

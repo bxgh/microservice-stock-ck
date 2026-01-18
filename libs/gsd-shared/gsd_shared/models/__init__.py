@@ -1,13 +1,19 @@
 """数据模型包"""
 
 from .kline import KLineRecord
-from .stock import StockInfo, StockCodeMapping  
-from .sync import SyncStatus, SyncRecord
+from .stock import StockInfo
+from .kline import KLineRecord
+from .sync import SyncRecord
+
+# API Models
+from .api.response import ApiResponse, TickDataResponse, TickRecord, KLineDataResponse, KLineRecord
 
 __all__ = [
-    "KLineRecord",
     "StockInfo",
-    "StockCodeMapping", 
-    "SyncStatus",
+    "KLineRecord",
     "SyncRecord",
+    "ApiResponse",
+    "TickDataResponse",
+    "TickRecord",
+    "KLineDataResponse"
 ]

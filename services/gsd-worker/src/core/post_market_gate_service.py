@@ -10,6 +10,8 @@ import aiomysql
 import redis.asyncio as redis
 from redis.asyncio.cluster import RedisCluster, ClusterNode
 from gsd_shared.validators import is_valid_a_stock
+from gsd_shared.validation.standards import TickStandards
+from gsd_shared.validation.market_validator import MarketValidator
 import xxhash
 
 from core.clickhouse_client import ClickHouseClient
@@ -22,8 +24,7 @@ CST = pytz.timezone('Asia/Shanghai')
 DEFAULT_KLINE_THRESHOLD = 98.0
 DEFAULT_TICK_THRESHOLD = 95.0
 DEFAULT_STOCK_COUNT_FALLBACK = 5499
-STANDARD_TRADING_MINUTES = 241
-PRICE_CONSISTENCY_THRESHOLD = 0.011
+STANDARD_TRADING_MINUTES = TickStandards.Lazy.STANDARD_TRADING_MINUTES if hasattr(TickStandards, 'Lazy') else 241 # Fallback just in case, but better to remove or point to standard
 HTTP_CLIENT_TIMEOUT_SECONDS = 10.0
 DEFAULT_SHARD_REPAIR_THRESHOLD = 50.0
 
@@ -42,6 +43,9 @@ class PostMarketGateService:
     def __init__(self):
         self.clickhouse_client = ClickHouseClient()
         self.notifier = Notifier()
+        self.tracker = SyncStatusTracker(self.redis_client)
+        self.market_validator = MarketValidator()
+        self.lock = asyncio.Lock()
         
         # 配置阈值
         self.kline_threshold = float(os.getenv("KLINE_THRESHOLD", str(DEFAULT_KLINE_THRESHOLD)))
@@ -135,8 +139,8 @@ class PostMarketGateService:
         # 2. 深度质量检查 (全量时段完整性)
         continuity_summary = await self._check_all_ticks_continuity(today)
         
-        # 3. 数据一致性检查 (抽样对账)
-        consistency_report = await self._check_price_consistency(today)
+        # 3. 数据一致性检查 (抽样对账: 价格 + 成交量)
+        consistency_report = await self._check_consistency(today)
         
         # 4. 判断是否需要补采
         actions = []
@@ -272,6 +276,13 @@ class PostMarketGateService:
         """全量检查分笔时段完整性 (ClickHouse 分片聚合)"""
         is_today = date_str == datetime.now(CST).strftime('%Y-%m-%d')
         tick_table = "stock_data.tick_data_intraday" if is_today else "stock_data.tick_data"
+        
+        # 动态选择校验标准
+        std = TickStandards.IntradayPostMarket if is_today else TickStandards.History
+        
+        min_active = std.MIN_ACTIVE_MINUTES
+        min_time = std.MIN_TIME
+        max_time = std.MAX_TIME
 
         # 1. 聚合查询统计每个股票的情况并返回异常代码
         query = f"""
@@ -290,18 +301,18 @@ class PostMarketGateService:
             WHERE trade_date = '{date_str.replace('-', '')}'
             GROUP BY stock_code
         )
-        WHERE active_minutes < 235 
-           OR first_tick > '09:25:05' 
-           OR last_tick < '14:59:55'
+        WHERE active_minutes < {min_active} 
+           OR first_tick > '{min_time}' 
+           OR last_tick < '{max_time}'
         """
         try:
             res = self.clickhouse_client.client.execute(query)
             failed_codes = [row[0] for row in res]
             
             # 为了保持向前兼容，也统计计数
-            insufficient = sum(1 for row in res if row[3] < 235)
-            late = sum(1 for row in res if row[1] > '09:25:05')
-            early = sum(1 for row in res if row[2] < '14:59:55')
+            insufficient = sum(1 for row in res if row[3] < min_active)
+            late = sum(1 for row in res if row[1] > min_time)
+            early = sum(1 for row in res if row[2] < max_time)
             
             # 获取当前节点覆盖到的股票总数作为参照
             total_query = f"SELECT countDistinct(stock_code) FROM {tick_table} WHERE trade_date = '{date_str.replace('-', '')}'"
@@ -648,8 +659,8 @@ class PostMarketGateService:
             if conn:
                 conn.close()
 
-    async def _check_price_consistency(self, date_str: str) -> Dict:
-        """抽样对账"""
+    async def _check_consistency(self, date_str: str) -> Dict:
+        """抽样对账 (价格 + 成交量)"""
         try:
             ds = date_str.replace('-', '')
             # 抽样 10 只
@@ -658,16 +669,35 @@ class PostMarketGateService:
             is_today = date_str == datetime.now(CST).strftime('%Y-%m-%d')
             tick_table = "stock_data.tick_data_intraday" if is_today else "stock_data.tick_data"
             
+            # 动态选择标准
+            std = TickStandards.IntradayPostMarket if is_today else TickStandards.History
+            price_tol = std.PRICE_TOLERANCE
+            vol_tol = std.VOLUME_TOLERANCE
+            
             for code in stocks:
-                k_query = f"SELECT close_price FROM stock_data.stock_kline_daily WHERE stock_code='{code}' AND trade_date='{ds}' LIMIT 1"
-                t_query = f"SELECT price FROM {tick_table} WHERE stock_code='{code}' AND trade_date='{ds}' ORDER BY tick_time DESC LIMIT 1"
+                k_query = f"SELECT close_price, volume FROM stock_data.stock_kline_daily WHERE stock_code='{code}' AND trade_date='{ds}' LIMIT 1"
+                t_query = f"SELECT argMax(price, tick_time), sum(volume) FROM {tick_table} WHERE stock_code='{code}' AND trade_date='{ds}'"
                 
                 k_res = self.clickhouse_client.client.execute(k_query)
                 t_res = self.clickhouse_client.client.execute(t_query)
                 
                 if k_res and t_res:
-                    if abs(float(k_res[0][0]) - float(t_res[0][0])) < PRICE_CONSISTENCY_THRESHOLD:
+                    # 1. 价格检查
+                    price_ok = abs(float(k_res[0][0]) - float(t_res[0][0])) < price_tol
+                    
+                    # 2. 成交量检查
+                    k_vol = float(k_res[0][1])
+                    t_vol = float(t_res[0][1])
+                    
+                    if k_vol > 0:
+                        vol_diff_ratio = abs(k_vol - t_vol) / k_vol
+                        vol_ok = vol_diff_ratio < vol_tol
+                    else:
+                        vol_ok = (t_vol == 0)
+
+                    if price_ok and vol_ok:
                         matches += 1
+                        
             return {"sample_size": len(stocks), "matched": matches}
         except Exception as e:
             logger.error(f"一致性检查异常: {e}")

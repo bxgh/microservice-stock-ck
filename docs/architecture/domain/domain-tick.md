@@ -33,6 +33,7 @@ graph TB
     MTC --> DP
     PTC --> DP
     DP --> DV
+    DP --> DV[Shared统一校验器]
     DV --> DF
 
     CO --> TDC
@@ -100,7 +101,15 @@ sequenceDiagram
 - `POST /api/v1/ticks/batch` - Batch get tick data
 - `GET /api/v1/ticks/{symbol}/analysis` - Tick data statistical analysis
 
-### 4.2 Tick Data Model Schema
+### 4.2 统一校验 (Unified Validation)
+
+所有校验规则由 `gsd-shared` 统一管理：
+
+- **TickValidator**: 分笔数据质量 (采集时 Loose / 审计时 Strict)
+- **MarketValidator**: 全市场数据完整性 (K线覆盖率、Tick覆盖率、连续性、异常股数)
+- **Consistency**: 价格与成交量对账 (Tick vs KLine)
+
+### 4.3 Tick Data Model Schema
 
 **Tick Data Model Design:**
 - **Identity**: Stock Code, Trade Time

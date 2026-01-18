@@ -86,7 +86,7 @@ async def main(
         # 批量质量筛选：过滤出真正需要补采的股票（优化性能）
         if stock_codes and mode == "incremental":
             original_count = len(stock_codes)
-            stock_codes = await service.filter_stocks_need_repair(stock_codes, target_date, min_tick_count=2000)
+            stock_codes = await service.filter_stocks_need_repair(stock_codes, target_date)
             if len(stock_codes) < original_count:
                 logger.info(f"💡 质量筛选优化: {original_count} 只 → {len(stock_codes)} 只需补采")
         

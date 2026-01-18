@@ -20,8 +20,8 @@ class StockCodeMapping(BaseModel):
 
 class StockInfo(BaseModel):
     """股票基础信息"""
-    stock_code: str = Field(..., description="股票代码", example="000001")
-    stock_name: str = Field(..., description="股票名称", example="平安银行")
+    stock_code: str = Field(..., description="股票代码", json_schema_extra={"example": "000001"})
+    stock_name: str = Field(..., description="股票名称", json_schema_extra={"example": "平安银行"})
     exchange: str = Field(..., description="交易所", pattern="^(SH|SZ|BJ)$")
     asset_type: str = Field("stock", description="资产类型")
     is_active: bool = Field(True, description="是否活跃")
@@ -32,7 +32,6 @@ class StockInfo(BaseModel):
     sector: Optional[str] = Field(None, description="所属板块")
     market_cap: Optional[float] = Field(None, description="总市值(亿元)")
     
-    class Config:
-        json_encoders = {
-            datetime: lambda v: v.isoformat() if v else None
-        }
+    model_config = {
+        "populate_by_name": True
+    }
