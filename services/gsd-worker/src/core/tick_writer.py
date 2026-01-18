@@ -27,7 +27,7 @@ class TickWriter:
 
         # 0. 确定目标表
         today_str = datetime.now(CST).strftime("%Y%m%d")
-        target_table = "tick_data_intraday" if trade_date == today_str else "tick_data"
+        target_table = "tick_data_intraday_local" if trade_date == today_str else "tick_data_local"
         
         try:
             # 1. 转换格式
