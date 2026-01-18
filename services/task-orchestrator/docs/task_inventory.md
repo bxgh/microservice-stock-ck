@@ -411,3 +411,77 @@ graph TD
 1. [ ] 实现完整的任务 DAG 可视化
 2. [ ] 支持任务手动触发 API
 3. [ ] 添加任务执行历史分析
+
+---
+
+## 7. 远程触发任务 (2026-01-18 新增)
+
+### `collect_tick_sharded` - 分笔指定日期分片采集
+
+**配置**:
+```yaml
+id: collect_tick_sharded
+enabled: false  # 仅支持远程触发
+type: docker
+target:
+  command: ["jobs.sync_tick", "--scope", "all"]
+```
+
+**职责**: 指定日期的分片采集，从K线表优先获取股票列表，支持本地xxHash64分片
+
+**触发示例**:
+```sql
+INSERT INTO alwaysup.task_commands (task_id, params) 
+VALUES ('collect_tick_sharded', '{"date": "20260115", "shard_index": 0}');
+```
+
+**参数说明**:
+- `date`: YYYYMMDD 格式日期
+- `shard_index`: 分片索引 (0, 1, 2)
+
+**分布式部署**: Server 41/58/111 均已配置
+
+---
+
+### `stock_data_supplement` - 定向个股数据补充
+
+**配置**:
+```yaml
+id: stock_data_supplement
+enabled: false  # 仅支持远程触发
+type: docker
+target:
+  command: ["jobs.data_supplement"]
+```
+
+**职责**: 针对特定股票的多种数据类型补充（财务、股东、分红等）
+
+**触发示例**:
+```sql
+INSERT INTO alwaysup.task_commands (task_id, params) 
+VALUES ('stock_data_supplement', '{"stocks": "000001,600519", "data_types": ["financial", "shareholder"]}');
+```
+
+**参数说明**:
+- `stocks`: 股票代码列表（逗号分隔）
+- `data_types`: 数据类型列表 (financial, shareholder, kline, dividend)
+
+---
+
+## 8. 重要代码修复记录 (2026-01-18)
+
+本次更新修复了11个关键问题，确保分片采集任务正常运行：
+
+1. ✅ **asynch.Pool 导入错误** (4个文件)
+2. ✅ **K线表名**: `kline_data_local` → `stock_kline_daily`
+3. ✅ **CommandPoller 锁超时**: 添加 `SKIP LOCKED`
+4. ✅ **参数格式转换**: `shard_index` → `--shard-index`
+5. ✅ **股票代码格式**: `.600001` → `600001` (API 兼容)
+6. ✅ **ClickHouse 表名**: `tick_data` → `tick_data_local`
+
+**文档更新**:
+- 新增 `collect_tick_sharded.md`
+- 新增 `stock_data_supplement.md`
+- 新增 `how_to_add_remote_task.md`
+- 更新 `远程任务触发.md`
+

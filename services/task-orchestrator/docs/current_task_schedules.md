@@ -42,6 +42,8 @@
 | :--- | :--- | :--- | :--- |
 | `repair_kline` | **K线数据修复** | **PostMarketGate (Auto)** | 审计失败时自动触发自愈 |
 | `repair_tick` | **分笔数据补采** | **PostMarketGate (Auto)** | 缺分钟记录超过 100 时触发 |
+| `collect_tick_sharded` | **分笔指定日期分片采集** | **SQL / Frontend / Manual** | 指定日期的分片采集，支持参数化 |
+| `stock_data_supplement` | **定向个股数据补充** | **SQL / Frontend / Manual** | 针对特定股票的多种数据类型补充 |
 | `adhoc_audit` | **专项重新审计** | **SQL / Manual** | 手动下发 `post_market_audit` 指令 |
 
 ---
