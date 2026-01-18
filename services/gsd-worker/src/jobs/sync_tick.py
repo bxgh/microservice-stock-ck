@@ -118,6 +118,7 @@ async def main(
                 
                 # 定义消费者 worker
                 semaphore = asyncio.Semaphore(concurrency) # 总并发
+                stats_lock = asyncio.Lock()
                 active_tasks = 0
                 processed_count = 0
                 failed_count = 0
@@ -134,11 +135,13 @@ async def main(
                         async with semaphore:
                             try:
                                 res = await service.sync_stock(code, target_date)
-                                if res > 0: processed_count += 1
-                                else: failed_count += 1
+                                async with stats_lock:
+                                    if res > 0: processed_count += 1
+                                    else: failed_count += 1
                                 await service.ack_task_in_redis(code)
                             except Exception as e:
-                                failed_count += 1
+                                async with stats_lock:
+                                    failed_count += 1
                                 logger.error(f"处理任务 {code} 失败: {e}")
                             finally:
                                 queue.task_done()

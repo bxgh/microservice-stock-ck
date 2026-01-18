@@ -69,6 +69,7 @@ class DockerExecutor:
                 "REDIS_PASSWORD": settings.REDIS_PASSWORD,
                 "REDIS_CLUSTER": str(settings.REDIS_CLUSTER).lower(),
                 "MOOTDX_API_URL": settings.WORKER_MOOTDX_API_URL,
+                "PYTHONPATH": "/app/src:/app/libs/gsd-shared",
                 "GSD_REDIS_URL": f"redis://{':' + settings.REDIS_PASSWORD + '@' if settings.REDIS_PASSWORD else ''}{settings.REDIS_HOST}:{settings.REDIS_PORT}"
             })
             

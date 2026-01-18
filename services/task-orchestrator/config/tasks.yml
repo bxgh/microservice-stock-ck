@@ -399,3 +399,20 @@ tasks:
     retry:
       max_attempts: 2
       backoff_seconds: 300
+
+  # 远程校验触发器 (Validation Trigger)
+  - id: trigger_validation
+    name: 远程触发数据校验
+    type: docker
+    enabled: false # 不自动调度，仅手动/API触发
+    schedule:
+      type: cron
+      expression: "0 0 1 1 *" # Dummy schedule
+    target:
+      command: ["jobs.trigger_validation"]
+      # 接受参数: --date YYYY-MM-DD
+      environment:
+        PYTHONPATH: "/app/src"
+        STRICT_MODE: "true"
+    retry:
+      max_attempts: 1

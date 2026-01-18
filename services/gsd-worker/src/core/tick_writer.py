@@ -42,8 +42,11 @@ class TickWriter:
                 # 处理 volume/vol 字段差异
                 vol = int(item.get('volume', item.get('vol', 0)))
                 
+                # 再次确保 stock_code 不含有前缀或点号 (安全性加固)
+                clean_stock_code = stock_code.lstrip('.')
+                
                 rows.append((
-                    stock_code,
+                    clean_stock_code,
                     trade_date_obj,
                     time_str,
                     price,

@@ -86,7 +86,14 @@ class StockRosterService:
                     # 清洗数据
                     clean_codes = []
                     for code in codes:
-                        pure_code = code.split(".")[0] if "." in code else code
+                        # 兼容处理 sh.600000 格式
+                        if '.' in code:
+                            pure_code = code.split('.')[-1]
+                        elif code.startswith(('sh', 'sz')):
+                            pure_code = code[2:]
+                        else:
+                            pure_code = code
+                            
                         if is_valid_a_stock(pure_code):
                             clean_codes.append(pure_code)
                     clean_codes.sort()
@@ -151,8 +158,10 @@ class StockRosterService:
                 stocks = []
                 for row in rows:
                     code = row[0]
-                    # 移除 sh/sz 前缀
-                    if code.startswith('sh') or code.startswith('sz'):
+                    # 兼容处理 sh.600000 格式
+                    if '.' in code:
+                        code = code.split('.')[-1]
+                    if code.startswith(('sh', 'sz')):
                         code = code[2:]
                     stocks.append(code)
                 

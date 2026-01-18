@@ -214,6 +214,7 @@ class TickSyncService:
         logger.info(f"开始批量同步: {len(stock_codes)} 只, 日期 {trade_date}, 并发 {concurrency}")
         
         semaphore = asyncio.Semaphore(concurrency)
+        results_lock = asyncio.Lock()
         results = {"success": 0, "failed": 0, "skipped": 0, "total_records": 0, "errors": []}
         
         async def _worker(code: str):
@@ -221,16 +222,18 @@ class TickSyncService:
                 start_t = asyncio.get_running_loop().time()
                 try:
                     count = await self.sync_stock(code, trade_date)
-                    if count > 0:
-                        results["success"] += 1
-                        results["total_records"] += count
-                    elif count == -1:
-                        results["skipped"] += 1
-                    else:
-                        results["failed"] += 1 # count==0 usually means no data or error
+                    async with results_lock:
+                        if count > 0:
+                            results["success"] += 1
+                            results["total_records"] += count
+                        elif count == -1:
+                            results["skipped"] += 1
+                        else:
+                            results["failed"] += 1 # count==0 usually means no data or error
                 except Exception as e:
-                    results["failed"] += 1
-                    results["errors"].append(f"{code}: {e}")
+                    async with results_lock:
+                        results["failed"] += 1
+                        results["errors"].append(f"{code}: {e}")
                 
                 # Pacing
                 elapsed = asyncio.get_running_loop().time() - start_t

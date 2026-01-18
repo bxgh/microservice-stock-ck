@@ -119,7 +119,7 @@ class GenericTaskRunner:
             "CLICKHOUSE_DATABASE": settings.WORKER_CLICKHOUSE_DATABASE,
             "MOOTDX_API_URL": settings.WORKER_MOOTDX_API_URL,
             "TZ": settings.TIMEZONE,
-            "PYTHONPATH": "/app/src"
+            "PYTHONPATH": "/app/src:/app/libs/gsd-shared"
         })
         # 2. Override with task-specific environment variables
         task_env = task.target.get('environment')
@@ -244,7 +244,7 @@ async def job_weekly_deep_audit() -> None:
         container_id = executor.run_worker(
             command=["jobs.weekly_audit"],
             name_suffix="weekly-audit",
-            environment={"PYTHONPATH": "/app/src"}
+            environment={"PYTHONPATH": "/app/src:/app/libs/gsd-shared"}
         )
         logger.info(f"🚀 Started Weekly Audit job (CID: {container_id})")
     except Exception as e:

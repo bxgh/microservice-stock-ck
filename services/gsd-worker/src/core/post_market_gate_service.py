@@ -16,6 +16,7 @@ import xxhash
 
 from core.clickhouse_client import ClickHouseClient
 from core.notifier import Notifier
+from core.sync_status import SyncStatusTracker
 
 logger = logging.getLogger(__name__)
 CST = pytz.timezone('Asia/Shanghai')
@@ -24,7 +25,7 @@ CST = pytz.timezone('Asia/Shanghai')
 DEFAULT_KLINE_THRESHOLD = 98.0
 DEFAULT_TICK_THRESHOLD = 95.0
 DEFAULT_STOCK_COUNT_FALLBACK = 5499
-STANDARD_TRADING_MINUTES = TickStandards.Lazy.STANDARD_TRADING_MINUTES if hasattr(TickStandards, 'Lazy') else 241 # Fallback just in case, but better to remove or point to standard
+STANDARD_TRADING_MINUTES = TickStandards.STANDARD_TRADING_MINUTES  # 241 分钟 (09:25-15:00)
 HTTP_CLIENT_TIMEOUT_SECONDS = 10.0
 DEFAULT_SHARD_REPAIR_THRESHOLD = 50.0
 
@@ -43,7 +44,7 @@ class PostMarketGateService:
     def __init__(self):
         self.clickhouse_client = ClickHouseClient()
         self.notifier = Notifier()
-        self.tracker = SyncStatusTracker(self.redis_client)
+        self.tracker = None
         self.market_validator = MarketValidator()
         self.lock = asyncio.Lock()
         
@@ -82,6 +83,7 @@ class PostMarketGateService:
         else:
             self.redis_client = redis.Redis(host=self.redis_host, port=self.redis_port, password=self.redis_password, decode_responses=True)
             
+        self.tracker = SyncStatusTracker(self.redis_client)
         logger.info("✅ PostMarketGateService 初始化完成")
 
     async def close(self):
@@ -127,9 +129,9 @@ class PostMarketGateService:
         
         return target_date.strftime('%Y-%m-%d')
 
-    async def run_gate_check(self) -> Dict[str, Any]:
+    async def run_gate_check(self, date_str: Optional[str] = None) -> Dict[str, Any]:
         """执行 Gate-3 审计流程"""
-        today = self._get_target_trading_date()
+        today = date_str if date_str else self._get_target_trading_date()
         logger.info(f"🛡️ 开始盘后深度审计, 目标日期: {today}")
         
         # 1. 基础覆盖率检查
@@ -198,7 +200,13 @@ class PostMarketGateService:
             # 过滤 A 股
             count = 0
             for c in codes:
-                pure_code = c.split('.')[0] if '.' in c else c
+                # 兼容处理 600000.SH 或 sh.600000 格式
+                if '.' in c:
+                    parts = c.split('.')
+                    pure_code = next((p for p in parts if len(p) == 6), parts[0])
+                else:
+                    pure_code = c
+
                 if is_valid_a_stock(pure_code):
                     count += 1
             return count
@@ -590,12 +598,13 @@ class PostMarketGateService:
             
             rows = self.clickhouse_client.client.execute(query)
             
-            # 标准化股票代码格式（移除可能的市场前缀 sh/sz）
+            # 标准化股票代码格式（支持 sh.600654, sz000001 等多种格式）
             stocks = []
             for row in rows:
                 code = row[0]
-                # 移除 sh/sz 前缀（如果存在）
-                if code.startswith('sh') or code.startswith('sz'):
+                if '.' in code:
+                    code = code.split('.')[-1]
+                if code.startswith(('sh', 'sz')):
                     code = code[2:]
                 stocks.append(code)
             
@@ -704,8 +713,72 @@ class PostMarketGateService:
             return {"error": str(e)}
 
     async def _persist_to_cloud(self, report: Dict):
-        """将审计结果持久化到腾讯云 MySQL (精简版)"""
+        """
+        将审计结果持久化到腾讯云 MySQL (升级版 - 使用 AuditRepository)
+        此方法现在会生成并保存全市场级别的校验结果。
+        """
         try:
+            # 1. 构造 ValidationResult 对象 (Market Level)
+            from gsd_shared.validation.result import ValidationResult, ValidationIssue, ValidationLevel
+            from gsd_shared.repository import AuditRepository
+            
+            # 使用现有连接池或临时创建连接池 (考虑到这里是单次调用，且 mysql_config 直接可用)
+            # 注意: AuditRepository 需要 aiomysql.Pool，但这里我们只有一个 conn 配置
+            # 为了简单起见，这里创建一个临时 pool
+            async with aiomysql.create_pool(**self.mysql_config) as pool:
+                repo = AuditRepository(pool)
+                
+                # 构造并填充 Result
+                # 将字符串日期转为 datetime 以便设置 ValidationResult.timestamp
+                report_date = datetime.strptime(report['date'], '%Y-%m-%d')
+                market_result = ValidationResult(
+                    data_type="market",
+                    target=report['date'],
+                    timestamp=report_date,
+                    # level 会根据 Issue 自动计算，或手动指定
+                )
+                
+                # KLine Coverage Issue
+                kline_level = ValidationLevel.PASS if report['kline_rate'] >= self.kline_threshold else ValidationLevel.WARN
+                market_result.add_issue(ValidationIssue(
+                    dimension="kline_coverage",
+                    level=kline_level,
+                    message=f"K线覆盖率: {report['kline_rate']}%",
+                    context={"rate": report['kline_rate'], "threshold": self.kline_threshold}
+                ))
+                
+                # Tick Coverage Issue
+                tick_level = ValidationLevel.PASS if report['tick_rate'] >= self.tick_threshold else ValidationLevel.WARN
+                market_result.add_issue(ValidationIssue(
+                    dimension="tick_coverage",
+                    level=tick_level,
+                    message=f"分笔覆盖率: {report['tick_rate']}%",
+                    context={"rate": report['tick_rate'], "threshold": self.tick_threshold}
+                ))
+                
+                # Continuity Issue (Market Wide)
+                cont_data = report['metrics']['continuity']
+                failed_count = cont_data.get('failed_count', 0)
+                if failed_count > 0:
+                     market_result.add_issue(ValidationIssue(
+                        dimension="market_continuity",
+                        level=ValidationLevel.WARN, # 只要有失败的，全市场算 WARN? 或者根据阈值
+                        message=f"发现 {failed_count} 只股票存在连续性问题",
+                        context=cont_data
+                    ))
+                     
+                # 保存到新表 (data_audit_summaries)
+                success = await repo.save_result(market_result)
+                
+                if success:
+                    logger.info(f"✅ 审计详情已通过 AuditRepository 保存 (ID: {market_result.target})")
+                else:
+                    logger.error("❌ AuditRepository 保存失败")
+
+            # ------------------------------------------------------------------
+            # (兼容旧逻辑) 为了保证 Gate Dashboard 不挂，保留对 old data_gate_audits 的写入
+            # 待前端切换后再移除
+            # ------------------------------------------------------------------
             is_complete = 1 if report['status'] == "SUCCESS" else 0
             # 构建简要说明
             m = report['metrics']['continuity']
@@ -727,7 +800,7 @@ class PostMarketGateService:
                     desc
                 ))
             await conn.ensure_closed()
-            logger.info(f"✅ 审计结果已持久化到云端 MySQL (is_complete={is_complete})")
+            
         except Exception as e:
             logger.error(f"❌ 持久化审计结果失败: {e}")
 
