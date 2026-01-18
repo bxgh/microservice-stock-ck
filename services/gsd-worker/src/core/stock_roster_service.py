@@ -145,7 +145,6 @@ class StockRosterService:
                         WHERE trade_date = %(trade_date)s
                           AND stock_code NOT LIKE '.%%'
                           AND stock_code NOT LIKE '399%%'
-                          AND stock_code NOT LIKE '000%%'
                         ORDER BY stock_code
                     """, {"trade_date": trade_date_str})
                     rows = await cursor.fetchall()
