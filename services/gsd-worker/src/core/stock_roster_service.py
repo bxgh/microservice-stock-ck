@@ -143,8 +143,6 @@ class StockRosterService:
                         SELECT DISTINCT stock_code
                         FROM stock_kline_daily
                         WHERE trade_date = %(trade_date)s
-                          AND stock_code NOT LIKE '.%%'
-                          AND stock_code NOT LIKE '399%%'
                         ORDER BY stock_code
                     """, {"trade_date": trade_date_str})
                     rows = await cursor.fetchall()
