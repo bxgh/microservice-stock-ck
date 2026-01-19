@@ -58,9 +58,43 @@ curl -X POST http://orchestrator:8080/api/v1/tasks/trigger_validation/trigger \
      -d '{"params": {"date": "2026-01-18"}}'
 ```
 
-## 4. 业务逻辑
-- **日期参数**: 若不传 `--date`，默认为最近一个交易日（Gate-3 逻辑）。
-- **校验标准**:
-    - 针对全市场维度执行 `KLineStandards` 和 `MarketStandards`。
-    - 自动触发对 `tick_data_intraday` 的分时完整性审计。
-- **持久化**: 结果自动写入 `data_audit_summaries` 表，前端看板可实时感知。
+## 4. 核心逻辑与策略
+
+### 4.1 校验流程 (Logic Flow)
+脚本复用了 Gate-3 (`PostMarketGateService`) 的全套生产级逻辑：
+
+1.  **数据路由**: 自动根据 `--date` 参数判断：
+    *   **今日**: 校验 `tick_data_intraday` 表。
+    *   **历史**: 校验 `tick_data` 表。
+2.  **指标计算**:
+    *   **K线覆盖率**: ClickHouse 本地计数 / MySQL 云端计数。
+    *   **分笔覆盖率**: 有 Tick 数据的股票数 / 有 K 线数据的股票数。
+    *   **时段完整性**: 检查每只股票的 `active_minutes` 和开盘收盘时间。
+
+### 4.2 安全机制 (Safety Brake)
+为防止因数据源异常或休市导致的海量误补采，内置了安全熔断机制：
+
+*   **触发条件**: 分笔覆盖率 **< 80%** (可配置 `SAFETY_THRESHOLD`)。
+*   **系统行为**:
+    *   ❌ **阻断**: 不会生成任何 `repair_tick` 补采指令。
+    *   📝 **记录**: 在审计报告中记录 `FAIL` 级别的 "安全熔断" 事件。
+    *   🚨 **告警**: Worker 日志输出 `CRITICAL` 级警报。
+
+### 4.3 分级修复与去重 (Tiered Repair & Dedup)
+若未触发熔断（覆盖率 > 80% 但 < 95%），系统执行分级修复：
+
+*   **策略**:
+    *   **< 50 只**: 单节点补采。
+    *   **50-200 只**: 分片并行补采。
+    *   **> 200 只**: 全量分片扫描修复。
+*   **任务去重 (Deduplication)**:
+    *   系统在插入 `repair_tick` 指令前会检查 `task_commands` 表。
+    *   **规则**: 如果 5 分钟内已存在相同参数（日期+分片）的任务，则**自动跳过**，防止重复触发。
+
+### 4.4 结果持久化 (Persistence)
+所有校验结果均写入云端 MySQL，支持双层审计：
+
+*   **Summary 表** (`data_audit_summaries`): 记录整体 Pass/Fail 状态。
+*   **Details 表** (`data_audit_details`): 记录具体的 `ValidationIssue`。
+    *   异常股票详情。
+    *   **Actions**: 包括 "安全熔断" 或 "触发补采" 的具体系统行为记录。

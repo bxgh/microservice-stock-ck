@@ -26,7 +26,7 @@
 | 字段 | 类型 | 说明 |
 | :--- | :--- | :--- |
 | **summary_id** | BIGINT | 关联汇总表 ID |
-| **dimension** | VARCHAR(64) | 校验维度 (`continuity`, `coverage`, `consistency`) |
+| **dimension** | VARCHAR(64) | 校验维度 (`continuity`, `coverage`, `action_taken`) |
 | **level** | VARCHAR(16) | 该维度的状态 |
 | **message** | TEXT | 错误/告警描述信息 |
 | **context** | JSON | 详细指标数据 (如具体缺口时段) |
