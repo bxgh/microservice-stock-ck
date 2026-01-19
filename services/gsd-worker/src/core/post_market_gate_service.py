@@ -780,9 +780,9 @@ class PostMarketGateService:
                 actions = report.get('actions_taken', [])
                 for action in actions:
                     level = ValidationLevel.WARN
-                    # 如果是熔断，升级为 ERROR
+                    # 如果是熔断，升级为 FAIL
                     if "熔断" in action:
-                        level = ValidationLevel.ERROR
+                        level = ValidationLevel.FAIL
                     
                     market_result.add_issue(ValidationIssue(
                         dimension="action_taken",
