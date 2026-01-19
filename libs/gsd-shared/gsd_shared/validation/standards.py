@@ -52,7 +52,7 @@ class TickStandards:
         """
         MIN_TIME = "09:25:05"
         MAX_TIME = "14:59:55"
-        MIN_ACTIVE_MINUTES = 237        # 严格 (基本满勤)
+        MIN_ACTIVE_MINUTES = 230        # 严格 (考虑集合竞价自然停顿，调优从 237 到 230)
         PRICE_TOLERANCE = 0.011         # 1.1%
         VOLUME_TOLERANCE = 0.05         # 5%
 

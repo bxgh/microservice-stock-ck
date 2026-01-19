@@ -9,7 +9,7 @@ __version__ = "0.1.0"
 from .models.kline import KLineRecord
 from .models.stock import StockInfo, StockCodeMapping
 from .models.sync import SyncStatus, SyncRecord
-from .repository import AuditRepository
+from .models.sync import SyncStatus, SyncRecord
 
 __all__ = [
     "KLineRecord",
@@ -17,5 +17,5 @@ __all__ = [
     "StockCodeMapping",
     "SyncStatus",
     "SyncRecord",
-    "AuditRepository",
+    "SyncRecord",
 ]

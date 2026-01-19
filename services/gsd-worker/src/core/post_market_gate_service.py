@@ -129,9 +129,28 @@ class PostMarketGateService:
         
         return target_date.strftime('%Y-%m-%d')
 
+    def _normalize_date(self, date_str: str) -> str:
+        """
+        标准化日期格式为 YYYY-MM-DD
+        支持 YYYYMMDD 和 YYYY-MM-DD
+        """
+        if not date_str:
+            return self._get_target_trading_date()
+        
+        # 如果包含连字符，假设已经是 YYYY-MM-DD
+        if '-' in date_str:
+            return date_str
+            
+        # 尝试 YYYYMMDD 转换
+        try:
+            return datetime.strptime(date_str, '%Y%m%d').strftime('%Y-%m-%d')
+        except ValueError:
+            logger.warning(f"无法识别的日期格式: {date_str}，尝试直接使用")
+            return date_str
+
     async def run_gate_check(self, date_str: Optional[str] = None) -> Dict[str, Any]:
         """执行 Gate-3 审计流程"""
-        today = date_str if date_str else self._get_target_trading_date()
+        today = self._normalize_date(date_str)
         logger.info(f"🛡️ 开始盘后深度审计, 目标日期: {today}")
         
         # 1. 基础覆盖率检查
@@ -739,7 +758,12 @@ class PostMarketGateService:
                 
                 # 构造并填充 Result
                 # 将字符串日期转为 datetime 以便设置 ValidationResult.timestamp
-                report_date = datetime.strptime(report['date'], '%Y-%m-%d')
+                try:
+                    report_date = datetime.strptime(report['date'], '%Y-%m-%d')
+                except ValueError:
+                    # 如果还是失败（不应该，因为入口已经标准化了），尝试 YYYYMMDD
+                    report_date = datetime.strptime(report['date'], '%Y%m%d')
+                
                 market_result = ValidationResult(
                     data_type="market",
                     target=report['date'],

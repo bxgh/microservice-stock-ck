@@ -44,46 +44,64 @@ class TickFetcher:
         
         today_str = datetime.now(CST).strftime("%Y%m%d")
         is_today = (trade_date == today_str)
-
-        for i, (start, offset, description) in enumerate(self.SEARCH_MATRIX):
-            try:
-                # 路由选择
-                if is_today:
+        
+        if is_today:
+            # 当日数据保持原有矩阵搜索 (速度优先，通常全天分笔不多)
+            for i, (start, offset, description) in enumerate(self.SEARCH_MATRIX):
+                try:
                     url = f"{self.api_url}/api/v1/tick/{clean_code}"
                     params = {"start": start, "offset": offset}
-                else:
-                    url = f"{self.api_url}/api/v1/tick/{clean_code}"
-                    params = {"date": int(trade_date), "start": start, "offset": offset}
-                
-                if not self.http:
-                     # For safety, though type hint says it's there
-                     logger.error("HTTP session is None")
-                     break
-
-                # Debug: log the actual request URL and params
-                logger.info(f"🔍 {stock_code}: GET {url} params={params}")
-
-                async with self.http.get(url, params=params, timeout=12) as response:
-                    if response.status != 200:
-                        continue
                     
-                    data = await response.json()
-                    if not data:
-                        continue
+                    logger.info(f"🔍 {stock_code}: GET {url} params={params}")
+                    async with self.http.get(url, params=params, timeout=12) as response:
+                        if response.status != 200: continue
+                        data = await response.json()
+                        if not data: continue
                         
-                    times = [x.get('time', '') for x in data]
-                    current_earliest = min(times) if times else "23:59"
+                        all_frames.append(data)
+                        times = [x.get('time', '') for x in data]
+                        if times and min(times) <= self.TARGET_TIME:
+                            logger.debug(f"🎯 {stock_code}: 命中 {self.TARGET_TIME} @ {description}")
+                            break
+                except Exception as e:
+                    logger.warning(f"{stock_code} 步骤 {description} 异常: {e}")
+        else:
+            # 历史数据改用线性扫描，步进 2000 (解决 API 2000条上限问题)
+            max_depth = 50000 
+            step = 2000
+            current_start = 0
+            
+            logger.info(f"🚀 {stock_code}: 开始历史分笔线性扫描 (目标日期: {trade_date})")
+            while current_start < max_depth:
+                try:
+                    url = f"{self.api_url}/api/v1/tick/{clean_code}"
+                    params = {"date": int(trade_date), "start": current_start, "offset": step}
                     
-                    all_frames.append(data)
-                    
-                    # 早停机制
-                    if current_earliest <= self.TARGET_TIME:
-                        logger.debug(f"🎯 {stock_code}: 命中 {self.TARGET_TIME} @ {description}")
-                        break
-
-            except Exception as e:
-                logger.warning(f"{stock_code} 步骤 {description} 异常: {e}")
-                continue
+                    async with self.http.get(url, params=params, timeout=15) as response:
+                        if response.status != 200:
+                            logger.warning(f"⚠️ {stock_code}: 接口返回异常 {response.status} @ start={current_start}")
+                            break
+                        
+                        data = await response.json()
+                        if not data:
+                            logger.debug(f"⏹️ {stock_code}: 无更多数据 @ start={current_start}")
+                            break
+                        
+                        all_frames.append(data)
+                        times = [x.get('time', '') for x in data]
+                        earliest = min(times) if times else "23:59"
+                        
+                        logger.info(f"📥 {stock_code}: 获取 {len(data)} 条 (earliest: {earliest}) @ start={current_start}")
+                        
+                        # 早停: 命中 09:25
+                        if earliest <= self.TARGET_TIME:
+                            logger.info(f"🎯 {stock_code}: 线性扫描完成 (已覆盖 {self.TARGET_TIME})")
+                            break
+                        
+                        current_start += step
+                except Exception as e:
+                    logger.error(f"❌ {stock_code} 采集异常 (start={current_start}): {e}")
+                    break
         
         return self._merge_and_sort(all_frames)
 
