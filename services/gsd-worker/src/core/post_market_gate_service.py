@@ -775,6 +775,21 @@ class PostMarketGateService:
                         message=f"发现 {failed_count} 只股票存在连续性问题",
                         context=cont_data
                     ))
+                
+                # [NEW] Persist Actions (e.g. Safety Brake)
+                actions = report.get('actions_taken', [])
+                for action in actions:
+                    level = ValidationLevel.WARN
+                    # 如果是熔断，升级为 ERROR
+                    if "熔断" in action:
+                        level = ValidationLevel.ERROR
+                    
+                    market_result.add_issue(ValidationIssue(
+                        dimension="action_taken",
+                        level=level,
+                        message=action,
+                        context={"action": action}
+                    ))
                      
                 # 保存到新表 (data_audit_summaries)
                 success = await repo.save_result(market_result)
