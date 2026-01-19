@@ -164,7 +164,7 @@ class PostMarketGateService:
         if tick_rate < SAFETY_THRESHOLD:
              logger.critical(f"⛔️ 覆盖率过低 ({tick_rate}% < {SAFETY_THRESHOLD}%)，触发安全熔断！")
              logger.critical("跳过自动补采，请人工介入排查是否为休市或全系统崩溃。")
-             actions.append(f"熔断:覆盖率{tick_rate}%过低")
+             actions.append(f"安全熔断: 分笔覆盖率({tick_rate}%)过低，已跳过海量补采。请排查是否休市。")
         elif tick_rate < self.tick_threshold or len(failed_codes) > 0:
             logger.warning(f"⚠️ 当日分笔异常: 覆盖率={tick_rate}%, 异常股票数={len(failed_codes)}")
             # 按分片分组处理
