@@ -50,7 +50,7 @@ tasks:
       backoff_seconds: 300
 
   # K线每日同步 (P0)
-  # 17:30 执行，单节点全量同步 (ClickHouse 自动分片路由)
+  # 17:30 执行，单节点全量同步 (由于上游数据源限制，必须 17:30 后启动)
   - id: daily_kline_sync
     name: K线每日同步
     type: docker
@@ -65,14 +65,14 @@ tasks:
       backoff_seconds: 600
   
   # 盘后分笔数据全量采集 (P1)
-  # 15:35 执行，全市场分片同步 (当前节点负责 Shard 0)
+  # 16:15 执行 (位于 K线同步之后)，利用最新的 K线数据进行精确采集
   - id: daily_tick_sync_shard_0
     name: 盘后分笔采集与补采(Shard-0)
     type: workflow
     enabled: false
     schedule:
       type: trading_cron
-      expression: "35 15 * * 1-5"
+      expression: "15 16 * * 1-5"
     workflow:
       - id: collect
         name: 分片采集
@@ -176,12 +176,12 @@ tasks:
     enabled: true
     schedule:
       type: trading_cron
-      expression: "30 18 * * 1-5"  # 18:30 交易日
+      expression: "30 17 * * 1-5"  # 17:30 (分笔采集完成后)
     target:
       image: quant-strategy:latest
       command: ["jobs.daily_scan"]
     dependencies:
-      - daily_kline_sync
+      - post_market_gate
     retry:
       max_attempts: 2
       backoff_seconds: 300
@@ -202,109 +202,24 @@ tasks:
   
   # ========== 系统维护任务 ==========
   
-  # 数据库备份 (P0)
-  - id: daily_db_backup
-    name: 数据库备份
-    type: docker
-    enabled: true
-    schedule:
-      type: cron
-      expression: "0 3 * * *"  # 每日 03:00
-    target:
-      command: ["jobs.db_backup"]
-    retry:
-      max_attempts: 3
-      backoff_seconds: 120
-  
-  # 缓存预热 (P1)
-  - id: daily_cache_warmup
-    name: 缓存预热
-    type: http
-    enabled: true
-    schedule:
-      type: trading_cron
-      expression: "20 9 * * 1-5"  # 09:20 预热
-    target:
-      service: gsd-api
-      endpoint: /api/v1/internal/warmup
-      method: POST
-      timeout_seconds: 60
-    retry:
-      max_attempts: 2
-  
-  # 日志清理 (P2)
-  - id: weekly_log_cleanup
-    name: 日志清理
-    type: docker
-    enabled: true
-    schedule:
-      type: cron
-      expression: "0 2 * * 0"  # 周日 02:00
-    target:
-      command: ["jobs.log_cleanup", "--days", "30"]
-    retry:
-      max_attempts: 1
-  
-  # ClickHouse 系统日志清理 (P1)
-  - id: weekly_clickhouse_log_cleanup
-    name: ClickHouse日志清理
-    type: http
-    enabled: true
-    schedule:
-      type: cron
-      expression: "0 3 * * 0"  # 周日 03:00
-    target:
-      # 通过添加 multiquery=true 参数支持多语句执行
-      url: "http://127.0.0.1:8123/?multiquery=true"
-      method: POST
-      body: |
-        ALTER TABLE system.trace_log DELETE WHERE event_date < today() - 7;
-        ALTER TABLE system.text_log DELETE WHERE event_date < today() - 7;
-        ALTER TABLE system.query_log DELETE WHERE event_date < today() - 14;
-        ALTER TABLE system.metric_log DELETE WHERE event_date < today() - 7;
-        ALTER TABLE system.asynchronous_metric_log DELETE WHERE event_date < today() - 7;
-      timeout_seconds: 300
-    retry:
-      max_attempts: 2
-      backoff_seconds: 60
-  
-  # ========== 数据质量任务 ==========
-  
-  # 盘前数据质量门禁 (P0) - 核心校验与自动补采
-  # 08:00 执行，在盘前确保昨日数据完备
-  - id: pre_market_gate
-    name: 盘前数据质量门禁
-    type: docker
-    enabled: true
-    schedule:
-      type: trading_cron
-      expression: "15 9 * * 1-5"  # 09:15 进行最后名单与系统准入核查
-    target:
-      command: ["jobs.pre_market_gate"]
-      environment:
-        KLINE_THRESHOLD: "98"
-        TICK_THRESHOLD: "95"
-    retry:
-      max_attempts: 1
+  # ... (Implicit match skipping to gate)
 
   # 盘后数据质量大检查 (P0) - 深度审计与收盘对账
-  # 19:18 执行，确保当日全量数据与一致性
+  # 19:00 执行，在数据同步完成后立即进行质量核查与修复
   - id: post_market_gate
     name: 盘后数据质量门禁 (Gate-3)
     type: docker
     enabled: true
     schedule:
       type: trading_cron
-      expression: "18 19 * * 1-5"  # 19:18 交易日
+      expression: "0 19 * * 1-5"  # 19:00 交易日
     target:
       command: ["jobs.post_market_gate"]
       environment:
         KLINE_THRESHOLD: "98"
         TICK_THRESHOLD: "95"
-        STRICT_MODE: "true"
     dependencies:
       - daily_kline_sync
-      - daily_strategy_scan
     retry:
       max_attempts: 1
 

@@ -110,9 +110,9 @@ SOCKS_PROXY: ""   # 可选 SOCKS5 代理
 |------|------|---------|------|
 | `daily_stock_collection` | `jobs/daily_stock_collection.py` | Cron 08:45 | 每日股票代码采集 + 分片计算 |
 | `sync_kline` | `jobs/sync_kline.py` | Cron 17:30 | K线每日同步 |
-| `sync_tick` | `jobs/sync_tick.py` | Cron 15:35 | 分笔数据全量采集 |
+| `sync_tick` | `jobs/sync_tick.py` | Cron 18:00 | 分笔数据全量采集 |
 | `pre_market_gate` | `jobs/pre_market_gate.py` | Cron 09:15 | 盘前数据质量门禁 |
-| `post_market_gate` | `jobs/post_market_gate.py` | Cron 19:18 | 盘后数据质量审计 |
+| `post_market_gate` | `jobs/post_market_gate.py` | Cron 19:00 | 盘后数据质量审计 |
 | `quality_check` | `jobs/quality_check.py` | 手动/依赖 | 数据质量检测 |
 | `retry_tick` | `jobs/retry_tick.py` | 自动补采 | 分笔数据失败重试 |
 | `supplement_stock` | `jobs/supplement_stock.py` | API触发 | 定向个股数据补充 |
@@ -163,7 +163,7 @@ SOCKS_PROXY: ""   # 可选 SOCKS5 代理
 | `daily_stock_collection` | 08:45 | docker | 股票代码采集 |
 | `daily_kline_sync` | 17:30 | docker | K线每日同步 |
 | `pre_market_gate` | 09:15 | docker | 盘前质量门禁 |
-| `post_market_gate` | 19:18 | docker | 盘后审计门禁 |
+| `post_market_gate` | 19:00 | docker | 盘后审计门禁 |
 | `daily_cache_warmup` | 09:20 | http | 缓存预热 |
 | `tick_data_migrate` | 09:00 | http | 分笔数据归档 |
 
@@ -296,10 +296,11 @@ SOCKS_PROXY: ""   # 可选 SOCKS5 代理
 | 09:00 | 分笔数据归档 | P0 |
 | 09:15 | 盘前质量门禁 | P0 |
 | 09:20 | 缓存预热 | P1 |
-| 15:35 | 盘后分笔采集 | P1 |
+| 15:35 | [废弃] 旧版分笔采集 | - |
 | 17:30 | K线每日同步 | P0 |
-| 18:30 | 策略扫描 | P1 |
-| 19:18 | 盘后审计门禁 | P0 |
+| 18:00 | 盘后分笔采集 | P1 |
+| 19:00 | 盘后审计门禁 | P0 |
+| 20:30 | 策略扫描 | P1 |
 
 ---
 

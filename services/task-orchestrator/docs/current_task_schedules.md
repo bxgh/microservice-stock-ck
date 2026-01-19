@@ -25,10 +25,10 @@
 | `tick_data_migrate` | **分笔数据归档** | **Orchestrator** | `0 9 * * 1-5` | 09:00 | 归档并清空当日表 |
 | `pre_market_gate` | **盘前质量门禁** | **Orchestrator** | `15 9 * * 1-5` | 09:15 | 名单校验与准入 |
 | `daily_cache_warmup` | **缓存预热** | **Orchestrator** | `20 9 * * 1-5` | 09:20 | 提升 API 速度 |
-| `daily_tick_sync` | **分笔同步(全分片)** | **Linux Cron** | `35 16 * * 1-5` | 16:35 | 分节点(41/58/111)并行同步 |
-| `daily_kline_sync` | **K线每日同步** | **Orchestrator** | `30 17 * * *` | 17:30 | 智能增量同步 (自愈模式) |
-| `daily_strategy_scan` | **每日策略扫描** | **Orchestrator** | `30 18 * * 1-5` | 18:30 | 计算选股信号 |
-| `post_market_gate` | **盘后大门禁** | **Orchestrator** | `18 19 * * 1-5` | 19:18 | 深度审计与触发修复 |
+| `daily_kline_sync` | **K线每日同步** | **Orchestrator** | `30 17 * * *` | 17:30 | 必须 17:30 后启动 (上游限制) |
+| `daily_tick_sync` | **分笔同步(全分片)** | **Linux Cron** | `0 18 * * 1-5` | 18:00 | 延后至 K线同步后，确保名单精准 |
+| `post_market_gate` | **盘后大门禁** | **Orchestrator** | `0 19 * * 1-5` | 19:00 | 深度审计与触发修复 |
+| `daily_strategy_scan` | **每日策略扫描** | **Orchestrator** | `30 20 * * 1-5` | 20:30 | **必须**在数据完整性校验后执行 |
 | `daily_db_backup` | **数据库备份** | **Orchestrator** | `0 3 * * *` | 03:00 | 核心数据备份 |
 | `weekly_log_cleanup` | **日志清理** | **Orchestrator** | `0 2 * * 0` | 周日 02:00 | 清理旧日志 |
 
