@@ -42,6 +42,15 @@ graph TD
 python3 src/jobs/trigger_validation.py --date 2026-01-18
 ```
 
+### 3.2 Docker 容器调用 (推荐)
+通过 Docker Compose 在宿主机直接执行，需注意环境变量注入：
+```bash
+docker compose -f docker-compose.node-41.yml run --rm \
+    --user root \
+    -e PYTHONPATH=/app/src:/app/libs/gsd-shared \
+    gsd-worker jobs.trigger_validation --date 2026-01-18
+```
+
 ### 3.2 通过 API 触发
 ```bash
 curl -X POST http://orchestrator:8080/api/v1/tasks/trigger_validation/trigger \
