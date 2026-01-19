@@ -156,7 +156,16 @@ class PostMarketGateService:
         # continuity_summary['failed_codes'] 包含了所有异常股票
         failed_codes = continuity_summary.get('failed_codes', [])
         
-        if tick_rate < self.tick_threshold or len(failed_codes) > 0:
+        # [SAFETY BRAKE] 极低覆盖率熔断机制
+        # 如果覆盖率极低 (e.g. < 80%)，通常意味着系统性故障或当日休市，
+        # 此时触发海量补采极易导致资源耗尽或误判。因此只记录审计失败，不自动触发修复。
+        SAFETY_THRESHOLD = 80.0
+        
+        if tick_rate < SAFETY_THRESHOLD:
+             logger.critical(f"⛔️ 覆盖率过低 ({tick_rate}% < {SAFETY_THRESHOLD}%)，触发安全熔断！")
+             logger.critical("跳过自动补采，请人工介入排查是否为休市或全系统崩溃。")
+             actions.append(f"熔断:覆盖率{tick_rate}%过低")
+        elif tick_rate < self.tick_threshold or len(failed_codes) > 0:
             logger.warning(f"⚠️ 当日分笔异常: 覆盖率={tick_rate}%, 异常股票数={len(failed_codes)}")
             # 按分片分组处理
             grouped_results = await self._process_tiered_repair(today, failed_codes)
