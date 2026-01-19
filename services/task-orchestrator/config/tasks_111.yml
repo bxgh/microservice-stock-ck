@@ -27,7 +27,7 @@ tasks:
         command: ["jobs.sync_tick", "--scope", "all", "--shard-index", "2", "--shard-total", "3"]
       - id: retry
         name: 自动补采
-        command: ["jobs.retry_tick", "--concurrency", "10"]
+        command: ["jobs.retry_tick", "--concurrency", "25"]
         depends_on: [collect]
     retry:
       max_attempts: 2
@@ -58,7 +58,7 @@ tasks:
       type: cron
       expression: "0 0 1 1 *" # Dummy schedule
     target:
-      command: ["jobs.sync_tick", "--scope", "all", "--distributed-source", "none"]
+      command: ["jobs.sync_tick", "--scope", "all", "--distributed-source", "none", "--concurrency", "25"]
       environment:
         TICK_THRESHOLD: "95"
     retry:
@@ -73,7 +73,7 @@ tasks:
       type: cron
       expression: "0 0 1 1 *"
     target:
-      command: ["jobs.sync_tick", "--scope", "all"]
+      command: ["jobs.sync_tick", "--scope", "all", "--concurrency", "25"]
       environment:
         TICK_THRESHOLD: "95"
     retry:
