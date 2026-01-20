@@ -39,7 +39,9 @@ async def main():
             password=settings.MYSQL_PASSWORD,
             db=settings.MYSQL_DATABASE,
             minsize=1,
-            maxsize=5
+            maxsize=5,
+            pool_recycle=3600,
+            autocommit=True
         )
         logger.info(f"✓ Connected to MySQL: {settings.MYSQL_HOST}:{settings.MYSQL_PORT}")
     except Exception as e:

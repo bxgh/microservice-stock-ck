@@ -9,7 +9,7 @@ services:
       - MYSQL_PORT=36301
       - MYSQL_USER=${MYSQL_USER:-root}
       - MYSQL_PASSWORD=${MYSQL_PASSWORD:-alwaysup@888}
-      - MYSQL_DATABASE=task_orchestrator
+      - MYSQL_DATABASE=alwaysup
       - DOCKER_HOST=unix:///var/run/docker.sock
       - TZ=Asia/Shanghai
       - ORCHESTRATOR_WORKER_NETWORK=host
