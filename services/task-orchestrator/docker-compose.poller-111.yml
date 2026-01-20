@@ -1,6 +1,8 @@
-
 services:
   shard-poller:
+    build:
+      context: ../../
+      dockerfile: services/task-orchestrator/Dockerfile
     image: task-orchestrator:latest
     container_name: gsd-shard-poller
     command: ["python", "-m", "shard_poller", "--shard", "2"]
@@ -16,7 +18,7 @@ services:
       - ORCHESTRATOR_WORKER_MOOTDX_API_URL=http://127.0.0.1:8003
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./config/tasks_111.yml:/app/config/tasks.yml:ro
+      - ./config/tasks.yml:/app/config/tasks.yml:ro
     network_mode: host
     restart: always
     logging:
