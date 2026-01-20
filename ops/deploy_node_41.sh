@@ -19,7 +19,14 @@ cd /home/bxgh/microservice-stock
 # 2. 部署核心服务
 log "正在部署服务 (Docker Compose)..."
 # 使用 docker-compose.node-41.yml 构建并启动
-# 包含: task-orchestrator, get-stockdata, mootdx-api, redis, etc.
-docker compose -f docker-compose.node-41.yml up -d --build
+# Explicitly deploy app services, excluding infra (Redis, Prometheus)
+docker compose -f docker-compose.node-41.yml up -d --build \
+    task-orchestrator \
+    quant-strategy \
+    get-stockdata \
+    intraday-tick-collector \
+    mootdx-api \
+    mootdx-source \
+    gsd-worker
 
 log "=== Server 41 部署完成 ==="

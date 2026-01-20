@@ -25,7 +25,7 @@ git reset --hard origin/$BRANCH_NAME
 # 3. 部署服务
 log "正在部署服务 (Docker Compose)..."
 # 使用 docker-compose.node-111.yml 构建并启动
-# 包含: mootdx-api, mootdx-source
-docker compose -f docker-compose.node-111.yml up -d --build
+# Explicitly deploy business services
+docker compose -f docker-compose.node-111.yml up -d --build gsd-worker mootdx-api mootdx-source
 
 log "=== Server 111 部署完成 ==="
