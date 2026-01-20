@@ -1,12 +1,10 @@
 [Unit]
 Description=Microservice Stock Webhook Server
-After=network.target docker.service
-Requires=docker.service
+After=network.target
 
 [Service]
 Type=simple
-User=bxgh
-Group=bxgh
+User=root
 WorkingDirectory=/home/bxgh/microservice-stock
 ExecStart=/usr/bin/python3 /home/bxgh/microservice-stock/ops/webhook_server.py
 Restart=always
