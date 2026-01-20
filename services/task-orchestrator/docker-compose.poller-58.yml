@@ -14,6 +14,7 @@ services:
       - MYSQL_DATABASE=alwaysup
       - DOCKER_HOST=unix:///var/run/docker.sock
       - TZ=Asia/Shanghai
+      - ORCHESTRATOR_BASE_DIR=/home/bxgh/microservice-stock
       - ORCHESTRATOR_WORKER_NETWORK=host
       - ORCHESTRATOR_WORKER_MOOTDX_API_URL=http://127.0.0.1:8003
     volumes:
