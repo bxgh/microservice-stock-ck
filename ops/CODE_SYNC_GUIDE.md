@@ -82,38 +82,60 @@ echo ">> Done!"
 *需要配置 GitLab Runner，暂未部署。*
 
 
-## 方法四：Webhook 自动同步 (Lightweight CI) - **已部署**
+## 方法四：Webhook 智能同步 (Smart Sync) - **已部署**
 
 可以使用 Python 内置库运行一个轻量级 Webhook Server，接收 GitLab 的 Push 事件并触发本地部署脚本。
+**2026-01-20 更新**: 现在的 Webhook 服务具备**智能感知**能力，支持动态分支和按需部署。
 
 **1. 部署架构 (Worker 节点)**
 
 代码已位于 `ops/` 目录下：
 - `ops/webhook_server.py`: 监听 9099 端口的 Python 服务 (Systemd 托管)。
-- `ops/deploy_node_58.sh`: Server 58 专用部署脚本 (Server 111 对应 `deploy_node_111.sh`)。
+- `ops/deploy_node_58.sh`: Server 58 专用智能部署脚本 (支持参数控制)。
+- `ops/deploy_node_111.sh`: Server 111 专用智能部署脚本。
 
-**2. 服务管理 (Systemd)**:
-Webhook 服务已注册为系统服务 `webhook-server`，开机自启。
+**2. 智能工作流程**
 
-```bash
-# 查看服务状态
-sudo systemctl status webhook-server
-
-# 查看实时日志
-journalctl -u webhook-server -f
-
-# 手动重启服务
-sudo systemctl restart webhook-server
-```
+1.  **代码提交**: 开发者 push 代码到 GitLab（任意分支）。
+2.  **Webhook 触发**: GitLab 发送 payload 到 `webhook_server.py`。
+3.  **智能分析**: Python 脚本解析 payload：
+    - **提取分支名**: 自动识别 `ref` 字段（如 `feature/xxx`）。
+    - **分析变更路径**: 识别哪些文件发生了变化。
+    - **匹配服务**: 根据预定义的映射表，决定需要重启哪些容器。
+        - 仅修改文档/非核心代码 → **只同步代码，不重启任何服务**。
+        - 修改 `services/mootdx-api` → **只重启 mootdx-api**。
+        - 修改 `libs/gsd-shared` → **重启相关的所有服务**。
+4.  **精准执行**: 调用部署脚本（如 `deploy_node_58.sh`），传入分支名和服务列表，执行最小化更新。
 
 **3. 配置 GitLab (Master 节点)**
 
 1.  进入项目仓库 -> **Settings** -> **Webhooks**。
 2.  **URL**: `http://192.168.151.58:9099` (或 111)。
-3.  **Secret Token**: `123456` (需与 `webhook_server.py` 中一致)。
+3.  **Secret Token**: `123456`。
 4.  **Trigger**: 勾选 `Push events`。
 5.  点击 **Add webhook**。
 
-**工作原理**:
-当您在 GitLab 提交代码时，GitLab 会向 Server 58 发送 POST 请求。
-`webhook_server.py` 收到请求后，会根据当前节点 IP (`192.168.151.58`) 自动调用对应的 `ops/deploy_node_58.sh` 脚本，执行代码拉取、镜像构建和核心服务重启。
+**4. 服务管理 (Systemd)**:
+
+```bash
+# 查看服务状态
+sudo systemctl status webhook-server
+
+# 查看实时日志 (观察智能部署决策)
+journalctl -u webhook-server -f
+
+# 手动重启服务 (更新 webhook 代码后执行)
+sudo systemctl restart webhook-server
+```
+
+**5. 路径映射规则 (webhook_server.py)**
+
+| 变更路径 | 影响的服务 |
+|----------|------------|
+| `services/mootdx-api/*` | mootdx-api |
+| `services/mootdx-source/*` | mootdx-source |
+| `services/gsd-worker/*` | gsd-worker |
+| `services/task-orchestrator/*` | shard-poller, task-orchestrator |
+| `libs/gsd-shared/*` | mootdx-api, gsd-worker, task-orchestrator |
+| `docker-compose*`, `Dockerfile` | **全量部署** |
+
