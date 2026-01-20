@@ -26,6 +26,7 @@ class TaskType(str, Enum):
     DOCKER = "docker"
     HTTP = "http"
     WORKFLOW = "workflow"
+    COMMAND_EMITTER = "command_emitter"
 
 
 class ScheduleConfig(BaseModel):

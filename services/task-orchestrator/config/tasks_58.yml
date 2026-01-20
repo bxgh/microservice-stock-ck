@@ -16,10 +16,10 @@ tasks:
   - id: daily_tick_sync_shard_1
     name: 盘后分笔采集与补采(Shard-1)
     type: workflow
-    enabled: true
+    enabled: false # 架构 3.0: 已迁移至 Master 统一发射指令
     schedule:
       type: trading_cron
-      expression: "35 15 * * 1-5"
+      expression: "0 18 * * 1-5"
     workflow:
       - id: collect
         name: 分片采集
