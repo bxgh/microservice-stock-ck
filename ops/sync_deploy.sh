@@ -19,7 +19,7 @@ cd /home/bxgh/microservice-stock
 log "Pulling latest code..."
 git fetch --all
 # 重置到 origin/feature/redis-stream-refactor (或根据 webhook 参数动态决定)
-git reset --hard origin/feature/redis-stream-refactor
+git reset --hard origin/main
 git pull
 
 # 3. 核心服务镜像重构
