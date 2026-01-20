@@ -78,7 +78,7 @@ def get_deploy_script():
     
     if ip == "192.168.151.41":
         return os.path.join(BASE_DIR, "deploy_node_41.sh")
-    elif ip == "192.168.151.58":
+    elif ip in ["192.168.151.58", "192.168.151.55", "192.168.151.56"]:
         return os.path.join(BASE_DIR, "deploy_node_58.sh")
     elif ip in ["192.168.151.111", "192.168.151.36", "192.168.151.37"]:
         return os.path.join(BASE_DIR, "deploy_node_111.sh")
@@ -130,7 +130,7 @@ def get_node_services(node_ip: str) -> Set[str]:
     if node_ip == "192.168.151.41":
         return {'mootdx-api', 'mootdx-source', 'gsd-worker', 'task-orchestrator', 
                 'quant-strategy', 'get-stockdata'}
-    elif node_ip == "192.168.151.58":
+    elif node_ip in ["192.168.151.58", "192.168.151.55", "192.168.151.56"]:
         return {'mootdx-api', 'mootdx-source', 'gsd-worker', 'shard-poller'}
     elif node_ip in ["192.168.151.111", "192.168.151.36", "192.168.151.37"]:
         return {'mootdx-api', 'mootdx-source', 'gsd-worker', 'shard-poller'}
