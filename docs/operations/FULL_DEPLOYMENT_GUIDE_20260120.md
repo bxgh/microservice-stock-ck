@@ -16,21 +16,35 @@
 
 **特点**: 作为开发机，代码通常为本地最新，**不需要** `git pull`。
 
-### 步骤
-1.  **确认环境配置**:
-    ```bash
-    # 检查 .env 文件
-    cat /home/bxgh/microservice-stock/.env
-    # 确保: SHARD_INDEX=0
-    ```
-2.  **执行部署**:
-    ```bash
-    cd /home/bxgh/microservice-stock
-    ./ops/deploy_node_41.sh
-    ```
-3.  **验证**:
-    - 检查调度器日志: `docker logs -f task-orchestrator`
-    - 检查 Poller: `docker logs -f gsd-shard-poller`
+### 方式 A: 智能部署 (推荐)
+根据代码变更自动决定需要重建的服务，避免全量构建：
+```bash
+cd /home/bxgh/microservice-stock
+./ops/smart_deploy.sh
+```
+
+**工作原理**:
+- 对比上次部署的 commit 和当前 HEAD
+- 仅重建受影响的服务 (如修改了 `services/mootdx-api/` 则只重建 `mootdx-api`)
+- 修改了 `libs/gsd-shared/` 会触发所有依赖服务重建
+
+### 方式 B: 全量部署
+重建所有业务服务（耗时较长）：
+```bash
+./ops/deploy_node_41.sh
+```
+
+### 方式 C: 单服务部署
+仅重建指定服务：
+```bash
+docker compose -f docker-compose.node-41.yml up -d --build mootdx-api
+# 或多个
+docker compose -f docker-compose.node-41.yml up -d --build task-orchestrator quant-strategy
+```
+
+### 验证
+- 检查调度器日志: `docker logs -f task-orchestrator`
+- 检查 API: `curl http://localhost:8003/health`
 
 ---
 
