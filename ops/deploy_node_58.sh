@@ -71,9 +71,10 @@ if [ ${#COMPOSE_SERVICES[@]} -gt 0 ]; then
 fi
 
 # 6. 部署 shard-poller (如果需要)
-if [ "$DEPLOY_POLLER" = true ]; then
+# 检查是否在 SERVICES 中请求了 shard-poller
+if [[ ",$SERVICES," == *",shard-poller,"* ]]; then
     log "正在部署 shard-poller..."
-    docker compose -f services/task-orchestrator/docker-compose.poller-58.yml up -d shard-poller
+    docker compose -f services/task-orchestrator/docker-compose.poller-58.yml up -d --build shard-poller
 fi
 
 log "=== Server 58 部署完成 ==="
