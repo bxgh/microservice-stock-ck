@@ -51,6 +51,9 @@ for service in "${SERVICE_ARRAY[@]}"; do
             COMPOSE_SERVICES+=("$service")
             log "  -> 将部署: $service"
             ;;
+        "shard-poller")
+            log "  -> 将部署: $service"
+            ;;
         *)
             log "  -> 跳过不支持的服务: $service"
             ;;
@@ -61,6 +64,12 @@ done
 if [ ${#COMPOSE_SERVICES[@]} -gt 0 ]; then
     log "正在部署业务服务: ${COMPOSE_SERVICES[*]}"
     docker compose -f docker-compose.node-111.yml up -d --build "${COMPOSE_SERVICES[@]}"
+fi
+
+# 6. 部署 shard-poller (如果需要)
+if [[ ",$SERVICES," == *",shard-poller,"* ]]; then
+    log "正在部署 shard-poller..."
+    docker compose -f services/task-orchestrator/docker-compose.poller-111.yml up -d --build shard-poller
 fi
 
 log "=== Server 111 部署完成 ==="
