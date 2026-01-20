@@ -80,7 +80,7 @@ def get_deploy_script():
         return os.path.join(BASE_DIR, "deploy_node_41.sh")
     elif ip == "192.168.151.58":
         return os.path.join(BASE_DIR, "deploy_node_58.sh")
-    elif ip == "192.168.151.111":
+    elif ip in ["192.168.151.111", "192.168.151.36", "192.168.151.37"]:
         return os.path.join(BASE_DIR, "deploy_node_111.sh")
     else:
         logging.warning(f"Unknown IP {ip}, no specific deploy script found.")
@@ -132,8 +132,8 @@ def get_node_services(node_ip: str) -> Set[str]:
                 'quant-strategy', 'get-stockdata'}
     elif node_ip == "192.168.151.58":
         return {'mootdx-api', 'mootdx-source', 'gsd-worker', 'shard-poller'}
-    elif node_ip == "192.168.151.111":
-        return {'mootdx-api', 'mootdx-source', 'gsd-worker'}
+    elif node_ip in ["192.168.151.111", "192.168.151.36", "192.168.151.37"]:
+        return {'mootdx-api', 'mootdx-source', 'gsd-worker', 'shard-poller'}
     else:
         return set()
 
