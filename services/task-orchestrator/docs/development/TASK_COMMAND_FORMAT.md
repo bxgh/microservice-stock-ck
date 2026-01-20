@@ -9,19 +9,28 @@
 | 字段名 | 类型 | 必填 | 说明 |
 | :--- | :--- | :--- | :--- |
 | **`task_id`** | `VARCHAR(64)` | 是 | 后端任务标识符 (见下表) |
-| **`params`** | `JSON` | 是 | 参数字典，必须为合法的 JSON 字符串 |
+| **`params`** | `JSON` | 是 | 参数字典，包含执行逻辑和路由信息 |
 | **`status`** | `ENUM` | 是 | 固定写入 `'PENDING'`，等待后端抓取 |
 | **`result`** | `TEXT` | 否 | 执行结果或错误日志 (由后端回写) |
+
+### 1.1 Params 中的路由参数 (Architecture 3.0)
+在指令驱动架构下，`params` 中可以包含用于任务分发的字段。如果未指定，默认由 Node 41 (Shard 0) 执行。
+
+| 参数名 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| **`shard_id`** / **`shard_index`** | `INT` | 指定该任务由哪个节点处理 (0: Node 41, 1: Node 58, 2: Node 111) |
 
 ## 2. 标准指令内容 (Commands)
 
 | 业务场景 | `task_id` | `params` 示例 | 执行效果 |
 | :--- | :--- | :--- | :--- |
+| **指定分片采集** | `collect_tick_sharded` | `{"date": "20260120", "shard_id": 1}` | 指定由 Node 58 采集该分片的 Tick 数据 |
+| **全量分片发射** | `distributed_tick_sync` | `{}` | **Emitter**: 主节点自动生成 3 条 PENDING 指令分发给各节点 |
 | **同步股票名单** | `daily_stock_collection` | `{}` | 强制同步全量名单镜像到 Redis |
 | **补采分笔数据** | `repair_tick` | `{"date": "20260115"}` | 重新抓取指定日期的 Tick 数据 |
 | **补采日线 K 线** | `repair_kline` | `{"date": "20260115"}` | 重新抓取指定日期的日 K 线数据 |
-| **手动核对门禁 (Gate-1)** | `pre_market_gate` | `{}` | 立即重新核对名单/心跳，更新 Gate-1 状态 |
-| **手动核对门禁 (Gate-3)** | `post_market_gate` | `{}` | 立即重新核对覆盖率/一致性，更新 Gate-3 状态 |
+| **手动门禁 (Gate-1)** | `pre_market_gate` | `{}` | 立即重新核对名单/心跳，更新 Gate-1 状态 |
+| **手动门禁 (Gate-3)** | `post_market_gate` | `{}` | 立即重新核对覆盖率/一致性，更新 Gate-3 状态 |
 
 ## 3. 指令生命周期状态
 前端可根据 `status` 字段实现 UI 逻辑：

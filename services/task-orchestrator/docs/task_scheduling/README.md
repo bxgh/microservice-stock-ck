@@ -14,6 +14,10 @@
 | **[05_final_architecture.md](./05_final_architecture.md)** | **最终确认方案** ⭐ |
 | [06_orchestrator_design.md](./06_orchestrator_design.md) | Task Orchestrator 详细设计 |
 | [07_gsd_shared_design.md](./07_gsd_shared_design.md) | GSD-Shared 共享库设计 |
+| [09_service_split_plan.md](./09_service_split_plan.md) | 服务拆分详细建议 |
+| [11_kline_sync_optimization.md](./11_kline_sync_optimization.md) | K线同步优化方案 |
+| [12_architecture_principles.md](./12_architecture_principles.md) | 核心架构原则 |
+| **[13_command_driven_architecture.md](./13_command_driven_architecture.md)** | **3.0 指令驱动分布式架构** 💎 |
 
 ## 核心结论 (已确认 v2)
 
@@ -25,27 +29,16 @@
 
 ---
 
-## 当前定时任务清单 (2026-01-14 更新)
-
 ### 分布式部署概览
 
-| 节点 | 配置文件 | 主要任务 |
+| 节点 | 运行服务 | 主要任务 |
 |:-----|:---------|:---------|
-| **Server 41** | `tasks.yml` | 主调度节点，包含全部任务类型 |
-| **Server 58** | `tasks_58.yml` | 分片任务节点 (Shard-1) |
-| **Server 111** | `tasks_111.yml` | 分片任务节点 (Shard-2) |
+| **Server 41** | `task-orchestrator` | **主调度中心**: 负责所有任务的定时发射与协调 |
+| **Server 58** | `shard-poller (Shard 1)` | **执行节点**: 认领并执行 ID/Shard 对应的指令 |
+| **Server 111** | `shard-poller (Shard 2)` | **执行节点**: 认领并执行 ID/Shard 对应的指令 |
 
----
-
-### 任务分类统计
-
-| 分类 | 已启用 | 待实现 | 合计 |
-|:-----|:------:|:------:|:----:|
-| 📊 数据同步 | 4 | 2 | 6 |
-| 📈 策略任务 | 1 | 1 | 2 |
-| 🔧 系统维护 | 5 | 0 | 5 |
-| ✅ 数据质量 | 0 | 2 | 2 |
-| **合计** | **10** | **5** | **15** |
+> [!TIP]
+> **配置整合 (v3.0)**: 58/111 节点不再维护独立的 `tasks_58.yml`，而是共享并挂载主节点的 `tasks.yml`。
 
 ---
 
@@ -53,20 +46,18 @@
 
 | 任务ID | 名称 | 调度时间 | 类型 | 状态 |
 |:-------|:-----|:---------|:-----|:-----|
-| `daily_stock_collection` | 每日股票代码采集 | 09:05 每日 | cron | ✅ 已启用 |
+| `daily_stock_collection` | 每日股票代码采集 | 08:45 每日 | cron | ✅ 已启用 |
 | `daily_kline_sync` | K线每日同步 | 17:30 交易日 | trading_cron | ✅ 已启用 |
 | `tick_data_migrate` | 分笔数据归档 | 09:00 交易日 | http | ✅ 已启用 |
-| `daily_tick_sync_shard_0` | 盘后分笔采集(Shard-0) | 15:35 交易日 | workflow | ✅ 已启用 |
-| `weekly_financial_sync` | 财务数据更新 | 06:00 周六 | docker | ⚠️ 待实现 |
-| `monthly_valuation_sync` | 估值数据更新 | 06:00 每月1号 | docker | ⚠️ 待实现 |
+| `distributed_tick_sync` | 分笔同步(分布式指令) | 18:00 交易日 | command_emitter | ✅ 架构 3.0 |
 
-#### 分布式分笔采集
+#### 分片执行分配 (通过指令)
 
-| 节点 | 任务ID | 分片 | 配置文件 |
+| 节点 | 角色 | 过滤规则 (Shard) | 说明 |
 |:-----|:-------|:-----|:---------|
-| Server 41 | `daily_tick_sync_shard_0` | Shard-0 | tasks.yml |
-| Server 58 | `daily_tick_sync_shard_1` | Shard-1 | tasks_58.yml |
-| Server 111 | `daily_tick_sync_shard_2` | Shard-2 | tasks_111.yml |
+| Server 41 | Master/Worker 0 | 0 或 NULL | 处理全局及分片 0 任务 |
+| Server 58 | Worker 1 | 1 | 处理分配至分片 1 的任务 |
+| Server 111 | Worker 2 | 2 | 处理分配至分片 2 的任务 |
 
 ---
 
@@ -74,7 +65,7 @@
 
 | 任务ID | 名称 | 调度时间 | 类型 | 状态 |
 |:-------|:-----|:---------|:-----|:-----|
-| `daily_strategy_scan` | 每日策略扫描 | 18:30 交易日 | docker | ✅ 已启用 |
+| `daily_strategy_scan` | 每日策略扫描 | 20:30 交易日 | docker | ✅ 已启用 |
 | `weekly_backtest` | 周末策略回测 | 08:00 周日 | docker | ⚠️ 待实现 |
 
 ---
@@ -104,11 +95,11 @@
 ```
 每日调度时间线 (交易日):
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-   03:00                        09:00      09:05          15:35      17:30   18:30
-     │                            │          │              │          │       │
-     ▼                            ▼          ▼              ▼          ▼       ▼
- 数据库备份               数据归档+预热   股票采集       分笔采集    K线同步  策略扫描
-                                
+   03:00       08:45    09:00          15:30      17:30   18:30   19:00
+     │           │        │              │          │       │       │
+     ▼           ▼        ▼              ▼          ▼       ▼       ▼
+ 数据库备份   股票采集  数据归档       分笔采集    K线同步  策略扫描  质量门禁
+                                      (3节点并行)
 每周调度时间线 (周日):
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    02:00      03:00
@@ -120,4 +111,4 @@
 ---
 
 **创建时间**: 2026-01-02  
-**最后更新**: 2026-01-14
+**最后更新**: 2026-01-20
