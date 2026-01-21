@@ -25,9 +25,9 @@ class TickWriter:
         if not self.ch_pool or not data:
             return 0
 
-        # 0. 确定目标表
+        # 0. 确定目标表 (当日 -> 分布式表, 历史 -> 分布式表)
         today_str = datetime.now(CST).strftime("%Y%m%d")
-        target_table = "tick_data_intraday_local" if trade_date == today_str else "tick_data_local"
+        target_table = "tick_data_intraday" if trade_date == today_str else "tick_data"
         
         try:
             # 1. 转换格式

@@ -103,6 +103,38 @@ tasks:
     retry:
       max_attempts: 1
 
+  # 盘中分笔午休校验与补采 (P1)
+  # 11:35 执行，检查上午采集覆盖率并补采缺失股票
+  - id: intraday_tick_validation_noon
+    name: 盘中分笔午休校验与补采
+    type: docker
+    enabled: true
+    schedule:
+      type: trading_cron
+      expression: "35 11 * * 1-5"
+    target:
+      image: gsd-worker:latest
+      command: ["jobs.intraday_tick_validation", "--session", "noon"]
+      network_mode: "host"
+    retry:
+      max_attempts: 1
+
+  # 盘中分笔盘后校验与补采 (P0)
+  # 15:05 执行，检查全天采集覆盖率并补采缺失股票
+  - id: intraday_tick_validation_close
+    name: 盘中分笔盘后校验与补采
+    type: docker
+    enabled: true
+    schedule:
+      type: trading_cron
+      expression: "5 15 * * 1-5"
+    target:
+      image: gsd-worker:latest
+      command: ["jobs.intraday_tick_validation", "--session", "close"]
+      network_mode: "host"
+    retry:
+      max_attempts: 1
+
   # 分笔数据每日归档 (P0)
   # 09:00 执行，将 intraday 数据整理到历史表并清空当日表
   - id: tick_data_migrate

@@ -47,14 +47,18 @@ class TickValidator:
                 trade_date.replace("-", ""), "%Y%m%d"
             ).strftime("%Y-%m-%d")
             
+            # 根据日期选择查询表：当日 -> tick_data_intraday, 历史 -> tick_data
+            today_str = datetime.now(CST).strftime("%Y-%m-%d")
+            target_table = "tick_data_intraday" if trade_date_str == today_str else "tick_data"
+            
             async with self.ch_pool.acquire() as conn:
                 async with conn.cursor() as cursor:
-                    await cursor.execute("""
+                    await cursor.execute(f"""
                         SELECT 
                             count() as tick_count,
                             min(tick_time) as min_time,
                             max(tick_time) as max_time
-                        FROM tick_data_local 
+                        FROM {target_table} 
                         WHERE stock_code = %(stock_code)s 
                           AND trade_date = %(trade_date)s
                     """, {"stock_code": stock_code, "trade_date": trade_date_str})
@@ -100,11 +104,15 @@ class TickValidator:
             params = {f'code{i}': code for i, code in enumerate(stock_codes)}
             params['trade_date'] = trade_date_str
             
+            # 根据日期选择查询表
+            today_str = datetime.now(CST).strftime("%Y-%m-%d")
+            target_table = "tick_data_intraday" if trade_date_str == today_str else "tick_data"
+            
             async with self.ch_pool.acquire() as conn:
                 async with conn.cursor() as cursor:
                     await cursor.execute(f"""
                         SELECT stock_code, count(), min(tick_time), max(tick_time)
-                        FROM tick_data_local
+                        FROM {target_table}
                         WHERE stock_code IN ({placeholders})
                           AND trade_date = %(trade_date)s
                         GROUP BY stock_code
@@ -149,3 +157,58 @@ class TickValidator:
                     raise ValueError(f"Suspicious empty data for {stock_code} on historical date {trade_date}")
             except ValueError:
                 pass
+
+    async def check_intraday_coverage(
+        self, 
+        stock_codes: List[str], 
+        trade_date: str,
+        session: str = 'close'
+    ) -> tuple[int, int, List[str]]:
+        """
+        检查盘中分笔表的覆盖率
+        
+        Args:
+            stock_codes: 预期的股票代码列表
+            trade_date: 交易日期 (格式: YYYY-MM-DD 或 YYYYMMDD)
+            session: 'noon' (检查 09:25-11:30) 或 'close' (检查 09:25-15:00)
+        
+        Returns:
+            (expected_count, actual_count, missing_codes)
+        """
+        if not self.ch_pool or not stock_codes:
+            return len(stock_codes), 0, stock_codes
+        
+        try:
+            # 格式化日期
+            if len(trade_date) == 8:
+                trade_date_str = datetime.strptime(trade_date, "%Y%m%d").strftime("%Y-%m-%d")
+            else:
+                trade_date_str = trade_date
+            
+            # 构建时间过滤条件
+            time_filter = "tick_time <= '11:30:00'" if session == 'noon' else "1=1"
+            
+            # 查询 tick_data_intraday 表
+            async with self.ch_pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute(f"""
+                        SELECT DISTINCT stock_code 
+                        FROM tick_data_intraday 
+                        WHERE trade_date = %(trade_date)s AND {time_filter}
+                        GROUP BY stock_code
+                        HAVING count() >= 1
+                    """, {"trade_date": trade_date_str})
+                    rows = await cursor.fetchall()
+                    actual_codes = {row[0] for row in rows}
+            
+            # 计算缺失
+            expected_set = set(stock_codes)
+            missing_codes = list(expected_set - actual_codes)
+            
+            logger.info(f"📊 盘中分笔覆盖率检查 ({session}): {len(actual_codes)}/{len(expected_set)} ({len(actual_codes)/len(expected_set)*100:.1f}%)")
+            
+            return len(expected_set), len(actual_codes), missing_codes
+            
+        except Exception as e:
+            logger.error(f"❌ 检查盘中分笔覆盖率失败: {e}")
+            return len(stock_codes), 0, stock_codes

@@ -86,13 +86,17 @@ class StockRosterService:
                     # 清洗数据
                     clean_codes = []
                     for code in codes:
-                        # 兼容处理 sh.600000 格式
+                        # 兼容处理 sh.600000, 600000.SH, sz000001 等各种格式
+                        pure_code = code
                         if '.' in code:
-                            pure_code = code.split('.')[-1]
-                        elif code.startswith(('sh', 'sz')):
+                            parts = code.split('.')
+                            # 提取 6 位数字的那一部分
+                            pure_code = parts[0] if len(parts[0]) == 6 else parts[-1]
+                        elif code.startswith(('sh', 'sz', 'SH', 'SZ')):
                             pure_code = code[2:]
-                        else:
-                            pure_code = code
+                            
+                        # 二次清洗：确保只保留数字
+                        pure_code = ''.join(filter(str.isdigit, pure_code))
                             
                         if is_valid_a_stock(pure_code):
                             clean_codes.append(pure_code)
