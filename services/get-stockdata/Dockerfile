@@ -56,13 +56,10 @@ COPY src/ ./src/
 COPY config/ ./config/
 COPY entrypoint.sh /app/entrypoint.sh
 COPY tests/ ./tests/
-COPY packages/ /packages/
 
-# 设置权限并安装离线包
+# 设置权限
 USER root
-RUN pip install --no-cache-dir --no-index --find-links=/packages pytdx && \
-    rm -rf /packages && \
-    chmod +x /app/entrypoint.sh && \
+RUN chmod +x /app/entrypoint.sh && \
     useradd --create-home --shell /bin/bash app && \
     mkdir -p /app/logs && \
     chown -R app:app /app
