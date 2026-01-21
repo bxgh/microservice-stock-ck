@@ -62,6 +62,9 @@ temp/
 # 数据目录
 data/
 logs/
+infrastructure/redis/**/data*/
+infrastructure/clickhouse/**/data/
+
 
 # 缓存
 .cache/
