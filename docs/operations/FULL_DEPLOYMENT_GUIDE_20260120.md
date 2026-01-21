@@ -37,13 +37,12 @@ cd /home/bxgh/microservice-stock
 ### 方式 C: 单服务部署
 仅重建指定服务：
 ```bash
-docker compose -f docker-compose.node-41.yml up -d --build mootdx-api
-# 或多个
-docker compose -f docker-compose.node-41.yml up -d --build task-orchestrator quant-strategy
+docker compose -f docker-compose.node-41.yml up -d --build task-orchestrator quant-strategy intraday-tick-collector
 ```
 
 ### 验证
 - 检查调度器日志: `docker logs -f task-orchestrator`
+- 检查实时采集器: `docker logs -f intraday-tick-collector` (需显示 `Loaded X stocks from Redis`)
 - 检查 API: `curl http://localhost:8003/health`
 
 ---
@@ -77,10 +76,11 @@ ip route show
     ```bash
     cd /home/bxgh/microservice-stock
     # 该脚本会强制拉取 feature/redis-stream-refactor 分支
-    ./ops/deploy_node_58.sh
+    ./ops/deploy_node_58.sh feature/redis-stream-refactor "gsd-worker,intraday-tick-collector"
     ```
 5.  **验证**:
     - `docker ps | grep gsd-worker`
+    - `docker logs -f intraday-tick-collector` (检查分片 Shard 1 是否正确加载)
 
 ---
 
@@ -102,10 +102,11 @@ ip route show
     ```bash
     cd /home/bxgh/microservice-stock
     # 该脚本会强制拉取 feature/redis-stream-refactor 分支
-    ./ops/deploy_node_111.sh
+    ./ops/deploy_node_111.sh feature/redis-stream-refactor "gsd-worker,intraday-tick-collector"
     ```
 4.  **验证**:
     - `docker ps | grep gsd-worker`
+    - `docker logs -f intraday-tick-collector` (检查分片 Shard 2 是否正确加载)
 
 ---
 

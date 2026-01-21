@@ -67,7 +67,7 @@ if echo "$CHANGED_FILES" | grep -q "^$SHARED_LIB"; then
     if [ "$CURRENT_IP" == "192.168.151.41" ]; then
         SERVICES_TO_BUILD="mootdx-api mootdx-source gsd-worker task-orchestrator get-stockdata quant-strategy intraday-tick-collector"
     else
-        SERVICES_TO_BUILD="mootdx-api mootdx-source gsd-worker"
+        SERVICES_TO_BUILD="mootdx-api mootdx-source gsd-worker intraday-tick-collector"
     fi
 else
     # 逐个检查服务
@@ -83,7 +83,7 @@ fi
 # 去重并过滤非本节点服务
 if [ "$CURRENT_IP" != "192.168.151.41" ]; then
     # 58/111 节点只保留 worker 相关服务
-    SERVICES_TO_BUILD=$(echo "$SERVICES_TO_BUILD" | tr ' ' '\n' | grep -E "^(mootdx-api|mootdx-source|gsd-worker)$" | sort -u | tr '\n' ' ')
+    SERVICES_TO_BUILD=$(echo "$SERVICES_TO_BUILD" | tr ' ' '\n' | grep -E "^(mootdx-api|mootdx-source|gsd-worker|intraday-tick-collector)$" | sort -u | tr '\n' ' ')
 fi
 
 # 去除空格

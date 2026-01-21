@@ -47,7 +47,7 @@ COMPOSE_SERVICES=()
 
 for service in "${SERVICE_ARRAY[@]}"; do
     case "$service" in
-        "mootdx-api"|"mootdx-source"|"gsd-worker")
+        "mootdx-api"|"mootdx-source"|"gsd-worker"|"intraday-tick-collector")
             COMPOSE_SERVICES+=("$service")
             log "  -> 将部署: $service"
             ;;
