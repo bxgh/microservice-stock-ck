@@ -233,8 +233,17 @@ services:
       - CLICKHOUSE_USER=admin
       - CLICKHOUSE_PASSWORD=admin123
       - MOOTDX_API_URL=http://127.0.0.1:8003
-      - STOCK_POOL_PATH=/app/config/hs300_stocks.yaml
-      - CONCURRENCY=16
+      # 分布式采集配置
+      - SHARD_INDEX=0
+      - SHARD_TOTAL=3
+      - REDIS_HOST=127.0.0.1
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=redis123
+      # 性能调优参数
+      - CONCURRENCY=64
+      - FLUSH_THRESHOLD=3000
+      - POLL_INTERVAL_SECONDS=3.0
+      - POLL_OFFSET=200
       - PYTHONPATH=/app
       - PYTHONUNBUFFERED=1
     volumes:

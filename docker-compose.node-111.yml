@@ -74,6 +74,46 @@ services:
       - ./services/mootdx-source/src:/app/src
 
   # ---------------------------------------------------------------------------
+  # 盘中分笔实时采集器 (Shard 2)
+  # ---------------------------------------------------------------------------
+  
+  intraday-tick-collector:
+    image: get-stockdata:latest
+    container_name: intraday-tick-collector
+    network_mode: host
+    restart: unless-stopped
+    command: python3 -m src.core.collector.intraday_tick_main
+    environment:
+      - CLICKHOUSE_HOST=127.0.0.1
+      - CLICKHOUSE_PORT=9000
+      - CLICKHOUSE_DB=stock_data
+      - CLICKHOUSE_USER=admin
+      - CLICKHOUSE_PASSWORD=admin123
+      - MOOTDX_API_URL=http://127.0.0.1:8003
+      # 分布式采集配置
+      - SHARD_INDEX=2
+      - SHARD_TOTAL=3
+      - REDIS_HOST=192.168.151.41
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=redis123
+      # 性能调优参数
+      - CONCURRENCY=64
+      - FLUSH_THRESHOLD=3000
+      - POLL_INTERVAL_SECONDS=3.0
+      - POLL_OFFSET=200
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./libs/gsd-shared:/app/libs/gsd-shared:ro
+      - ./logs/intraday-tick-collector:/app/logs
+      - ./services/get-stockdata/src:/app/src
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import os; exit(0 if os.path.exists('/app/logs/intraday_tick_collector.log') else 1)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+
+  # ---------------------------------------------------------------------------
   # 任务调度 (111 节点 - 已禁用，由 Server 41 统一调度或手动触发)
   # ---------------------------------------------------------------------------
   

@@ -12,6 +12,7 @@ import pytz
 import yaml
 from pathlib import Path
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+import redis.asyncio as aioredis
 
 # 导入项目依赖
 from src.core.scheduling.calendar_service import CalendarService
@@ -20,21 +21,38 @@ from src.core.resilience.circuit_breaker import CircuitBreaker
 logger = logging.getLogger("IntradayTickCollector")
 CST = pytz.timezone('Asia/Shanghai')
 
-# 常量定义
-FINGERPRINT_CACHE_SIZE = 1000
-FLUSH_THRESHOLD = 1000
-FLUSH_INTERVAL_SECONDS = 5
-POLL_INTERVAL_SECONDS = 4.0
-DEFAULT_CONCURRENCY = 16
+# 常量定义 (可通过环境变量覆盖)
+FINGERPRINT_CACHE_SIZE = int(os.getenv("FINGERPRINT_CACHE_SIZE", "1000"))
+FLUSH_THRESHOLD = int(os.getenv("FLUSH_THRESHOLD", "1000"))
+FLUSH_INTERVAL_SECONDS = float(os.getenv("FLUSH_INTERVAL_SECONDS", "5"))
+POLL_INTERVAL_SECONDS = float(os.getenv("POLL_INTERVAL_SECONDS", "4.0"))
+POLL_OFFSET = int(os.getenv("POLL_OFFSET", "800"))  # 每次拉取的最新条数
+DEFAULT_CONCURRENCY = int(os.getenv("CONCURRENCY", "16"))
+
+# 分片配置 (分布式模式)
+SHARD_INDEX = int(os.getenv("SHARD_INDEX", "0"))
+SHARD_TOTAL = int(os.getenv("SHARD_TOTAL", "1"))  # 1=单机模式, >1=分布式模式
+REDIS_HOST = os.getenv("REDIS_HOST", "127.0.0.1")
+REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "redis123")
+REDIS_SHARD_KEY_PREFIX = "metadata:stock_codes:shard"
+REDIS_CONNECT_TIMEOUT = 5  # Redis 连接超时 (秒)
+REDIS_SOCKET_TIMEOUT = 10  # Redis 读写超时 (秒)
+REDIS_MAX_CONNECTIONS = 10  # Redis 连接池最大连接数
 
 class IntradayTickCollector:
     """
-    HS300 盘中分笔采集器
+    盘中分笔采集器 (支持单机/分布式模式)
+    
     职责:
-    - 定时轮询 HS300 股票池
+    - 定时轮询股票池
     - 增量获取分笔数据
     - 内存中维护指纹缓存去重
     - 批量异步写入 ClickHouse
+    
+    模式:
+    - SHARD_TOTAL=1: 单机模式，从 YAML 文件加载股票池
+    - SHARD_TOTAL>1: 分布式模式，从 Redis 读取分片股票池
     """
 
     def __init__(self, stock_pool_path: str = None):
@@ -63,7 +81,12 @@ class IntradayTickCollector:
         # 资源池
         self.http_session: Optional[aiohttp.ClientSession] = None
         self.clickhouse_pool: Any = None
+        self.redis_client: Optional[aioredis.Redis] = None
         self.semaphore = asyncio.Semaphore(int(os.getenv("CONCURRENCY", str(DEFAULT_CONCURRENCY))))
+        
+        # 分片配置
+        self.shard_index = SHARD_INDEX
+        self.shard_total = SHARD_TOTAL
         
     async def initialize(self):
         """初始化资源和股票池"""
@@ -93,7 +116,18 @@ class IntradayTickCollector:
             logger.info(f"✅ HTTP session initialized (mootdx-api: {self.mootdx_api_url})")
 
     async def _load_stock_pool(self):
-        """加载 HS300 股票池"""
+        """
+        加载股票池 (支持两种模式)
+        - SHARD_TOTAL=1: 单机模式，从 YAML 文件加载 (适用于 HS300 等固定池)
+        - SHARD_TOTAL>1: 分布式模式，从 Redis 读取分片 (适用于全市场)
+        """
+        if self.shard_total > 1:
+            await self._load_stock_pool_from_redis()
+        else:
+            await self._load_stock_pool_from_yaml()
+    
+    async def _load_stock_pool_from_yaml(self):
+        """从 YAML 文件加载股票池 (单机模式)"""
         try:
             with open(self.stock_pool_path, 'r') as f:
                 config = yaml.safe_load(f)
@@ -115,9 +149,70 @@ class IntradayTickCollector:
                     if code not in self.fingerprints:
                         self.fingerprints[code] = deque(maxlen=FINGERPRINT_CACHE_SIZE)
                 
-                logger.info(f"✅ Loaded {len(self.stock_pool)} stocks from {self.stock_pool_path}")
+                logger.info(f"✅ Loaded {len(self.stock_pool)} stocks from {self.stock_pool_path} (单机模式)")
         except Exception as e:
-            logger.error(f"❌ Failed to load stock pool: {e}")
+            logger.error(f"❌ Failed to load stock pool from YAML: {e}")
+            raise
+    
+    async def _load_stock_pool_from_redis(self):
+        """从 Redis 加载分片股票池 (分布式模式)"""
+        try:
+            # 连接 Redis (优化: 添加连接池和超时配置)
+            if self.redis_client is None:
+                self.redis_client = aioredis.Redis(
+                    host=REDIS_HOST,
+                    port=REDIS_PORT,
+                    password=REDIS_PASSWORD,
+                    decode_responses=True,
+                    max_connections=REDIS_MAX_CONNECTIONS,
+                    socket_connect_timeout=REDIS_CONNECT_TIMEOUT,
+                    socket_timeout=REDIS_SOCKET_TIMEOUT
+                )
+                await self.redis_client.ping()
+                logger.info(f"✅ Redis connected ({REDIS_HOST}:{REDIS_PORT})")
+            
+            # 从分片 Key 读取
+            shard_key = f"{REDIS_SHARD_KEY_PREFIX}:{self.shard_index}"
+            codes = await self.redis_client.smembers(shard_key)
+            
+            if not codes:
+                raise ValueError(f"Shard key {shard_key} is empty or not found")
+            
+            # 格式化代码 (Redis 存储格式: 000001.SZ -> mootdx-api 格式: sz000001)
+            self.stock_pool = []
+            for code in codes:
+                code = str(code).strip()
+                # 处理 000001.SZ 或 600519.SH 格式
+                if '.' in code:
+                    pure_code, exchange = code.split('.')
+                    if exchange.upper() == 'SH':
+                        self.stock_pool.append(f"sh{pure_code}")
+                    else:
+                        self.stock_pool.append(f"sz{pure_code}")
+                else:
+                    # 纯数字格式
+                    if code.startswith('6'):
+                        self.stock_pool.append(f"sh{code}")
+                    else:
+                        self.stock_pool.append(f"sz{code}")
+            
+            # 初始化指纹缓存
+            for code in self.stock_pool:
+                if code not in self.fingerprints:
+                    self.fingerprints[code] = deque(maxlen=FINGERPRINT_CACHE_SIZE)
+            
+            logger.info(f"✅ Loaded {len(self.stock_pool)} stocks from Redis (分布式模式, Shard {self.shard_index}/{self.shard_total})")
+        except aioredis.ConnectionError as e:
+            logger.error(f"❌ Redis connection failed (host={REDIS_HOST}, port={REDIS_PORT}): {e}")
+            raise
+        except aioredis.TimeoutError as e:
+            logger.error(f"❌ Redis operation timeout (timeout={REDIS_SOCKET_TIMEOUT}s): {e}")
+            raise
+        except ValueError as e:
+            logger.error(f"❌ Invalid shard configuration: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"❌ Unexpected error loading stock pool from Redis: {e}", exc_info=True)
             raise
 
     def _is_trading_time(self) -> bool:
@@ -156,7 +251,7 @@ class IntradayTickCollector:
             return []
         
         url = f"{self.mootdx_api_url}/api/v1/tick/{code}"
-        params = {"start": 0, "offset": 800}  # 获取最新 800 条
+        params = {"start": 0, "offset": POLL_OFFSET}  # 获取最新 N 条
         
         try:
             async with self.http_session.get(url, params=params) as resp:
@@ -308,6 +403,8 @@ class IntradayTickCollector:
         if self.clickhouse_pool:
             self.clickhouse_pool.close()
             await self.clickhouse_pool.wait_closed()
+        if self.redis_client:
+            await self.redis_client.close()
         
         logger.info("✅ IntradayTickCollector stopped")
 
