@@ -70,6 +70,7 @@ services:
         - PROXY_URL=http://192.168.151.18:3128
     image: get-stockdata:latest
     container_name: intraday-tick-collector
+    hostname: node-58-collector
     network_mode: host
     restart: unless-stopped
     command: python3 -m src.core.collector.intraday_tick_main
