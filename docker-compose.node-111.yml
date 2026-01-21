@@ -81,6 +81,9 @@ services:
     build:
       context: ./services/get-stockdata
       dockerfile: Dockerfile
+      args:
+        - ENABLE_PROXY=true
+        - PROXY_URL=http://192.168.151.18:3128
     image: get-stockdata:latest
     container_name: intraday-tick-collector
     network_mode: host
