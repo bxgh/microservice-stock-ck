@@ -221,6 +221,9 @@ services:
   # ---------------------------------------------------------------------------
   
   intraday-tick-collector:
+    build:
+      context: ./services/get-stockdata
+      dockerfile: Dockerfile
     image: get-stockdata:latest
     container_name: intraday-tick-collector
     network_mode: host
