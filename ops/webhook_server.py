@@ -177,14 +177,9 @@ class WebhookHandler(http.server.SimpleHTTPRequestHandler):
             logging.warning("Failed to parse webhook payload, triggering full deploy")
             services_to_deploy = get_node_services(get_local_ip())
         
-        # 3. 如果没有需要部署的服务，直接返回
+        # 3. 如果没有需要部署的服务，依然执行脚本以保持代码同步 (git pull)
         if not services_to_deploy:
-            self.send_response(200)
-            self.end_headers()
-            msg = f"No services affected for this node (branch: {branch_name})"
-            self.wfile.write(msg.encode())
-            logging.info(msg)
-            return
+            logging.info(f"No services affected, but triggering script for code sync (branch: {branch_name})")
         
         # 4. 确定并执行部署脚本
         script_path = get_deploy_script()
