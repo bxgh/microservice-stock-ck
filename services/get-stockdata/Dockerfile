@@ -58,7 +58,7 @@ COPY entrypoint.sh /app/entrypoint.sh
 COPY tests/ ./tests/
 COPY packages/ /packages/
 
-# 设置权限并安装离线包
+# 设置权限
 USER root
 RUN if [ -f /packages/pytdx-1.72.tar.gz ]; then \
         pip install --no-cache-dir /packages/pytdx-1.72.tar.gz; \
