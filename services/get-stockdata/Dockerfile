@@ -60,10 +60,14 @@ COPY packages/ /packages/
 
 # 设置权限并安装离线包
 USER root
-RUN pip install --no-cache-dir --no-index --find-links=/packages pytdx && \
+RUN if [ -f /packages/pytdx-1.72.tar.gz ]; then \
+        pip install --no-cache-dir /packages/pytdx-1.72.tar.gz; \
+    else \
+        pip install --no-cache-dir pytdx; \
+    fi && \
     rm -rf /packages && \
     chmod +x /app/entrypoint.sh && \
-    useradd --create-home --shell /bin/bash app && \
+    useradd --create-home --shell /bin/bash app || true && \
     mkdir -p /app/logs && \
     chown -R app:app /app
 
