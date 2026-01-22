@@ -18,8 +18,9 @@ cd /home/bxgh/microservice-stock
 # 2. 拉取最新代码
 log "Pulling latest code..."
 git fetch --all
-# 重置到 origin/feature/redis-stream-refactor (或根据 webhook 参数动态决定)
-git reset --hard origin/main
+# 优先使用 feature 分支，如果不存在则回退到 main
+BRANCH="feature/redis-stream-refactor"
+git reset --hard origin/$BRANCH || git reset --hard origin/main
 git pull
 
 # 3. 核心服务镜像重构
@@ -28,6 +29,14 @@ log "Rebuilding images..."
 # gsd-worker
 log "Building gsd-worker..."
 docker build -t gsd-worker:latest -f services/gsd-worker/Dockerfile . >> $LOG_FILE 2>&1
+
+# intraday-tick-collector (新增)
+log "Building intraday-tick-collector..."
+docker build -t get-stockdata:latest \
+  -f services/get-stockdata/Dockerfile . \
+  --build-arg ENABLE_PROXY=true \
+  --build-arg PROXY_URL=http://192.168.151.18:3128 \
+  >> $LOG_FILE 2>&1
 
 # mootdx-source (修复 Context 问题)
 log "Building mootdx-source..."
@@ -54,8 +63,9 @@ if docker ps -a | grep -q gsd-shard-poller; then
     log "Restarted gsd-shard-poller"
 fi
 
-# 重启 Compose 服务 (mootdx-api, source, gsd-worker)
-docker compose -f docker-compose.node-58.yml up -d mootdx-api mootdx-source gsd-worker
+# 重启 Compose 服务 (mootdx-api, source, gsd-worker, intraday-tick-collector)
+# 注意：这里假设脚本运行在 58 节点
+docker compose -f docker-compose.node-58.yml up -d mootdx-api mootdx-source gsd-worker intraday-tick-collector
 log "Restarted core microservices"
 
 log "=== Deployment Completed ==="
