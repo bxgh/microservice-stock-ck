@@ -147,12 +147,21 @@ class IntradayTickCollector:
                 
                 # 预处理代码：加上 sh/sz 前缀用于 mootdx-api
                 self.stock_pool = []
+                bj_count = 0
                 for s in stocks:
                     code = str(s).strip()
+                    # 过滤北交所 (4/8/9开头)
+                    if code.startswith(('4', '8', '9')):
+                        bj_count += 1
+                        continue
+                        
                     if code.startswith('6'):
                         self.stock_pool.append(f"sh{code}")
                     else:
                         self.stock_pool.append(f"sz{code}")
+                
+                if bj_count > 0:
+                    logger.info(f"🚫 Filtered {bj_count} BJ/Non-A stocks from YAML")
                 
                 # 初始化指纹缓存
                 for code in self.stock_pool:
@@ -206,7 +215,7 @@ class IntradayTickCollector:
                         self.stock_pool.append(f"sz{pure_code}")
                 else:
                     # 纯数字格式
-                    if code.startswith('8'):  # 北交所 8 开头
+                    if code.startswith(('4', '8', '9')):  # 北交所 4/8/9 开头
                         bj_count += 1
                         continue
                     if code.startswith('6'):

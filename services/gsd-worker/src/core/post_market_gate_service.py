@@ -24,7 +24,7 @@ CST = pytz.timezone('Asia/Shanghai')
 # 常量定义
 DEFAULT_KLINE_THRESHOLD = 98.0
 DEFAULT_TICK_THRESHOLD = 95.0
-DEFAULT_STOCK_COUNT_FALLBACK = 5499
+DEFAULT_STOCK_COUNT_FALLBACK = 5360  # 沪深 A 股大约数量 (排除北交所)
 STANDARD_TRADING_MINUTES = TickStandards.STANDARD_TRADING_MINUTES  # 241 分钟 (09:25-15:00)
 HTTP_CLIENT_TIMEOUT_SECONDS = 10.0
 DEFAULT_SHARD_REPAIR_THRESHOLD = 50.0
@@ -99,13 +99,15 @@ class PostMarketGateService:
             conn = await aiomysql.connect(**self.mysql_config)
             async with conn.cursor() as cur:
                 await cur.execute("""
-                    SELECT stock_code FROM alwaysup.stock_list 
-                    WHERE status = 'active'
-                    ORDER BY stock_code
+                    SELECT symbol FROM alwaysup.stock_basic_info 
+                    WHERE list_status = 'L'
+                    AND market IN ('主板', '中小板', '创业板', '科创板')
+                    ORDER BY symbol
                 """)
                 rows = await cur.fetchall()
             conn.close()
-            return [row[0] for row in rows]
+            # 过滤：仅保留有效 A 股 (排除北交所等)
+            return [row[0] for row in rows if is_valid_a_stock(row[0])]
         except Exception as e:
             logger.error(f"获取股票列表失败: {e}")
             return []
@@ -239,7 +241,13 @@ class PostMarketGateService:
                     count += 1
             return count
         except Exception as e:
-            logger.warning(f"获取有效股票计数异常: {e}")
+            logger.warning(f"获取有效股票计数异常: {e}，尝试从 MySQL 获取")
+            # 降级 2: 尝试从 MySQL 列表获取
+            try:
+                sql_codes = await self._get_all_stock_codes()
+                if sql_codes:
+                    return len(sql_codes)
+            except: pass
             return DEFAULT_STOCK_COUNT_FALLBACK
 
     async def _check_kline_coverage(self, date_str: str) -> float:
@@ -250,8 +258,17 @@ class PostMarketGateService:
             logger.warning(f"⚠️ 无法获取有效 A 股数量，无法计算 K线覆盖率")
             return 0.0
         
-        # 2. 获取本地 ClickHouse 的 K线总数
-        query = f"SELECT countDistinct(stock_code) FROM stock_data.stock_kline_daily WHERE trade_date = '{date_str.replace('-', '')}'"
+        # 2. 获取本地 ClickHouse 的 K线总数 (排除北证)
+        # 考虑到代码格式为 sh.600654 或 600519，使用正则或更宽的 LIKE 逻辑
+        query = f"""
+            SELECT countDistinct(stock_code) 
+            FROM stock_data.stock_kline_daily 
+            WHERE trade_date = '{date_str.replace('-', '')}'
+            AND stock_code NOT LIKE '%4%' 
+            AND stock_code NOT LIKE '%8%' 
+            AND stock_code NOT LIKE '%9%'
+            AND stock_code NOT LIKE 'bj.%'
+        """
         try:
             result = self.clickhouse_client.client.execute(query)
             clickhouse_count = result[0][0]
@@ -268,7 +285,16 @@ class PostMarketGateService:
         try:
             conn = await aiomysql.connect(**self.mysql_config)
             async with conn.cursor() as cur:
-                sql = "SELECT COUNT(*) FROM stock_kline_daily WHERE trade_date = %s"
+                # 显式排除北证代码 (4/8/9开头 或 bj.% 模式)
+                # 注意：在 Python 格式化字符串中，%% 表示一个字面量 %
+                sql = """
+                    SELECT COUNT(*) FROM stock_kline_daily 
+                    WHERE trade_date = %s 
+                    AND code NOT LIKE '%%4%%' 
+                    AND code NOT LIKE '%%8%%' 
+                    AND code NOT LIKE '%%9%%'
+                    AND code NOT LIKE 'bj.%%'
+                """
                 await cur.execute(sql, (date_str,))
                 res = await cur.fetchone()
                 return res[0] if res else 0
@@ -317,8 +343,16 @@ class PostMarketGateService:
                 logger.error("❌ 无法获取有效分母，无法计算分笔覆盖率")
                 return 0.0
             
-            # 4. 分子: 有 Tick 数据的股票数
-            tick_query = f"SELECT countDistinct(stock_code) FROM {tick_table} WHERE trade_date = '{ds}'"
+            # 4. 分子: 有 Tick 数据的股票数 (排除北证)
+            tick_query = f"""
+                SELECT countDistinct(stock_code) 
+                FROM {tick_table} 
+                WHERE trade_date = '{ds}'
+                AND stock_code NOT LIKE '%4%' 
+                AND stock_code NOT LIKE '%8%' 
+                AND stock_code NOT LIKE '%9%'
+                AND stock_code NOT LIKE 'bj.%'
+            """
             tick_result = self.clickhouse_client.client.execute(tick_query)
             total_tick = tick_result[0][0] if tick_result else 0
             
@@ -660,9 +694,12 @@ class PostMarketGateService:
                     code = code.split('.')[-1]
                 if code.startswith(('sh', 'sz')):
                     code = code[2:]
-                stocks.append(code)
+                
+                # 过滤：仅保留有效 A 股 (排除北交所等)
+                if is_valid_a_stock(code):
+                    stocks.append(code)
             
-            logger.info(f"📊 从K线数据(Distributed)获取到 {len(stocks)} 只当天交易股票")
+            logger.info(f"📊 从K线数据(Distributed)获取到 {len(stocks)} 只有效交易股票 (已排除非 A 股)")
             return stocks
             
         except Exception as e:
