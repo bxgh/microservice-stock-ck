@@ -281,7 +281,7 @@ class PostMarketGateService:
         """
         分笔覆盖率
         分子: 有 Tick 数据的股票数
-        分母: 有 K线数据的股票数（实际交易的股票）
+        分母: 优先使用 K线数据股票数，但若 K线数据明显不足则降级使用全量股票数
         """
         # 确定表名: 如果是今天，使用 intraday 表
         is_today = date_str == datetime.now(CST).strftime('%Y-%m-%d')
@@ -289,24 +289,50 @@ class PostMarketGateService:
         ds = date_str.replace('-', '')
         
         try:
-            # 分母: 从云端 MySQL 获取当日实际交易的股票数 (基准)
+            # 1. 获取云端 MySQL 的 K线记录数 (理论上应该是当日实际交易的股票数)
             total_kline = await self._get_mysql_kline_count(date_str)
             
+            # 2. 获取全市场有效 A 股总数 (作为备选分母)
+            total_stocks = await self._get_effective_stock_count()
+            
+            # 3. 决定分母 (核心逻辑修复)
+            # 如果 K线数据明显不足 (< 50% 全市场股票数)，则 K线数据本身不可靠，
+            # 此时使用全量股票数作为分母，避免出现 >100% 的覆盖率
+            denominator = total_kline
+            denominator_source = "MySQL K-Line"
+            
             if total_kline == 0:
-                logger.warning(f"⚠️ 云端 MySQL 在 {date_str} 无 K线数据，无法计算分笔覆盖率")
+                logger.warning(f"⚠️ 云端 MySQL 在 {date_str} 无 K线数据，降级使用股票总数")
+                denominator = total_stocks
+                denominator_source = "Stock List (Fallback)"
+            elif total_kline < (total_stocks * 0.5):
+                logger.warning(
+                    f"⚠️ K线数据不足 ({total_kline} < {total_stocks * 0.5:.0f})，"
+                    f"降级使用股票总数作为分母"
+                )
+                denominator = total_stocks
+                denominator_source = "Stock List (Fallback)"
+            
+            if denominator == 0:
+                logger.error("❌ 无法获取有效分母，无法计算分笔覆盖率")
                 return 0.0
             
-            # 分子: 有 Tick 数据的股票数
+            # 4. 分子: 有 Tick 数据的股票数
             tick_query = f"SELECT countDistinct(stock_code) FROM {tick_table} WHERE trade_date = '{ds}'"
             tick_result = self.clickhouse_client.client.execute(tick_query)
             total_tick = tick_result[0][0] if tick_result else 0
             
-            rate = round(total_tick / total_kline * 100, 2)
-            logger.info(f"📊 分笔覆盖率: Tick={total_tick}, MySQL_KLine={total_kline}, Rate={rate}%")
+            # 5. 计算覆盖率
+            rate = round(total_tick / denominator * 100, 2)
+            logger.info(
+                f"📊 分笔覆盖率: Tick={total_tick}, "
+                f"Denominator={denominator} ({denominator_source}), Rate={rate}%"
+            )
             return rate
         except Exception as e:
             logger.error(f"分笔覆盖率检查失败: {e}")
             return 0.0
+
 
     async def _check_all_ticks_continuity(self, date_str: str) -> Dict[str, Any]:
         """全量检查分笔时段完整性 (ClickHouse 分片聚合)"""

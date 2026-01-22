@@ -16,7 +16,6 @@ import redis.asyncio as aioredis
 
 # 导入项目依赖
 from src.core.scheduling.calendar_service import CalendarService
-from src.core.resilience.circuit_breaker import CircuitBreaker
 
 logger = logging.getLogger("IntradayTickCollector")
 CST = pytz.timezone('Asia/Shanghai')
@@ -75,12 +74,6 @@ class IntradayTickCollector:
         
         # 交易日历服务
         self.calendar = CalendarService()
-        
-        # Circuit Breaker for HTTP requests (P1 FIX)
-        self.circuit_breaker = CircuitBreaker(
-            failure_threshold=5,  # 连续5次失败触发熔断
-            timeout=60  # 熔断60秒后尝试恢复
-        )
         
         # 资源池
         self.http_session: Optional[aiohttp.ClientSession] = None
@@ -272,27 +265,18 @@ class IntradayTickCollector:
         return hashlib.md5(s.encode()).hexdigest()
 
     async def _fetch_stock_ticks(self, code: str) -> List[Dict[str, Any]]:
-        """从 mootdx-api 获取实时分笔 (P1 FIX: 集成 Circuit Breaker)"""
-        # 检查熔断器状态
-        if not self.circuit_breaker.can_execute():
-            logger.warning(f"⚠️ Circuit breaker OPEN, skipping {code}")
-            return []
-        
+        """从 mootdx-api 获取实时分笔"""
         url = f"{self.mootdx_api_url}/api/v1/tick/{code}"
         params = {"start": 0, "offset": POLL_OFFSET}  # 获取最新 N 条
         
         try:
             async with self.http_session.get(url, params=params) as resp:
                 if resp.status == 200:
-                    self.circuit_breaker.record_success()
                     return await resp.json()
                 else:
                     logger.warning(f"⚠️ Failed to fetch {code}: HTTP {resp.status}")
-                    self.circuit_breaker.record_failure()
         except Exception as e:
-            # FIX: 使用正确的日志级别
             logger.warning(f"⚠️ Error fetching {code}: {e}")
-            self.circuit_breaker.record_failure()
         return []
 
     async def poll_stock(self, code: str):
@@ -451,13 +435,8 @@ class IntradayTickCollector:
                 await asyncio.sleep(wait_time)
     
     async def _collect_snapshots(self):
-        """批量采集快照数据 (P1 FIX: 集成 Circuit Breaker)"""
+        """批量采集快照数据"""
         if not self.snapshot_batches:
-            return
-        
-        # 检查熔断器状态 (全局)
-        if not self.circuit_breaker.can_execute():
-            # logger.warning("⚠️ Circuit breaker OPEN, skipping snapshot round")
             return
         
         all_rows = []
@@ -475,17 +454,14 @@ class IntradayTickCollector:
                 ) as resp:
                     if resp.status == 200:
                         data = await resp.json()
-                        self.circuit_breaker.record_success()
                         for item in data:
                             row = self._map_snapshot_row(item, today, snapshot_time)
                             if row:
                                 all_rows.append(row)
                     else:
                         logger.warning(f"⚠️ Snapshot API returned {resp.status}")
-                        self.circuit_breaker.record_failure()
             except Exception as e:
                 logger.warning(f"⚠️ Snapshot batch failed: {repr(e)}")
-                self.circuit_breaker.record_failure()
         
         # 写入 ClickHouse (snapshot_data_local)
         if all_rows:
