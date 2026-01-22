@@ -484,7 +484,7 @@ class IntradayTickCollector:
                         logger.warning(f"⚠️ Snapshot API returned {resp.status}")
                         self.circuit_breaker.record_failure()
             except Exception as e:
-                logger.warning(f"⚠️ Snapshot batch failed: {e}")
+                logger.warning(f"⚠️ Snapshot batch failed: {repr(e)}")
                 self.circuit_breaker.record_failure()
         
         # 写入 ClickHouse (snapshot_data_local)
