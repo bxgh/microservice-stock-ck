@@ -42,6 +42,8 @@ services:
       retries: 3
     volumes:
       - ./logs/mootdx-api:/app/logs
+      - mootdx_config:/root/.mootdx
+      - ./services/mootdx-api/src:/app/src  # 开发模式挂载源码
       - ./libs/gsd-shared:/app/libs/gsd-shared:ro
 
   mootdx-source:
@@ -92,7 +94,7 @@ services:
       - FLUSH_THRESHOLD=3000
       - POLL_INTERVAL_SECONDS=3.0
       - POLL_OFFSET=200
-      - PYTHONPATH=/app
+      - PYTHONPATH=/app:/app/libs/gsd-shared
       - PYTHONUNBUFFERED=1
     volumes:
       - ./libs/gsd-shared:/app/libs/gsd-shared:ro
@@ -177,6 +179,23 @@ services:
       - SHARD_TOTAL=${SHARD_TOTAL:-3}
       - CLICKHOUSE_HOST=${CLICKHOUSE_HOST:-localhost}
       - MOOTDX_API_URL=${MOOTDX_API_URL:-http://localhost:8003}
+      # 网络代理配置
+      - HTTP_PROXY=http://192.168.151.18:3128
+      - HTTPS_PROXY=http://192.168.151.18:3128
+      - NO_PROXY=localhost,127.0.0.1,192.168.151.58
+      - ENVIRONMENT=development
+      # MySQL 配置
+      - GSD_DB_HOST=${GSD_DB_HOST:-127.0.0.1}
+      - GSD_DB_PORT=${GSD_DB_PORT:-36301}
+      - GSD_DB_NAME=${GSD_DB_NAME:-alwaysup}
+      - GSD_DB_USER=${GSD_DB_USER:-root}
+      - GSD_DB_PASSWORD=${GSD_DB_PASSWORD:-alwaysup@888}
+      # ClickHouse 配置
+      - CLICKHOUSE_HOST=${CLICKHOUSE_HOST:-127.0.0.1}
+      - CLICKHOUSE_PORT=${CLICKHOUSE_PORT:-9000}
+      - CLICKHOUSE_USER=${CLICKHOUSE_USER:-admin}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-admin123}
+      - CLICKHOUSE_DB=${CLICKHOUSE_DB:-stock_data}
       # Redis 配置
       - REDIS_HOST=192.168.151.41
       - REDIS_PORT=6379
@@ -186,13 +205,20 @@ services:
     volumes:
       - ./libs/gsd-shared:/app/libs/gsd-shared:ro
       - ./logs/gsd-worker:/app/logs
+      - ./services/gsd-worker/src:/app/src
+      - ./services/gsd-worker/config:/app/config
       - ./data/gsd-worker:/app/data
 
 
 volumes:
+  mootdx_config:
   gitlab_config:
   gitlab_logs:
   gitlab_data:
+
+networks:
+  default:
+    name: microservice-stock-network
 
 # =============================================================================
 # 使用说明

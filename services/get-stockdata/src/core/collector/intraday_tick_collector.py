@@ -13,6 +13,7 @@ import yaml
 from pathlib import Path
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 import redis.asyncio as aioredis
+from gsd_shared.stock_universe import StockUniverseService
 
 # 导入项目依赖
 from src.core.scheduling.calendar_service import CalendarService
@@ -88,12 +89,40 @@ class IntradayTickCollector:
         # 快照采集相关
         self.snapshot_batches: List[List[str]] = []
         self.snapshot_buffer: List[Tuple] = []
+
+        # Stock Universe Service
+        self.stock_universe = None
                 
     async def initialize(self):
         """初始化资源和股票池"""
         logger.info("🚀 Initializing IntradayTickCollector...")
         
-        # 1. 加载股票池
+        # 0. 初始化 Redis (用于 StockUniverse)
+        if self.redis_client is None:
+            self.redis_client = aioredis.Redis(
+                host=REDIS_HOST,
+                port=REDIS_PORT,
+                password=REDIS_PASSWORD,
+                decode_responses=True,
+                max_connections=REDIS_MAX_CONNECTIONS,
+                socket_connect_timeout=REDIS_CONNECT_TIMEOUT,
+                socket_timeout=REDIS_SOCKET_TIMEOUT
+            )
+            try:
+                await self.redis_client.ping()
+                logger.info(f"✅ Redis connected ({REDIS_HOST}:{REDIS_PORT})")
+            except Exception as e:
+                logger.warning(f"⚠️ Redis connection failed: {e}. StockUniverse will attempt fallbacks.")
+                # We do NOT unset self.redis_client, allowing StockUniverse to try usage and handle errors internally
+                # or we could set it to None if we want to force fallback immediately.
+                # StockUniverse handles redis exceptions, so passing the client is fine.
+
+        # 1. 初始化 StockUniverseService
+        self.stock_universe = StockUniverseService(
+            redis_client=self.redis_client
+        )
+        
+        # 2. 加载股票池
         await self._load_stock_pool()
         
 
@@ -127,122 +156,39 @@ class IntradayTickCollector:
 
     async def _load_stock_pool(self):
         """
-        加载股票池 (支持两种模式)
-        - SHARD_TOTAL=1: 单机模式，从 YAML 文件加载 (适用于 HS300 等固定池)
-        - SHARD_TOTAL>1: 分布式模式，从 Redis 读取分片 (适用于全市场)
+        加载股票池 (委托给 StockUniverseService)
+        - SHARD_TOTAL=1: 加载全量 A 股
+        - SHARD_TOTAL>1: 加载对应分片
         """
-        if self.shard_total > 1:
-            await self._load_stock_pool_from_redis()
-        else:
-            await self._load_stock_pool_from_yaml()
-    
-    async def _load_stock_pool_from_yaml(self):
-        """从 YAML 文件加载股票池 (单机模式)"""
         try:
-            with open(self.stock_pool_path, 'r') as f:
-                config = yaml.safe_load(f)
-                stocks = config.get('stocks', [])
-                if not stocks:
-                    raise ValueError("Empty stock list in config")
-                
-                # 预处理代码：加上 sh/sz 前缀用于 mootdx-api
-                self.stock_pool = []
-                bj_count = 0
-                for s in stocks:
-                    code = str(s).strip()
-                    # 过滤北交所 (4/8/9开头)
-                    if code.startswith(('4', '8', '9')):
-                        bj_count += 1
-                        continue
-                        
-                    if code.startswith('6'):
-                        self.stock_pool.append(f"sh{code}")
-                    else:
-                        self.stock_pool.append(f"sz{code}")
-                
-                if bj_count > 0:
-                    logger.info(f"🚫 Filtered {bj_count} BJ/Non-A stocks from YAML")
-                
-                # 初始化指纹缓存
-                for code in self.stock_pool:
-                    if code not in self.fingerprints:
-                        self.fingerprints[code] = deque(maxlen=FINGERPRINT_CACHE_SIZE)
-                
-                logger.info(f"✅ Loaded {len(self.stock_pool)} stocks from {self.stock_pool_path} (单机模式)")
-        except Exception as e:
-            logger.error(f"❌ Failed to load stock pool from YAML: {e}")
-            raise
-    
-    async def _load_stock_pool_from_redis(self):
-        """从 Redis 加载分片股票池 (分布式模式)"""
-        try:
-            # 连接 Redis (优化: 添加连接池和超时配置)
-            if self.redis_client is None:
-                self.redis_client = aioredis.Redis(
-                    host=REDIS_HOST,
-                    port=REDIS_PORT,
-                    password=REDIS_PASSWORD,
-                    decode_responses=True,
-                    max_connections=REDIS_MAX_CONNECTIONS,
-                    socket_connect_timeout=REDIS_CONNECT_TIMEOUT,
-                    socket_timeout=REDIS_SOCKET_TIMEOUT
-                )
-                await self.redis_client.ping()
-                logger.info(f"✅ Redis connected ({REDIS_HOST}:{REDIS_PORT})")
+            raw_stocks = []
+            if self.shard_total > 1:
+                logger.info(f"Using Distributed Mode: Loading Shard {self.shard_index}/{self.shard_total}")
+                raw_stocks = await self.stock_universe.get_shard_stocks(self.shard_index, self.shard_total)
+            else:
+                logger.info("Using Standalone Mode: Loading All A-Shares")
+                raw_stocks = await self.stock_universe.get_all_a_stocks()
             
-            # 从分片 Key 读取
-            shard_key = f"{REDIS_SHARD_KEY_PREFIX}:{self.shard_index}"
-            codes = await self.redis_client.smembers(shard_key)
+            if not raw_stocks:
+                logger.warning("⚠️ StockUniverse returned empty list!")
             
-            if not codes:
-                raise ValueError(f"Shard key {shard_key} is empty or not found")
-            
-            # 格式化代码 (Redis 存储格式: 000001.SZ -> mootdx-api 格式: sz000001)
-            # 过滤北交所代码 (.BJ 后缀，TDX 不支持)
+            # 格式化为 mootdx-api 需要的 sh/sz 前缀格式
             self.stock_pool = []
-            bj_count = 0
-            for code in codes:
-                code = str(code).strip()
-                # 处理 000001.SZ 或 600519.SH 格式
-                if '.' in code:
-                    pure_code, exchange = code.split('.')
-                    if exchange.upper() == 'BJ':
-                        bj_count += 1
-                        continue  # 跳过北交所代码
-                    if exchange.upper() == 'SH':
-                        self.stock_pool.append(f"sh{pure_code}")
-                    else:
-                        self.stock_pool.append(f"sz{pure_code}")
+            for code in raw_stocks:
+                if code.startswith('6') or code.startswith('9'): # 9 通常是 B 股但 Universe 已过滤，这里防御性保留
+                    self.stock_pool.append(f"sh{code}")
                 else:
-                    # 纯数字格式
-                    if code.startswith(('4', '8', '9')):  # 北交所 4/8/9 开头
-                        bj_count += 1
-                        continue
-                    if code.startswith('6'):
-                        self.stock_pool.append(f"sh{code}")
-                    else:
-                        self.stock_pool.append(f"sz{code}")
+                    self.stock_pool.append(f"sz{code}")
             
-            if bj_count > 0:
-                logger.info(f"🚫 Filtered {bj_count} BJ stocks (TDX unsupported)")
-            
-            # 初始化指纹缓存
+            # 初始化指纹
             for code in self.stock_pool:
                 if code not in self.fingerprints:
                     self.fingerprints[code] = deque(maxlen=FINGERPRINT_CACHE_SIZE)
+                    
+            logger.info(f"✅ Stock Pool Ready: {len(self.stock_pool)} stocks")
             
-            logger.info(f"✅ Loaded {len(self.stock_pool)} stocks from Redis (分布式模式, Shard {self.shard_index}/{self.shard_total})")
-        except aioredis.ConnectionError as e:
-            logger.error(f"❌ Redis connection failed (host={REDIS_HOST}, port={REDIS_PORT}): {e}")
-            raise
-        except aioredis.TimeoutError as e:
-            logger.error(f"❌ Redis operation timeout (timeout={REDIS_SOCKET_TIMEOUT}s): {e}")
-            raise
-        except ValueError as e:
-            logger.error(f"❌ Invalid shard configuration: {e}")
-            raise
         except Exception as e:
-            logger.error(f"❌ Unexpected error loading stock pool from Redis: {e}", exc_info=True)
+            logger.error(f"❌ Failed to load stock pool: {e}", exc_info=True)
             raise
 
     def _is_trading_time(self) -> bool:

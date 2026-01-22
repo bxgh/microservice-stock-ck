@@ -9,7 +9,9 @@ import json
 import aiomysql
 import redis.asyncio as redis
 from redis.asyncio.cluster import RedisCluster, ClusterNode
-from gsd_shared.validators import is_valid_a_stock
+import redis.asyncio as redis
+from redis.asyncio.cluster import RedisCluster, ClusterNode
+from gsd_shared.stock_universe import StockUniverseService
 from gsd_shared.validation.standards import TickStandards
 from gsd_shared.validation.market_validator import MarketValidator
 import xxhash
@@ -72,6 +74,9 @@ class PostMarketGateService:
         self.redis_password = os.getenv("REDIS_PASSWORD", "redis123")
         self.redis_nodes = os.getenv("REDIS_NODES", "192.168.151.41:6379,192.168.151.58:6379,192.168.151.111:6379")
         
+        # Stock Universe Service (Initialize in initialize())
+        self.stock_universe = None
+        
     async def initialize(self):
         """初始化资源"""
         await self.clickhouse_client.connect()
@@ -84,6 +89,13 @@ class PostMarketGateService:
             self.redis_client = redis.Redis(host=self.redis_host, port=self.redis_port, password=self.redis_password, decode_responses=True)
             
         self.tracker = SyncStatusTracker(self.redis_client)
+        
+        # 初始化 StockService
+        self.stock_universe = StockUniverseService(
+            redis_client=self.redis_client,
+            mysql_config=self.mysql_config,
+            clickhouse_client=self.clickhouse_client.client
+        )
         logger.info("✅ PostMarketGateService 初始化完成")
 
     async def close(self):
@@ -94,23 +106,8 @@ class PostMarketGateService:
         logger.info("✅ 资源连接已释放")
     
     async def _get_all_stock_codes(self) -> List[str]:
-        """从 MySQL 获取全部A股代码"""
-        try:
-            conn = await aiomysql.connect(**self.mysql_config)
-            async with conn.cursor() as cur:
-                await cur.execute("""
-                    SELECT symbol FROM alwaysup.stock_basic_info 
-                    WHERE list_status = 'L'
-                    AND market IN ('主板', '中小板', '创业板', '科创板')
-                    ORDER BY symbol
-                """)
-                rows = await cur.fetchall()
-            conn.close()
-            # 过滤：仅保留有效 A 股 (排除北交所等)
-            return [row[0] for row in rows if is_valid_a_stock(row[0])]
-        except Exception as e:
-            logger.error(f"获取股票列表失败: {e}")
-            return []
+        """[Deprecated] Use StockUniverseService instead"""
+        return await self.stock_universe.get_all_a_stocks()
     
     def _get_target_trading_date(self) -> str:
         """
@@ -220,58 +217,30 @@ class PostMarketGateService:
         return report
 
     async def _get_effective_stock_count(self) -> int:
-        """获取有效的 A 股总数 (动态计算)"""
+        """获取有效的 A 股总数 (使用 StockUniverseService)"""
         try:
-            # 从 Redis 获取全量名单
-            codes = await self.redis_client.smembers("metadata:stock_codes")
-            if not codes:
-                return DEFAULT_STOCK_COUNT_FALLBACK # 降级容错
+            # 优先从 Redis 全量获取
+            codes = await self.stock_universe.get_all_a_stocks()
+            if codes:
+                return len(codes)
             
-            # 过滤 A 股
-            count = 0
-            for c in codes:
-                # 兼容处理 600000.SH 或 sh.600000 格式
-                if '.' in c:
-                    parts = c.split('.')
-                    pure_code = next((p for p in parts if len(p) == 6), parts[0])
-                else:
-                    pure_code = c
-
-                if is_valid_a_stock(pure_code):
-                    count += 1
-            return count
+            return DEFAULT_STOCK_COUNT_FALLBACK
         except Exception as e:
-            logger.warning(f"获取有效股票计数异常: {e}，尝试从 MySQL 获取")
-            # 降级 2: 尝试从 MySQL 列表获取
-            try:
-                sql_codes = await self._get_all_stock_codes()
-                if sql_codes:
-                    return len(sql_codes)
-            except: pass
+            logger.warning(f"获取有效股票计数异常: {e}")
             return DEFAULT_STOCK_COUNT_FALLBACK
 
     async def _check_kline_coverage(self, date_str: str) -> float:
         """K线覆盖率: 对比本地 ClickHouse 与云端 MySQL 的记录数"""
-        # 1. 获取有效 A 股总数 (作为基准: 5000+)
+        # 1. 获取有效 A 股总数
         total_stocks = await self._get_effective_stock_count()
         if total_stocks == 0:
             logger.warning(f"⚠️ 无法获取有效 A 股数量，无法计算 K线覆盖率")
             return 0.0
         
-        # 2. 获取本地 ClickHouse 的 K线总数 (排除北证)
-        # 考虑到代码格式为 sh.600654 或 600519，使用正则或更宽的 LIKE 逻辑
-        query = f"""
-            SELECT countDistinct(stock_code) 
-            FROM stock_data.stock_kline_daily 
-            WHERE trade_date = '{date_str.replace('-', '')}'
-            AND stock_code NOT LIKE '%4%' 
-            AND stock_code NOT LIKE '%8%' 
-            AND stock_code NOT LIKE '%9%'
-            AND stock_code NOT LIKE 'bj.%'
-        """
+        # 2. 获取实际交易的股票数 (通过 StockUniverse)
         try:
-            result = self.clickhouse_client.client.execute(query)
-            clickhouse_count = result[0][0]
+            kline_stocks = await self.stock_universe.get_today_traded_stocks(date_str)
+            clickhouse_count = len(kline_stocks)
             
             rate = round(clickhouse_count / total_stocks * 100, 2)
             logger.info(f"📊 K线覆盖率审计: ClickHouse={clickhouse_count}, Total_AShares={total_stocks}, Rate={rate}%")
@@ -280,28 +249,8 @@ class PostMarketGateService:
             logger.error(f"❌ K线覆盖率检查失败: {e}")
             return 0.0
 
-    async def _get_mysql_kline_count(self, date_str: str) -> int:
-        """获取云端 MySQL 中的 K 线记录数"""
-        try:
-            conn = await aiomysql.connect(**self.mysql_config)
-            async with conn.cursor() as cur:
-                # 显式排除北证代码 (4/8/9开头 或 bj.% 模式)
-                # 注意：在 Python 格式化字符串中，%% 表示一个字面量 %
-                sql = """
-                    SELECT COUNT(*) FROM stock_kline_daily 
-                    WHERE trade_date = %s 
-                    AND code NOT LIKE '%%4%%' 
-                    AND code NOT LIKE '%%8%%' 
-                    AND code NOT LIKE '%%9%%'
-                    AND code NOT LIKE 'bj.%%'
-                """
-                await cur.execute(sql, (date_str,))
-                res = await cur.fetchone()
-                return res[0] if res else 0
-            await conn.ensure_closed()
-        except Exception as e:
-            logger.error(f"❌ 获取云端 MySQL K线记录数失败: {e}")
-            return 0
+    # _get_mysql_kline_count removed as it is no longer used directly
+    # logic moved to StockUniverseService if needed, or replaced by get_today_traded_stocks (source agnostic)
 
     async def _check_tick_coverage(self, date_str: str) -> float:
         """
@@ -315,20 +264,20 @@ class PostMarketGateService:
         ds = date_str.replace('-', '')
         
         try:
-            # 1. 获取云端 MySQL 的 K线记录数 (理论上应该是当日实际交易的股票数)
-            total_kline = await self._get_mysql_kline_count(date_str)
+            # 1. 获取实际交易的股票数 (作为 K线基准)
+            # StockUniverse.get_today_traded_stocks 会优先查 CH Distributed，如果 CH 挂了会查 MySQL
+            kline_stocks = await self.stock_universe.get_today_traded_stocks(date_str)
+            total_kline = len(kline_stocks)
             
             # 2. 获取全市场有效 A 股总数 (作为备选分母)
             total_stocks = await self._get_effective_stock_count()
             
-            # 3. 决定分母 (核心逻辑修复)
-            # 如果 K线数据明显不足 (< 50% 全市场股票数)，则 K线数据本身不可靠，
-            # 此时使用全量股票数作为分母，避免出现 >100% 的覆盖率
+            # 3. 决定分母
             denominator = total_kline
-            denominator_source = "MySQL K-Line"
+            denominator_source = "K-Line (Ref)"
             
             if total_kline == 0:
-                logger.warning(f"⚠️ 云端 MySQL 在 {date_str} 无 K线数据，降级使用股票总数")
+                logger.warning(f"⚠️ 在 {date_str} 无 K线数据，降级使用股票总数")
                 denominator = total_stocks
                 denominator_source = "Stock List (Fallback)"
             elif total_kline < (total_stocks * 0.5):
@@ -668,43 +617,8 @@ class PostMarketGateService:
     async def _get_stocks_from_kline(self, trade_date: str) -> List[str]:
         """
         从当天K线数据获取实际交易的股票列表
-        
-        Args:
-            trade_date: 交易日期 (YYYY-MM-DD)
-            
-        Returns:
-            股票代码列表
         """
-        try:
-            # 使用同步客户端 + 分布式表
-            query = f"""
-                SELECT DISTINCT stock_code
-                FROM stock_data.stock_kline_daily
-                WHERE trade_date = '{trade_date}'
-                ORDER BY stock_code
-            """
-            
-            rows = self.clickhouse_client.client.execute(query)
-            
-            # 标准化股票代码格式（支持 sh.600654, sz000001 等多种格式）
-            stocks = []
-            for row in rows:
-                code = row[0]
-                if '.' in code:
-                    code = code.split('.')[-1]
-                if code.startswith(('sh', 'sz')):
-                    code = code[2:]
-                
-                # 过滤：仅保留有效 A 股 (排除北交所等)
-                if is_valid_a_stock(code):
-                    stocks.append(code)
-            
-            logger.info(f"📊 从K线数据(Distributed)获取到 {len(stocks)} 只有效交易股票 (已排除非 A 股)")
-            return stocks
-            
-        except Exception as e:
-            logger.error(f"从K线获取股票列表失败: {e}")
-            return []
+        return await self.stock_universe.get_today_traded_stocks(trade_date)
 
     async def _trigger_targeted_supplement(self, date_str: str, codes: List[str], shard_id: Optional[int] = None):
         """

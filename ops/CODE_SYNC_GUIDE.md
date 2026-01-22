@@ -139,3 +139,11 @@ sudo systemctl restart webhook-server
 | `libs/gsd-shared/*` | mootdx-api, gsd-worker, task-orchestrator |
 | `docker-compose*`, `Dockerfile` | **全量部署** |
 
+docker compose -f docker-compose.node-111.yml build gsd-worker
+docker compose -f docker-compose.node-41.yml build gsd-worker
+docker compose -f docker-compose.node-58.yml build gsd-worker
+
+
+docker compose -f docker-compose.node-111.yml up -d --build intraday-tick-collector
+docker compose -f docker-compose.node-41.yml up -d --build intraday-tick-collector
+docker compose -f docker-compose.node-58.yml up -d --build intraday-tick-collector

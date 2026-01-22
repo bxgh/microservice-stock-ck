@@ -22,7 +22,7 @@ from redis.asyncio.cluster import RedisCluster, ClusterNode
 
 # 子组件
 from core.task_queue import TickTaskQueue
-from core.stock_roster_service import StockRosterService
+from gsd_shared.stock_universe import StockUniverseService
 from gsd_shared.validation.tick_validator import TickValidator
 from core.tick_fetcher import TickFetcher
 from core.tick_writer import TickWriter
@@ -59,7 +59,7 @@ class TickSyncService:
         
         # Components (Initialized in initialize())
         self.task_queue: Optional[TickTaskQueue] = None
-        self.roster: Optional[StockRosterService] = None
+        self.stock_universe: Optional[StockUniverseService] = None
         self.validator: Optional[TickValidator] = None
         self.fetcher: Optional[TickFetcher] = None
         self.writer: Optional[TickWriter] = None
@@ -111,8 +111,31 @@ class TickSyncService:
 
             # 2. Initialize Components
             self.task_queue = TickTaskQueue(self.redis_client)
-            self.roster = StockRosterService(
-                self.redis_client, self.http_session, self.clickhouse_pool, self.mootdx_api_url
+            self.task_queue = TickTaskQueue(self.redis_client)
+            
+            # ClickHouse client wrapper needed for StockUniverse (simple adapter)
+            # Since asynch pool is used here, we pass the pool directly if StockUniverse supports it
+            # Or we pass a wrapper. StockUniverse expects an object with execute/execute_async or client.execute
+            # Here we pass a simple wrapper to adapt pool to client-like interface if needed, 
+            # Or simplified: pass None for now given CH logic is mainly in PostMarketGate, 
+            # BUT TickSync uses get_from_kline, so we need CH.
+            
+            # Init StockUniverse
+            # Note: StockUniverseService supports mysql_config and redis, and ch_client
+            # We don't have mysql config here (it uses ENV vars in Universe), so we rely on Redis.
+            # For CH, we can wrap the pool.
+            
+            class CHPoolAdapter:
+                def __init__(self, pool): self.pool = pool
+                async def execute_async(self, query):
+                    async with self.pool.acquire() as conn:
+                        async with conn.cursor() as cur:
+                            await cur.execute(query)
+                            return await cur.fetchall()
+
+            self.stock_universe = StockUniverseService(
+                redis_client=self.redis_client,
+                clickhouse_client=CHPoolAdapter(self.clickhouse_pool)
             )
             self.validator = TickValidator(self.clickhouse_pool)
             self.fetcher = TickFetcher(self.http_session, self.mootdx_api_url)
@@ -139,13 +162,16 @@ class TickSyncService:
     # --- Delegated Methods (Compatible with sync_tick.py) ---
 
     async def get_sharded_stocks(self, shard_index: int) -> List[str]:
-        return await self.roster.get_by_shard(shard_index)
+        return await self.stock_universe.get_shard_stocks(shard_index)
 
     async def get_stocks_from_kline_or_fallback(self, trade_date: str) -> list:
-        return await self.roster.get_from_kline(trade_date)
+        return await self.stock_universe.get_today_traded_stocks(trade_date)
 
     async def get_stock_pool(self) -> List[str]:
-        return await self.roster.get_from_config()
+        """Get fallback/config list -> now map to get_all_a_stocks or specific config"""
+        # Original logic used hs300_stocks.yaml fallback. 
+        # For simplicity and consistence, we return all A-shares.
+        return await self.stock_universe.get_all_a_stocks()
 
     async def push_tasks_to_redis(self, stock_codes: List[str]) -> int:
         return await self.task_queue.push(stock_codes)

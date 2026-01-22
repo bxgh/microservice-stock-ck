@@ -100,7 +100,7 @@ services:
       # 分布式采集配置
       - SHARD_INDEX=2
       - SHARD_TOTAL=3
-      - REDIS_HOST=192.168.151.41
+      - REDIS_HOST=127.0.0.1
       - REDIS_PORT=6379
       - REDIS_PASSWORD=redis123
       # 性能调优参数
@@ -108,7 +108,7 @@ services:
       - FLUSH_THRESHOLD=3000
       - POLL_INTERVAL_SECONDS=3.0
       - POLL_OFFSET=200
-      - PYTHONPATH=/app
+      - PYTHONPATH=/app:/app/libs/gsd-shared
       - PYTHONUNBUFFERED=1
     volumes:
       - ./libs/gsd-shared:/app/libs/gsd-shared:ro

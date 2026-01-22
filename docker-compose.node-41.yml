@@ -251,7 +251,7 @@ services:
       - FLUSH_THRESHOLD=3000
       - POLL_INTERVAL_SECONDS=3.0
       - POLL_OFFSET=200
-      - PYTHONPATH=/app
+      - PYTHONPATH=/app:/app/libs/gsd-shared
       - PYTHONUNBUFFERED=1
     volumes:
       - ./libs/gsd-shared:/app/libs/gsd-shared:ro
@@ -314,7 +314,7 @@ services:
       - REDIS_CLUSTER=false
       - NO_PROXY=localhost,127.0.0.1,192.168.151.41
       - ENVIRONMENT=development
-      - PYTHONPATH=/app/src:/app/libs/gsd-shared
+      - PYTHONPATH=/app:/app/libs/gsd-shared
       # MySQL 配置
       - GSD_DB_HOST=${GSD_DB_HOST:-127.0.0.1}
       - GSD_DB_PORT=${GSD_DB_PORT:-36301}
