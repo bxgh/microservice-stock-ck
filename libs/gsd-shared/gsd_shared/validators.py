@@ -34,6 +34,10 @@ def is_valid_a_stock(code: str) -> bool:
     if not code or not isinstance(code, str) or len(code) != 6:
         return False
     
+    # 显式排除北交所 (4/8/9开头) 及其他非A股
+    if code.startswith(('4', '8', '9')):
+        return False
+    
     # 沪市
     if code.startswith(('600', '601', '603', '605', '688')):
         return True

@@ -188,6 +188,11 @@ class TickValidator:
             # 构建时间过滤条件
             time_filter = "tick_time <= '11:30:00'" if session == 'noon' else "1=1"
             
+            # 根据 session 设定最小记录数阈值
+            # Noon (120mins): 设为 110 做宽松检查
+            # Close (240mins): 设为 230 做完整性检查 (参照 IntradayPostMarket 标准)
+            min_count = 110 if session == 'noon' else 230
+            
             # 查询 tick_data_intraday 表
             async with self.ch_pool.acquire() as conn:
                 async with conn.cursor() as cursor:
@@ -196,8 +201,8 @@ class TickValidator:
                         FROM tick_data_intraday 
                         WHERE trade_date = %(trade_date)s AND {time_filter}
                         GROUP BY stock_code
-                        HAVING count() >= 1
-                    """, {"trade_date": trade_date_str})
+                        HAVING count() >= %(min_count)s AND min(tick_time) <= '09:30:00'
+                    """, {"trade_date": trade_date_str, "min_count": min_count})
                     rows = await cursor.fetchall()
                     actual_codes = {row[0] for row in rows}
             
@@ -205,7 +210,7 @@ class TickValidator:
             expected_set = set(stock_codes)
             missing_codes = list(expected_set - actual_codes)
             
-            logger.info(f"📊 盘中分笔覆盖率检查 ({session}): {len(actual_codes)}/{len(expected_set)} ({len(actual_codes)/len(expected_set)*100:.1f}%)")
+            logger.info(f"📊 盘中分笔覆盖率检查 ({session}, min_ticks={min_count}): {len(actual_codes)}/{len(expected_set)} ({len(actual_codes)/len(expected_set)*100:.1f}%)")
             
             return len(expected_set), len(actual_codes), missing_codes
             

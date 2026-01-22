@@ -55,7 +55,7 @@ async def main():
     parser = argparse.ArgumentParser(description="盘中分笔数据校验与补采")
     parser.add_argument("--session", choices=["noon", "close"], required=True, help="校验时段 (noon: 午休, close: 盘后)")
     parser.add_argument("--dry-run", action="store_true", help="仅检查不补采")
-    parser.add_argument("--threshold", type=float, default=0.95, help="覆盖率阈值 (默认 0.95)")
+    parser.add_argument("--threshold", type=float, default=0.98, help="覆盖率阈值 (默认 0.98)")
     parser.add_argument("--date", type=str, help="指定日期 (YYYYMMDD)，不指定则使用今天")
     
     args = parser.parse_args()
