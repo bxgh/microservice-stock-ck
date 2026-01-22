@@ -48,6 +48,10 @@ RUN if [ "$ENABLE_PROXY" = "true" ]; then \
 # 第二阶段：应用打包
 FROM base as final
 
+# 重申构建参数以在第二阶段使用
+ARG ENABLE_PROXY=true
+ARG PROXY_URL=http://192.168.151.18:3128
+
 # 设置PYTHONPATH
 ENV PYTHONPATH=/app/src
 
@@ -60,8 +64,8 @@ COPY packages/ /packages/
 
 # 设置权限
 USER root
-RUN if [ -f /packages/pytdx-1.72.tar.gz ]; then \
-        pip install --no-cache-dir /packages/pytdx-1.72.tar.gz; \
+RUN if [ "$ENABLE_PROXY" = "true" ]; then \
+        http_proxy=$PROXY_URL https_proxy=$PROXY_URL pip install --no-cache-dir /packages/pytdx-1.72.tar.gz; \
     else \
         pip install --no-cache-dir pytdx; \
     fi && \

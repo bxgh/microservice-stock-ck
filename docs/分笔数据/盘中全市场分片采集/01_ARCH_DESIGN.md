@@ -44,3 +44,10 @@
 *   `node-58-collector`
 *   `node-111-collector`
 这确保了即使汇总到同一个数据库，开发者也能通过 `SELECT hostName()` 审计数据来源。
+
+---
+
+## 5. 自愈层 (Self-Healing Layer)
+为了应对分布式采集中的瞬时故障，系统集成了自动校验与补采机制。详情见 [数据校验 (08_INTRADAY_VALIDATION.md)](08_INTRADAY_VALIDATION.md)。
+- **全局校验**: 定时对比预期总数与分布式表实际总数。
+- **靶向修复**: 仅补采缺失部分，并重新通过分布式表分发。
