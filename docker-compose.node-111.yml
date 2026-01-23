@@ -20,15 +20,15 @@ services:
     environment:
       - PORT=8003
       - HOST=0.0.0.0
-      - TDX_POOL_SIZE=30
-      - MOOTDX_CONCURRENCY=30
+      - TDX_POOL_SIZE=100
+      - MOOTDX_CONCURRENCY=100
       - MOOTDX_FETCH_COUNT=5
       
       # [Standardized Direct Connection Config]
       - TDX_AUTO_DISCOVER=false
       - TDX_BIND_IP=192.168.151.111
       - TDX_HOSTS=59.36.5.11:7709,119.147.212.81:7709,124.71.187.122:7709,218.60.29.136:7709,175.6.5.153:7709,119.29.51.30:7709,175.6.5.154:7709,175.6.5.155:7709,139.9.51.18:7709
-      - LOG_LEVEL=INFO
+      - LOG_LEVEL=DEBUG
       
       # [Redis Standalone Config]
       - REDIS_HOST=192.168.151.41
@@ -59,7 +59,7 @@ services:
       - SERVICE_HOST=127.0.0.1
       - SERVICE_PORT=50051
       - NACOS_SERVER_ADDR=127.0.0.1:8848
-      - LOG_LEVEL=INFO
+      - LOG_LEVEL=DEBUG
       - MOOTDX_API_URL=http://127.0.0.1:8003
       # 网络代理配置
       - HTTP_PROXY=http://192.168.151.18:3128

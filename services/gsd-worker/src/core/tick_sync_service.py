@@ -24,8 +24,7 @@ from redis.asyncio.cluster import RedisCluster, ClusterNode
 from core.task_queue import TickTaskQueue
 from gsd_shared.stock_universe import StockUniverseService
 from gsd_shared.validation.tick_validator import TickValidator
-from core.tick_fetcher import TickFetcher
-from core.tick_writer import TickWriter
+from gsd_shared.tick import TickFetcher, TickWriter
 from core.sync_status import SyncStatusTracker
 
 logger = logging.getLogger(__name__)
@@ -138,7 +137,7 @@ class TickSyncService:
                 clickhouse_client=CHPoolAdapter(self.clickhouse_pool)
             )
             self.validator = TickValidator(self.clickhouse_pool)
-            self.fetcher = TickFetcher(self.http_session, self.mootdx_api_url)
+            self.fetcher = TickFetcher(self.http_session, self.mootdx_api_url, mode=TickFetcher.Mode.HISTORICAL)
             self.writer = TickWriter(self.clickhouse_pool)
             self.tracker = SyncStatusTracker(self.redis_client)
             

@@ -17,6 +17,10 @@ from gsd_shared.stock_universe import StockUniverseService
 
 # 导入项目依赖
 from src.core.scheduling.calendar_service import CalendarService
+from src.core.collector.components.writer import ClickHouseWriter
+
+from src.core.collector.components.snapshot_worker import SnapshotWorker
+from src.core.collector.components.tick_worker import TickWorker
 
 logger = logging.getLogger("IntradayTickCollector")
 CST = pytz.timezone('Asia/Shanghai')
@@ -41,8 +45,8 @@ REDIS_SOCKET_TIMEOUT = 10  # Redis 读写超时 (秒)
 REDIS_MAX_CONNECTIONS = 10  # Redis 连接池最大连接数
 
 # 快照采集配置
-SNAPSHOT_INTERVAL_SECONDS = float(os.getenv("SNAPSHOT_INTERVAL_SECONDS", "3.0"))  # 快照采集间隔
-SNAPSHOT_BATCH_SIZE = int(os.getenv("SNAPSHOT_BATCH_SIZE", "80"))  # 快照API单批最多80只
+SNAPSHOT_INTERVAL_SECONDS = 3.0  # 快照采集间隔
+SNAPSHOT_BATCH_SIZE = int(os.getenv("SNAPSHOT_BATCH_SIZE", "150"))  # 快照API单批大小(增大以减少请求数)
 
 class IntradayTickCollector:
     """
@@ -73,6 +77,12 @@ class IntradayTickCollector:
         # 并发安全锁 (CRITICAL FIX)
         self._buffer_lock = asyncio.Lock()
         
+        # 组件
+        self.writer: Optional[ClickHouseWriter] = None
+
+        self.snapshot_worker: Optional[SnapshotWorker] = None
+        self.tick_worker: Optional[TickWorker] = None
+        
         # 交易日历服务
         self.calendar = CalendarService()
         
@@ -80,16 +90,17 @@ class IntradayTickCollector:
         self.http_session: Optional[aiohttp.ClientSession] = None
         self.clickhouse_pool: Any = None
         self.redis_client: Optional[aioredis.Redis] = None
-        self.semaphore = asyncio.Semaphore(int(os.getenv("CONCURRENCY", str(DEFAULT_CONCURRENCY))))
+        
+        # 并发控制信号量 (CRITICAL: 移出循环以保持全局统计)
+        self.snapshot_sem = asyncio.Semaphore(16)  # 快照并发限制(增大以支持并行)
+        self.tick_sem = asyncio.Semaphore(8)       # 分笔并发限制(适当提升)
         
         # 分片配置
         self.shard_index = SHARD_INDEX
         self.shard_total = SHARD_TOTAL
 
-        # 快照采集相关
-        self.snapshot_batches: List[List[str]] = []
-        self.snapshot_buffer: List[Tuple] = []
 
+        
         # Stock Universe Service
         self.stock_universe = None
                 
@@ -126,13 +137,6 @@ class IntradayTickCollector:
         await self._load_stock_pool()
         
 
-        # 2. 预分批快照采集股票池
-        if self.stock_pool:
-            self.snapshot_batches = [
-                self.stock_pool[i:i + SNAPSHOT_BATCH_SIZE]
-                for i in range(0, len(self.stock_pool), SNAPSHOT_BATCH_SIZE)
-            ]
-            logger.info(f"📸 Prepared {len(self.snapshot_batches)} snapshot batches")
         
         # 3. 初始化 ClickHouse 
         if self.clickhouse_pool is None:
@@ -146,13 +150,41 @@ class IntradayTickCollector:
                 maxsize=20
             )
             logger.info("✅ ClickHouse pool initialized")
+            
+        # 初始化 Writer
+        if self.writer is None:
+            self.writer = ClickHouseWriter(self.clickhouse_pool)
 
-        # 3. 初始化 HTTP session
+        # 4. 初始化 HTTP session (增加连接限制)
         if self.http_session is None:
+            connector = aiohttp.TCPConnector(limit=256, keepalive_timeout=60)
             self.http_session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=30)
+                connector=connector,
+                timeout=aiohttp.ClientTimeout(total=45)
             )
-            logger.info(f"✅ HTTP session initialized (mootdx-api: {self.mootdx_api_url})")
+            logger.info(f"✅ HTTP session initialized (limit=256, mootdx-api: {self.mootdx_api_url})")
+
+        # 初始化 SnapshotWorker
+        if self.snapshot_worker is None and self.stock_pool:
+            self.snapshot_worker = SnapshotWorker(
+                http_session=self.http_session,
+                writer=self.writer,
+                stock_pool=self.stock_pool,
+                semaphore=self.snapshot_sem,
+                mootdx_api_url=self.mootdx_api_url,
+                batch_size=SNAPSHOT_BATCH_SIZE,
+                interval=SNAPSHOT_INTERVAL_SECONDS
+            )
+
+        # 初始化 TickWorker
+        if self.tick_worker is None and self.stock_pool:
+            self.tick_worker = TickWorker(
+                http_session=self.http_session,
+                writer=self.writer,
+                stock_pool=self.stock_pool,
+                semaphore=self.tick_sem,
+                mootdx_api_url=self.mootdx_api_url
+            )
 
     async def _load_stock_pool(self):
         """
@@ -236,7 +268,7 @@ class IntradayTickCollector:
 
     async def poll_stock(self, code: str):
         """采集单只股票并处理"""
-        async with self.semaphore:
+        async with self.tick_sem:
             ticks = await self._fetch_stock_ticks(code)
             if not ticks:
                 return
@@ -270,10 +302,8 @@ class IntradayTickCollector:
                     ))
                     self.fingerprints[code].append(fp)
             
-            if new_rows:
-                # CRITICAL FIX: 使用实例锁保护共享状态
-                async with self._buffer_lock:
-                    self.write_buffer.extend(new_rows)
+            if new_rows and self.writer:
+                await self.writer.add_ticks(new_rows)
                 # logger.debug(f"✅ {code}: Added {len(new_rows)} new ticks")
 
     def _map_direction(self, d: str) -> int:
@@ -281,36 +311,10 @@ class IntradayTickCollector:
         mapping = {"BUY": 0, "SELL": 1, "NEUTRAL": 2}
         return mapping.get(d, 2)
 
-    @retry(
-        retry=retry_if_exception_type(Exception),
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10),
-        reraise=True
-    )
     async def flush_to_clickhouse(self):
-        """批量将数据写入 ClickHouse (P1 FIX: 添加重试机制)"""
-        if not self.write_buffer:
-            return
-
-        # CRITICAL FIX: 使用实例锁保护共享状态
-        async with self._buffer_lock:
-            rows_to_write = self.write_buffer.copy()
-            self.write_buffer.clear()
-
-        try:
-            async with self.clickhouse_pool.acquire() as conn:
-                async with conn.cursor() as cursor:
-                    await cursor.execute(
-                        "INSERT INTO tick_data_intraday (stock_code, trade_date, tick_time, price, volume, amount, direction) VALUES",
-                        rows_to_write
-                    )
-            logger.info(f"💾 Flushed {len(rows_to_write)} ticks to ClickHouse")
-        except Exception as e:
-            logger.error(f"❌ Failed to write to ClickHouse: {e}")
-            # P1 FIX: 失败后数据会被 tenacity 重试,最多3次
-            # 如果3次都失败,数据会记录在日志中,可以后续手动恢复
-            logger.error(f"❌ Lost {len(rows_to_write)} ticks after retry exhausted")
-            raise  # 重新抛出异常以触发 tenacity 重试
+        """批量将数据写入 ClickHouse (委托给 Writer)"""
+        if self.writer:
+            await self.writer.flush()
 
     async def _wait_for_trading(self):
         """非交易时间休眠"""
@@ -338,150 +342,20 @@ class IntradayTickCollector:
             await self.stop()
     
     async def _snapshot_loop(self):
-        """快照采集循环 - 高频 (每 3 秒)"""
-        logger.info("📸 Starting snapshot loop...")
-        
-        while not self._shutdown_event.is_set():
-            if not self._is_trading_time():
-                await asyncio.sleep(60)
-                continue
-            
-            start = asyncio.get_event_loop().time()
-            
-            try:
-                # 批量采集快照
-                await self._collect_snapshots()
-            except Exception as e:
-                logger.error(f"⚠️ Snapshot loop error: {e}")
-            
-            # 保持固定间隔
-            elapsed = asyncio.get_event_loop().time() - start
-            if elapsed < SNAPSHOT_INTERVAL_SECONDS:
-                await asyncio.sleep(SNAPSHOT_INTERVAL_SECONDS - elapsed)
+        """快照采集循环 (委托给 Worker)"""
+        if self.snapshot_worker:
+            await self.snapshot_worker.run(self._shutdown_event, self._is_trading_time)
+        else:
+            logger.warning("⚠️ SnapshotWorker not initialized, skipping snapshot loop")
     
     async def _tick_loop(self):
-        """分笔采集循环 - 常规 (每轮 ~50 秒)"""
-        logger.info("📊 Starting tick loop...")
-        last_flush_time = asyncio.get_event_loop().time()
-
-        while not self._shutdown_event.is_set():
-            if not self._is_trading_time():
-                await self._wait_for_trading()
-                if self._shutdown_event.is_set(): 
-                    break
-                logger.info("⏰ Waking up for trading!")
-
-            round_start = asyncio.get_event_loop().time()
-            
-            # 轮询一轮
-            tasks = [self.poll_stock(code) for code in self.stock_pool]
-            await asyncio.gather(*tasks)
-
-            # 检查刷盘 (使用常量)
-            current_time = asyncio.get_event_loop().time()
-            if len(self.write_buffer) >= FLUSH_THRESHOLD or (current_time - last_flush_time) >= FLUSH_INTERVAL_SECONDS:
-                await self.flush_to_clickhouse()
-                last_flush_time = current_time
-
-            duration = asyncio.get_event_loop().time() - round_start
-            # 目标：每 4-5 秒一轮。如果采集太快，则休眠补齐
-            wait_time = max(0, POLL_INTERVAL_SECONDS - duration)
-            if wait_time > 0:
-                await asyncio.sleep(wait_time)
+        """分笔采集循环 (委托给 Worker)"""
+        if self.tick_worker:
+            await self.tick_worker.run(self._shutdown_event, self._is_trading_time)
+        else:
+            logger.warning("⚠️ TickWorker not initialized, skipping tick loop")
     
-    async def _collect_snapshots(self):
-        """批量采集快照数据"""
-        if not self.snapshot_batches:
-            return
-        
-        all_rows = []
-        today = datetime.now(CST).date()
-        snapshot_time = datetime.now(CST)
-        
-        for batch in self.snapshot_batches:
-            try:
-                # 调用 mootdx-api 的 GET /quotes 接口
-                codes_param = ",".join(batch)
-                url = f"{self.mootdx_api_url}/api/v1/quotes?codes={codes_param}"
-                async with self.http_session.get(
-                    url,
-                    timeout=aiohttp.ClientTimeout(total=10)
-                ) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        for item in data:
-                            row = self._map_snapshot_row(item, today, snapshot_time)
-                            if row:
-                                all_rows.append(row)
-                    else:
-                        logger.warning(f"⚠️ Snapshot API returned {resp.status}")
-            except Exception as e:
-                logger.warning(f"⚠️ Snapshot batch failed: {repr(e)}")
-        
-        # 写入 ClickHouse (snapshot_data_local)
-        if all_rows:
-            try:
-                async with self.clickhouse_pool.acquire() as conn:
-                    async with conn.cursor() as cursor:
-                        await cursor.execute(
-                            """INSERT INTO snapshot_data_local 
-                            (snapshot_time, trade_date, stock_code, stock_name, market,
-                             current_price, open_price, high_price, low_price, pre_close,
-                             bid_price1, bid_volume1, bid_price2, bid_volume2,
-                             bid_price3, bid_volume3, bid_price4, bid_volume4,
-                             bid_price5, bid_volume5, ask_price1, ask_volume1,
-                             ask_price2, ask_volume2, ask_price3, ask_volume3,
-                             ask_price4, ask_volume4, ask_price5, ask_volume5,
-                             total_volume, total_amount, turnover_rate) VALUES""",
-                            all_rows
-                        )
-                logger.info(f"📸 Snapshot: {len(all_rows)} records written")
-            except Exception as e:
-                logger.error(f"❌ Snapshot write failed: {e}")
-    
-    def _map_snapshot_row(self, item: Dict[str, Any], trade_date: Any, snapshot_time: datetime) -> Optional[Tuple]:
-        """将 API 响应映射为 DB 行"""
-        try:
-            raw_code = item.get('code', '')
-            if not raw_code:
-                return None
-                
-            # 确保代码、名称、市场都是字符串类型，避免 ClickHouse 驱动报错 (len 错误)
-            code = str(raw_code).lstrip('sh').lstrip('sz')
-            name = str(item.get('name', ''))
-            market = str(item.get('market', ''))
-            
-            return (
-                snapshot_time,  # snapshot_time
-                trade_date,  # trade_date
-                code,  # stock_code
-                name,  # stock_name
-                market,  # market
-                float(item.get('price', 0)),  # current_price
-                float(item.get('open', 0)),  # open_price
-                float(item.get('high', 0)),  # high_price
-                float(item.get('low', 0)),  # low_price
-                float(item.get('last_close', 0)),  # pre_close
-                # 买五档
-                float(item.get('bid1', 0)), int(item.get('bid_vol1', 0)),
-                float(item.get('bid2', 0)), int(item.get('bid_vol2', 0)),
-                float(item.get('bid3', 0)), int(item.get('bid_vol3', 0)),
-                float(item.get('bid4', 0)), int(item.get('bid_vol4', 0)),
-                float(item.get('bid5', 0)), int(item.get('bid_vol5', 0)),
-                # 卖五档
-                float(item.get('ask1', 0)), int(item.get('ask_vol1', 0)),
-                float(item.get('ask2', 0)), int(item.get('ask_vol2', 0)),
-                float(item.get('ask3', 0)), int(item.get('ask_vol3', 0)),
-                float(item.get('ask4', 0)), int(item.get('ask_vol4', 0)),
-                float(item.get('ask5', 0)), int(item.get('ask_vol5', 0)),
-                # 成交统计
-                int(item.get('vol', 0)),  # total_volume
-                float(item.get('amount', 0)),  # total_amount
-                float(item.get('turnover', 0))  # turnover_rate
-            )
-        except Exception as e:
-            logger.warning(f"⚠️ Failed to map snapshot row: {e}")
-            return None
+
 
     async def stop(self):
         """优雅停止"""
@@ -489,8 +363,9 @@ class IntradayTickCollector:
         self._shutdown_event.set()
         
         # 最后一刷
-        if self.write_buffer:
-            await self.flush_to_clickhouse()
+        # 最后一刷
+        if self.writer:
+            await self.writer.flush()
             
         # 释放资源
         if self.http_session:
@@ -501,6 +376,9 @@ class IntradayTickCollector:
         if self.redis_client:
             await self.redis_client.close()
         
+        if self.writer:
+            await self.writer.close()
+            
         logger.info("✅ IntradayTickCollector stopped")
 
 def setup_signals(collector: IntradayTickCollector):

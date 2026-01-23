@@ -23,8 +23,8 @@ services:
     environment:
       - PORT=8003
       - HOST=0.0.0.0
-      - TDX_POOL_SIZE=50
-      - MOOTDX_CONCURRENCY=50
+      - TDX_POOL_SIZE=100
+      - MOOTDX_CONCURRENCY=100
       - MOOTDX_FETCH_COUNT=5
       # - SOCKS_PROXY=127.0.0.1:8118
       
