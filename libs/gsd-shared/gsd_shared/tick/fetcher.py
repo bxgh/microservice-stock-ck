@@ -77,11 +77,9 @@ class TickFetcher:
         if self.mode == self.Mode.REALTIME:
             return await self._fetch_realtime(clean_code)
         else:
-            is_today = (trade_date is None) or (trade_date == datetime.now(CST).strftime("%Y%m%d"))
-            if is_today:
-                return await self._fetch_historical_matrix(clean_code)
-            else:
-                return await self._fetch_historical_linear(clean_code, trade_date)
+            # Always use Linear Scan to enforce integrity and avoid duplication
+            # The Matrix strategy relied on aggressive deduplication which caused data loss
+            return await self._fetch_linear_scan(clean_code, trade_date)
 
     async def _fetch_realtime(self, code: str) -> List[Dict]:
         """Single request for realtime update"""
@@ -99,50 +97,38 @@ class TickFetcher:
         return []
 
     async def _fetch_historical_matrix(self, code: str) -> List[Dict]:
-        """Matrix search for today's backfill (ensure completeness)"""
-        url = self.api_url + MOOTDX_TICK_ENDPOINT.format(code=code)
-        all_frames = []
-        
-        for start, offset, desc in self.SEARCH_MATRIX:
-            try:
-                params = {"start": start, "offset": offset}
-                async with self.http.get(url, params=params, timeout=12) as resp:
-                    if resp.status != 200: continue
-                    data = await resp.json()
-                    if not data: continue
-                    
-                    all_frames.append(data)
-                    
-                    # Gap check: if we hit 09:25, we might be good
-                    times = [x.get('time', '') for x in data]
-                    if times and min(times) <= self.TARGET_TIME:
-                        break
-            except Exception as e:
-                logger.warning(f"Matrix fetch error {code} [{desc}]: {e}")
-                
-        return self._merge_and_sort(all_frames)
+        """Obsolete: Matrix search (Deprecated due to deduplication issues)"""
+        return await self._fetch_linear_scan(code, None)
 
-    async def _fetch_historical_linear(self, code: str, date: str) -> List[Dict]:
-        """Linear scan for historical dates"""
+    async def _fetch_linear_scan(self, code: str, date: Optional[str]) -> List[Dict]:
+        """Linear scan for full day data (History or Today)"""
         url = self.api_url + MOOTDX_TICK_ENDPOINT.format(code=code)
         all_frames = []
         
         max_depth = 50000
-        step = 2000
+        step = 2000 # TDX standard step
         current_start = 0
-        date_int = int(date)
+        
+        # Prepare params base
+        params_base = {"start": 0, "offset": step}
+        if date:
+            params_base["date"] = int(date)
         
         while current_start < max_depth:
             try:
-                params = {"date": date_int, "start": current_start, "offset": step}
+                params = params_base.copy()
+                params["start"] = current_start
+                
                 async with self.http.get(url, params=params, timeout=15) as resp:
                     if resp.status != 200: break
                     data = await resp.json()
                     if not data: break
                     
+                    # Add batch
                     all_frames.append(data)
                     
-                    # Check if we reached opening time
+                    # Check if we reached opening time (09:25)
+                    # Note: We continue fetching until 09:25 is found to ensure coverage
                     times = [x.get('time', '') for x in data]
                     earliest = min(times) if times else "23:59"
                     
@@ -157,26 +143,15 @@ class TickFetcher:
         return self._merge_and_sort(all_frames)
 
     def _merge_and_sort(self, frames: List[List[Dict]]) -> List[Dict]:
-        """Merge frames, deduplicate (strict), and sort"""
+        """Merge frames and sort. REMOVED aggressive deduplication."""
         if not frames: return []
         
         merged = []
         for f in frames: merged.extend(f)
         
-        seen = set()
-        final_data = []
-        
-        # Consistent Deduplication Logic (same as Deduplicator but local to this batch)
-        for item in merged:
-            vol = item.get('vol', item.get('volume', 0))
-            key = (item.get('time'), item.get('price'), vol)
-            
-            if key not in seen:
-                seen.add(key)
-                final_data.append(item)
-                
-        final_data.sort(key=lambda x: x.get('time', ''))
-        return final_data
+        # Sort by time
+        merged.sort(key=lambda x: x.get('time', ''))
+        return merged
 
     def _clean_code(self, code: str) -> str:
         """Sanitize stock code: remove sh/sz prefixes and dots"""

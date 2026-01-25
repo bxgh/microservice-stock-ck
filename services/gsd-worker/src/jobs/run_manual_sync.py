@@ -9,7 +9,7 @@ import asyncio
 import logging
 import argparse
 from datetime import datetime, timedelta
-import xxhash
+# import xxhash
 import pytz
 from core.tick_sync_service import TickSyncService
 from core.task_logger import TaskLogger
@@ -195,10 +195,8 @@ async def main(
             logger.warning(
                 f"成功 {results['success']}, 失败 {results['failed']}"
             )
-            if results.get("failed_codes"):
-                logger.warning(f"失败/无数据代码: {results['failed_codes']}")
             if results.get("errors"):
-                logger.warning(f"异常详情 (Top 50): {results['errors'][:50]}")
+                logger.warning(f"失败详情 (Top 50): {results['errors'][:50]}")
             return 1 if results["failed"] > results["success"] else 0
             
     except Exception as e:
@@ -253,8 +251,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--concurrency",
         type=int,
-        default=50,
-        help="并发任务数 (默认为 50，优化后)"
+        default=12,
+        help="并发任务数 (默认为 12，优化后)"
     )
     parser.add_argument(
         "--stock-code", "--stock-codes",

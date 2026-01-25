@@ -9,6 +9,14 @@
 | [股票 K 线数据 API](stock_kline_api.md) | 包含日线查询、ClickHouse/MySQL 路由策略、同步接口及 Baostock 代理。 | 2025-12-30 |
 | [腾讯云 Akshare 代理 API](tencent_akshare_api.md) | 包含财务数据、估值数据、人气榜单等内部代理接口说明。 | 2025-12-30 |
 
+## 🛠️ 后台与采集服务 (Background & Collection Services)
+
+虽然本目录主要关注 API 接口，但 `get-stockdata` 还执行以下关键后台功能：
+
+1.  **实时分笔/快照采集 (Intraday Collector)**: 详见 [架构文档: 实时采集器](../architecture/DATA_ACQUISITION_ARCHITECTURE.md#4-实时采集器-intraday-collector)。
+2.  **K 线同步 (K-Line Sync)**: 手动触发与状态监控接口详见 [股票 K 线数据 API](stock_kline_api.md#2-synchronization-api)。
+
+
 ## 文档规范与保存策略 (Preservation Policy)
 
 > [!IMPORTANT]

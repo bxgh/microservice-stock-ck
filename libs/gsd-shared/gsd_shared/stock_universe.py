@@ -1,4 +1,3 @@
-
 import logging
 import asyncio
 import json
@@ -191,12 +190,34 @@ class StockUniverseService:
         return is_valid_a_stock(code)
     
     def _filter_and_normalize(self, raw_codes: List[str]) -> List[str]:
-        """批量标准化并过滤"""
+        """批量标准化并过滤 (增强版: 剔除上证指数)"""
         valid = set()
         for c in raw_codes:
-            norm = self.normalize_code(c)
+            c_str = str(c).strip().upper()
+            
+            # 1. 前置过滤: 上证指数 (000xxx.SH)
+            if '.' in c_str:
+                parts = c_str.split('.')
+                if len(parts[0]) == 6:
+                    code, suffix = parts[0], parts[1]
+                else:
+                    code, suffix = parts[1], parts[0]
+                
+                # 剔除规则: 后缀为SH 且 代码以000开头 (上证指数)
+                if suffix == 'SH' and code.startswith('000'):
+                    continue
+                    
+                # 规则 B: 排除北交所 (BJ)
+                if suffix == 'BJ':
+                    continue
+            
+            # 2. 标准化
+            norm = self.normalize_code(c_str)
+            
+            # 3. 基础格式校验
             if self.is_valid_a_stock(norm):
                 valid.add(norm)
+                
         return sorted(list(valid))
 
     def _shard_filter(self, stocks: List[str], shard_index: int, total: int) -> List[str]:

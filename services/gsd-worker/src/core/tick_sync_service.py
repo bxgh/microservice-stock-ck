@@ -160,16 +160,41 @@ class TickSyncService:
 
     # --- Delegated Methods (Compatible with sync_tick.py) ---
 
+    async def fetch_sync_list(
+        self, 
+        scope: str, 
+        shard_index: Optional[int] = None, 
+        shard_total: Optional[int] = 3,
+        trade_date: Optional[str] = None
+    ) -> List[str]:
+        """
+        根据范围和分片参数获取待同步的股票列表
+        统一从 StockUniverseService 获取，确保名单标准化（去 BJ/去重/排序）
+        """
+        if scope == "all":
+            # Simplify: Always fetch full market list from Universe (Redis/MySQL source)
+            # This ensures we don't depend on K-Line data availability
+            stocks = await self.stock_universe.get_all_a_stocks()
+            
+            # Shard filtering
+            if shard_index is not None and shard_total:
+                return self.stock_universe._shard_filter(stocks, shard_index, shard_total)
+            return stocks
+            
+        else:
+            # 获取范围名单 (通常是配置好的 stock_list)
+            return await self.stock_universe.get_all_a_stocks()
+
     async def get_sharded_stocks(self, shard_index: int) -> List[str]:
+        """Obsolete: Use fetch_sync_list instead"""
         return await self.stock_universe.get_shard_stocks(shard_index)
 
     async def get_stocks_from_kline_or_fallback(self, trade_date: str) -> list:
+        """Obsolete: Use fetch_sync_list instead"""
         return await self.stock_universe.get_today_traded_stocks(trade_date)
 
     async def get_stock_pool(self) -> List[str]:
-        """Get fallback/config list -> now map to get_all_a_stocks or specific config"""
-        # Original logic used hs300_stocks.yaml fallback. 
-        # For simplicity and consistence, we return all A-shares.
+        """Obsolete: Use fetch_sync_list instead"""
         return await self.stock_universe.get_all_a_stocks()
 
     async def push_tasks_to_redis(self, stock_codes: List[str]) -> int:
@@ -240,7 +265,9 @@ class TickSyncService:
         
         semaphore = asyncio.Semaphore(concurrency)
         results_lock = asyncio.Lock()
-        results = {"success": 0, "failed": 0, "skipped": 0, "total_records": 0, "errors": []}
+        semaphore = asyncio.Semaphore(concurrency)
+        results_lock = asyncio.Lock()
+        results = {"success": 0, "failed": 0, "skipped": 0, "total_records": 0, "errors": [], "failed_codes": []}
         
         async def _worker(code: str):
             async with semaphore:
@@ -255,9 +282,11 @@ class TickSyncService:
                             results["skipped"] += 1
                         else:
                             results["failed"] += 1 # count==0 usually means no data or error
+                            results["failed_codes"].append(code)
                 except Exception as e:
                     async with results_lock:
                         results["failed"] += 1
+                        results["failed_codes"].append(code)
                         results["errors"].append(f"{code}: {e}")
                 
                 # Pacing
