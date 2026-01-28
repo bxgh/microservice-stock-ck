@@ -1,10 +1,11 @@
 import logging
+import os
 from datetime import datetime
 from enum import Enum
 from typing import List, Dict, Any, Optional
 import pytz
 
-from .constants import TABLE_INTRADAY_LOCAL, TABLE_HISTORY_LOCAL
+from .constants import TABLE_INTRADAY_LOCAL, TABLE_HISTORY_LOCAL, TABLE_INTRADAY_DIST, TABLE_HISTORY_DIST
 from .utils import clean_stock_code
 
 logger = logging.getLogger(__name__)
@@ -25,12 +26,14 @@ class TickWriter:
         INTRADAY = "intraday"
         HISTORY = "history"
         
-    def __init__(self, clickhouse_pool):
+    def __init__(self, clickhouse_pool, use_distributed: bool = False):
         """
         Args:
             clickhouse_pool: asynch pool instance
+            use_distributed: If True, write to Distributed tables (auto-sharded)
         """
         self.ch_pool = clickhouse_pool
+        self.use_distributed = use_distributed or os.getenv("CLICKHOUSE_USE_DISTRIBUTED", "false").lower() == "true"
 
     async def write(
         self, 
@@ -51,9 +54,9 @@ class TickWriter:
         # 1. Determine Target Table
         today_str = datetime.now(CST).strftime("%Y%m%d")
         if trade_date == today_str:
-            target_table = TABLE_INTRADAY_LOCAL
+            target_table = TABLE_INTRADAY_DIST if self.use_distributed else TABLE_INTRADAY_LOCAL
         else:
-            target_table = TABLE_HISTORY_LOCAL
+            target_table = TABLE_HISTORY_DIST if self.use_distributed else TABLE_HISTORY_LOCAL
             
         try:
             # 2. Transform Data

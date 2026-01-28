@@ -55,7 +55,8 @@ class SnapshotRecorder:
         clickhouse_writer = ClickHouseWriter(
             host=clickhouse_host,
             port=clickhouse_port,
-            database=clickhouse_db
+            database=clickhouse_db,
+            table_name=os.getenv('CLICKHOUSE_SNAPSHOT_TABLE', 'snapshot_data_distribute')
         )
         
         self.writer = DualWriter(parquet_writer, clickhouse_writer)

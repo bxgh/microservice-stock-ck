@@ -75,8 +75,8 @@ class TickSyncService:
                     database="stock_data",
                     user=os.getenv("CLICKHOUSE_USER", "default"),
                     password=os.getenv("CLICKHOUSE_PASSWORD", ""),
-                    minsize=1,
-                    maxsize=5
+                    minsize=5,
+                    maxsize=int(os.getenv("CLICKHOUSE_POOL_SIZE", "60"))
                 )
             
             if self.http_session is None:

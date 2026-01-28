@@ -49,12 +49,13 @@ class SnapshotData:
 class ClickHouseWriter:
     """ClickHouse 数据写入器 (同步版，供 DualWriter ThreadPool 使用)"""
     
-    def __init__(self, host: str, port: int, database: str, user: str = 'default', password: str = ''):
+    def __init__(self, host: str, port: int, database: str, user: str = 'default', password: str = '', table_name: str = 'snapshot_data'):
         self.host = host
         self.port = port
         self.database = database
         self.user = user
         self.password = password
+        self.table_name = table_name
         self.client = None
         self._connect()
         
@@ -95,7 +96,7 @@ class ClickHouseWriter:
             data = [asdict(s) for s in snapshots]
             
             # 执行插入，明确指定字段以避开 created_at (由 CK 自动填充)
-            table = "snapshot_data"
+            table = self.table_name
             columns = [
                 "snapshot_time", "trade_date", "stock_code", "stock_name", "market",
                 "current_price", "open_price", "high_price", "low_price", "pre_close",

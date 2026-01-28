@@ -74,32 +74,36 @@ tasks:
       backoff_seconds: 600
   
   # 盘后分笔数据全量采集 (P1)
-  # Node 41 禁用分笔同步 Cron，由 Node 58/111 执行分片采集
-  - id: daily_tick_sync_shard_0
-    name: 盘后分笔采集与补采(Shard-0)
+  # 单节点高并发采集 (Server 41) - 写入分布式表
+  - id: daily_tick_sync_standalone
+    name: 盘后分笔全量采集 (Standalone)
     type: workflow
-    enabled: false
+    enabled: true
     schedule:
       type: trading_cron
       expression: "0 18 * * 1-5"
+    target:
+      environment:
+        CLICKHOUSE_USE_DISTRIBUTED: "true"
+        CLICKHOUSE_POOL_SIZE: "60"
     workflow:
       - id: collect
-        name: 分片采集
-        command: ["jobs.sync_tick", "--scope", "all", "--shard-index", "0", "--shard-total", "3"]
+        name: 全量采集
+        command: ["jobs.sync_tick", "--scope", "all", "--concurrency", "128"]
       - id: retry
         name: 自动补采
-        command: ["jobs.retry_tick", "--concurrency", "50"]
+        command: ["jobs.retry_tick", "--concurrency", "128"]
         depends_on: [collect]
     retry:
       max_attempts: 2
       backoff_seconds: 600
 
-  # 集群分片采集指令发射器 (P0) - 架构 3.0 核心
-  # 取代各节点独立 Cron，由 Master 统一在 18:00 发出 3 个分片的采集指令
+  # 集群分片采集指令发射器 (P0) - 架构 3.0 核心 (Deprecated)
+  # 已停用，改用单机高并发采集
   - id: distributed_tick_sync
     name: 集群分笔分片采集指令
     type: command_emitter
-    enabled: true
+    enabled: false
     schedule:
       type: trading_cron
       expression: "0 18 * * 1-5"
