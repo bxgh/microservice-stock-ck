@@ -160,21 +160,28 @@ async def main():
         logger.info(f"🚦 审计摘要: 缺失={missing_count}({missing_rate:.2%}), 异常={abnormal_count}({abnormal_rate:.2%})")
 
         # 对接 Node-58 韧性策略
-        if missing_rate < 0.01 and abnormal_count < 50:
-            # Zone 1: Green (< 1%) -> 几乎完美，忽略或微小修复
+        if missing_rate < 0.01 and abnormal_rate < 0.05:
+            # Zone 1: Green -> 几乎完美
             logger.info("🟢 Zone 1 (Green): 质量极佳，无需特殊干预")
             action_recommendation = "NONE"
             
-        elif missing_rate < 0.10:
-            # Zone 2: Yellow (< 10%) -> 局部抖动，触发 AI 核查并精准补采
+        elif missing_rate < 0.10 and abnormal_rate < 0.10:
+            # Zone 2: Yellow -> 局部抖动，触发 AI 核查
             logger.info("🟡 Zone 2 (Yellow): 局部数据异常，启用 AI 审计门禁")
             action_recommendation = "AI_AUDIT"
             
         else:
-            # Zone 3: Red (>= 10%) -> 系统性缺失，触发集群代偿 (Failover)
-            logger.info("🔴 Zone 3 (Red): 集群级数据塌方，启动补偿补采模式")
+            # Zone 3: Red -> 系统性缺失 或 大面积异常
+            logger.info(f"🔴 Zone 3 (Red): 集群级数据塌方 (Missing={missing_rate:.1%}, Abnormal={abnormal_rate:.1%})，启动补偿补采模式")
             action_recommendation = "FAILOVER"
             failover_mode = True
+            
+            # 在 Failover 模式下，异常数据也视为缺失，强制加入补采队列
+            logger.info("🔧 [Failover] 合并异常股票至补采名单...")
+            extra_codes = [item['code'] for item in abnormal_list]
+            missing_list.extend(extra_codes)
+            #这种情况下，abnormal_list 可以清空或者保留作为参考，
+            #但为了下游(stock_data_supplement)能通过 sys_missing 拿到全量，必须 merge。
 
         # 5. 输出结果 (StdOut)
         result = {
