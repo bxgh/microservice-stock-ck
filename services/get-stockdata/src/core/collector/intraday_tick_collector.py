@@ -91,9 +91,11 @@ class IntradayTickCollector:
         self.clickhouse_pool: Any = None
         self.redis_client: Optional[aioredis.Redis] = None
         
-        # 并发控制信号量 (CRITICAL: 移出循环以保持全局统计)
-        self.snapshot_sem = asyncio.Semaphore(16)  # 快照并发限制(增大以支持并行)
-        self.tick_sem = asyncio.Semaphore(8)       # 分笔并发限制(适当提升)
+        # 并发控制信号量
+        # 使用环境变量 CONCURRENCY 配置 (默认 16)
+        concurrency = DEFAULT_CONCURRENCY
+        self.snapshot_sem = asyncio.Semaphore(concurrency) 
+        self.tick_sem = asyncio.Semaphore(concurrency)
         
         # 分片配置
         self.shard_index = SHARD_INDEX
@@ -153,7 +155,9 @@ class IntradayTickCollector:
             
         # 初始化 Writer
         if self.writer is None:
-            self.writer = ClickHouseWriter(self.clickhouse_pool)
+            # Default to DISTRIBUTED table for cluster-wide visibility
+            table_name = os.getenv("CLICKHOUSE_TICK_TABLE", "tick_data_intraday")
+            self.writer = ClickHouseWriter(self.clickhouse_pool, table_name=table_name)
 
         # 4. 初始化 HTTP session (增加连接限制)
         if self.http_session is None:
@@ -358,28 +362,43 @@ class IntradayTickCollector:
 
 
     async def stop(self):
-        """优雅停止"""
-        logger.info("🛑 Stopping IntradayTickCollector...")
+        """发送停止信号 (不释放资源)"""
+        logger.info("🛑 Signal received: Stopping IntradayTickCollector...")
         self._shutdown_event.set()
+
+    async def close(self):
+        """释放资源 (应当在 run() 结束后调用)"""
+        from asynch.pool import Pool as AsynchPool
         
-        # 最后一刷
-        # 最后一刷
+        logger.info("🧹 Cleaning up resources...")
+        
+        # 1. 先关闭 Writer (会触发最后一次 Flush)
         if self.writer:
-            await self.writer.flush()
+            try:
+                await self.writer.close()
+            except Exception as e:
+                logger.error(f"❌ Error closing writer: {e}")
             
-        # 释放资源
+        # 2. 释放资源
         if self.http_session:
             await self.http_session.close()
+            
         if self.clickhouse_pool:
-            self.clickhouse_pool.close()
-            await self.clickhouse_pool.wait_closed()
+            # 检查 pool 是否已被关闭
+            if isinstance(self.clickhouse_pool, AsynchPool) and not self.clickhouse_pool._closed:
+                self.clickhouse_pool.close()
+                await self.clickhouse_pool.wait_closed()
+            elif hasattr(self.clickhouse_pool, 'close'):
+                 self.clickhouse_pool.close()
+                 try:
+                     await self.clickhouse_pool.wait_closed()
+                 except Exception:
+                     pass
+
         if self.redis_client:
             await self.redis_client.close()
-        
-        if self.writer:
-            await self.writer.close()
             
-        logger.info("✅ IntradayTickCollector stopped")
+        logger.info("✅ IntradayTickCollector closed")
 
 def setup_signals(collector: IntradayTickCollector):
     loop = asyncio.get_event_loop()

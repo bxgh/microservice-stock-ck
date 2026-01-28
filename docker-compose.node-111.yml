@@ -104,9 +104,10 @@ services:
       - REDIS_PORT=6379
       - REDIS_PASSWORD=redis123
       # 性能调优参数
-      - CONCURRENCY=64
-      - FLUSH_THRESHOLD=3000
-      - POLL_INTERVAL_SECONDS=3.0
+      - CONCURRENCY=30
+      - SNAPSHOT_BATCH_SIZE=60
+      - FLUSH_THRESHOLD=4000
+      - POLL_INTERVAL_SECONDS=4.0
       - POLL_OFFSET=200
       - PYTHONPATH=/app:/app/libs/gsd-shared
       - PYTHONUNBUFFERED=1

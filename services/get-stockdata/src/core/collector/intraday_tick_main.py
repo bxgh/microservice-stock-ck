@@ -26,7 +26,7 @@ async def main():
     except Exception as e:
         logger.critical(f"💥 Collector crashed unexpectedly: {e}", exc_info=True)
     finally:
-        await collector.stop()
+        await collector.close()
 
 if __name__ == "__main__":
     try:
