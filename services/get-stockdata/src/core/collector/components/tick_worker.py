@@ -150,15 +150,19 @@ class TickWorker:
                 if new_rows:
                     await self.writer.add_ticks(new_rows)
                     
-                    # Update Offset
-                    count = len(ticks) # Use total retrieved count, not just filtered ones (as fetch is based on raw index)
-                    self.offsets[clean_code] = start_offset + count
+                    # Update Offset only after writer accepts data
+                    count = len(ticks) # Use total retrieved count, not just filtered ones
+                    new_offset = start_offset + count
+                    self.offsets[clean_code] = new_offset
                     
-                    # Persist to Redis (Fire and Forget)
+                    # Persist to Redis (Sync await for reliability)
                     if self.redis:
-                        today_str = today.strftime('%Y%m%d')
-                        key = f"tick:offset:{today_str}:{clean_code}"
-                        asyncio.create_task(self.redis.set(key, self.offsets[clean_code], ex=86400)) # 24h expiry
+                        try:
+                            today_str = today.strftime('%Y%m%d')
+                            key = f"tick:offset:{today_str}:{clean_code}"
+                            await self.redis.set(key, new_offset, ex=86400) # 24h expiry
+                        except Exception as re:
+                            logger.error(f"❌ Redis offset update failed for {clean_code}: {re}")
                     
             except Exception as e:
                 # logger.warning(f"⚠️ Poll {code} failed: {repr(e)[:50]}")
