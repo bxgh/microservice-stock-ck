@@ -21,13 +21,9 @@
 
 | 任务 ID | 任务名称 | 调度源头 | 调度规律 | 预计时间 | 说明 |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `daily_stock_collection` | **每日代码采集** | **Orchestrator** | `45 8 * * *` | 08:45 | 拉取全市场股票清单 |
+| `trigger_pre_market_workflow` | **盘前 4.0 准备管线** | **Orchestrator** | `45 8 * * 1-5` | 08:45 | 自动触发 `pre_market_prep_4.0` (采集 -> 门禁 -> 预热) |
 | `tick_data_migrate` | **分笔数据归档** | **Orchestrator** | `0 9 * * 1-5` | 09:00 | 归档并清空当日表 |
-| `pre_market_gate` | **盘前质量门禁** | **Orchestrator** | `15 9 * * 1-5` | 09:15 | 名单校验与准入 |
-| `daily_cache_warmup` | **缓存预热** | **Orchestrator** | `20 9 * * 1-5` | 09:20 | 提升 API 速度 |
-| `daily_kline_sync` | **K线每日同步** | **Orchestrator** | `30 17 * * *` | 17:30 | 必须 17:30 后启动 (上游限制) |
-| `distributed_tick_sync` | **集群分笔分片采集指令** | **Orchestrator** | `0 18 * * 1-5` | 18:00 | **架构 3.0**: 统一发射指令至 MySQL，各分片认领执行 |
-| `post_market_gate` | **盘后大门禁** | **Orchestrator** | `0 19 * * 1-5` | 19:00 | 深度审计与触发修复 |
+| `trigger_post_market_workflow` | **盘后 4.0 自愈管线** | **Orchestrator** | `30 17 * * 1-5` | 17:30 | 自动触发 `distributed_tick_sync_4.0` (同步 -> 审计 -> 修复) |
 | `daily_strategy_scan` | **每日策略扫描** | **Orchestrator** | `30 20 * * 1-5` | 20:30 | **必须**在数据完整性校验后执行 |
 | `daily_db_backup` | **数据库备份** | **Orchestrator** | `0 3 * * *` | 03:00 | 核心数据备份 |
 | `weekly_log_cleanup` | **日志清理** | **Orchestrator** | `0 2 * * 0` | 周日 02:00 | 清理旧日志 |

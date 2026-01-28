@@ -1,0 +1,28 @@
+workflow:
+  id: pre_market_prep_4.0
+  name: "Pre-Market Preparation Pipeline"
+  version: "1.0"
+  global_context:
+    target_date: "FAIL_TEST_LLM"
+  
+  steps:
+    - id: fetch_stock_list
+      task_id: daily_stock_collection
+      name: "盘前股票清单采集"
+      type: docker
+      command: ["jobs.daily_stock_collection"]
+      params:
+        date: "{{target_date}}"
+      retry_policy: agentic
+      max_attempts: 3
+        
+    - id: gate_1_check
+      task_id: pre_market_gate
+      name: "Gate-1: 盘前准入校验"
+      type: docker
+      depends_on: ["fetch_stock_list"]
+      command: ["jobs.pre_market_gate"]
+      params:
+        date: "{{target_date}}"
+      retry_policy: agentic
+      max_attempts: 2

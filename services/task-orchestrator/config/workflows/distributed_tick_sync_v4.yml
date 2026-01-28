@@ -1,0 +1,51 @@
+workflow:
+  id: distributed_tick_sync_4.0
+  name: "Distributed Tick Data Sync with AI Recovery"
+  version: "1.2"
+  global_context:
+    target_date: "20260125"
+  
+  steps:
+    - id: fetch_stock_list
+      task_id: daily_stock_collection
+      name: "获取股票列表"
+      type: docker
+      command: ["python", "-m", "jobs.daily_stock_collection"]
+      params:
+        date: "{{target_date}}"
+      outputs:
+        - name: stock_count
+          path: "$.stats.total"
+        
+    - id: sync_shard_0
+      task_id: collect_tick_sharded
+      name: "同步分片 0"
+      type: docker
+      depends_on: ["fetch_stock_list"]
+      command: ["python", "-m", "jobs.sync_kline"]
+      params:
+        shard_index: 0
+        date: "{{target_date}}"
+      retry_policy: agentic
+      max_attempts: 3
+
+    - id: sync_shard_1
+      task_id: collect_tick_sharded
+      name: "同步分片 1"
+      type: docker
+      depends_on: ["fetch_stock_list"]
+      command: ["python", "-m", "jobs.sync_kline"]
+      params:
+        shard_index: 1
+        date: "{{target_date}}"
+      retry_policy: agentic
+      max_attempts: 3
+
+    - id: post_sync_audit
+      task_id: post_market_gate
+      name: "同步后审计"
+      type: docker
+      depends_on: ["sync_shard_0", "sync_shard_1"]
+      command: ["python", "-m", "jobs.post_market_gate"]
+      params:
+        date: "{{target_date}}"
