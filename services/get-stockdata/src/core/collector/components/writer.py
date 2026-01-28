@@ -25,14 +25,16 @@ class ClickHouseWriter:
     - 批量写入 ClickHouse
     """
     
-    def __init__(self, pool: Any):
+    def __init__(self, pool: Any, table_name: str = "tick_data_intraday_local"):
         """
         初始化 Writer
         
         Args:
             pool: asynch ClickHouse 连接池
+            table_name: 写入的目标表名 (local or distributed)
         """
         self.pool = pool
+        self.table_name = table_name
         self._write_buffer: List[Tuple] = []
         self._buffer_lock = asyncio.Lock()
         self._last_flush_time = asyncio.get_running_loop().time()
@@ -125,11 +127,11 @@ class ClickHouseWriter:
             async with self.pool.acquire() as conn:
                 async with conn.cursor() as cursor:
                     await cursor.execute(
-                        """INSERT INTO tick_data_intraday_local 
+                        f"""INSERT INTO {self.table_name} 
                         (stock_code, trade_date, tick_time, price, volume, amount, direction) VALUES""",
                         rows_to_write
                     )
-            logger.info(f"💾 Flushed {len(rows_to_write)} ticks to ClickHouse")
+            logger.info(f"💾 Flushed {len(rows_to_write)} ticks to ClickHouse ({self.table_name})")
         except Exception as e:
             logger.error(f"❌ Tick write failed: {e}\n{traceback.format_exc()}")
             # 回滚缓冲区 (如果需要严格不丢数据)
