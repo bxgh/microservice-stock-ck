@@ -45,8 +45,10 @@ class CloudSyncService:
     async def initialize(self):
         """初始化 HTTP 客户端"""
         if not self.client:
+            # httpx >= 0.20.0 使用 proxy 参数替代 proxies
+            proxy = self.http_proxy or self.https_proxy
             self.client = httpx.AsyncClient(
-                proxies=self.proxies,
+                proxy=proxy,
                 timeout=30.0,
                 trust_env=True
             )

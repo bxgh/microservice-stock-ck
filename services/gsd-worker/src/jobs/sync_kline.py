@@ -42,22 +42,36 @@ async def main(mode: str = 'adaptive', shard_index: int = None, date: str = None
     
     task_logger = TaskLogger(service.mysql_pool)
     
+    from core.job_context import job_ctx
+    
     try:
         # 优先处理指定日期同步（现在统一使用智能同步）
         if date:
             logger.info(f"🔧 收到日期参数 {date}，使用智能自愈同步（自动检测并修复不一致数据）")
         
         # 统一使用智能增量同步（自带自愈功能）
-        await service.sync_smart_incremental()
+        stats = await service.sync_smart_incremental()
         
         # 同步复权因子
         await service.sync_adjust_factors()
         
         logger.info("✅ K线同步任务完成")
+        
+        # Report structured output for Agentic Workflow
+        job_ctx.update_output({
+            "status": "success",
+            "stats": stats if isinstance(stats, dict) else {"processed": True},
+            "finish_time": datetime.now().isoformat()
+        })
         return 0
     except Exception as e:
         logger.error(f"❌ K线同步任务失败: {e}", exc_info=True)
         duration = (datetime.now() - start_time).total_seconds()
+        
+        # Report failure details for AI diagnosis
+        job_ctx.set_output("error", str(e))
+        job_ctx.set_output("status", "failed")
+        
         try:
             await task_logger.log_execution(
                 "kline_daily_sync", 
@@ -71,6 +85,7 @@ async def main(mode: str = 'adaptive', shard_index: int = None, date: str = None
             logger.error(f"无法写入失败日志: {log_err}")
         return 1
     finally:
+        job_ctx.flush_output()
         await service.close()
 
 
