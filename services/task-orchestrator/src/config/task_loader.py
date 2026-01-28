@@ -7,6 +7,7 @@
 import os
 import yaml
 import logging
+import re
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field, validator
 from enum import Enum
@@ -27,6 +28,7 @@ class TaskType(str, Enum):
     HTTP = "http"
     WORKFLOW = "workflow"
     COMMAND_EMITTER = "command_emitter"
+    WORKFLOW_TRIGGER = "workflow_trigger"
 
 
 class ScheduleConfig(BaseModel):
@@ -77,7 +79,7 @@ class TaskDefinition(BaseModel):
     name: str
     type: TaskType
     enabled: bool = True
-    schedule: ScheduleConfig
+    schedule: Optional[ScheduleConfig] = None
     target: Optional[Dict[str, Any]] = None
     workflow: Optional[List[WorkflowStep]] = None
     dependencies: Optional[List[str]] = None
@@ -171,8 +173,6 @@ class TaskLoader:
             "${MYSQL_HOST}" -> "127.0.0.1"
             "${MYSQL_HOST:-127.0.0.1}" -> "127.0.0.1" (如果未设置)
         """
-        import re
-        
         # 匹配 ${VAR_NAME} 或 ${VAR_NAME:-default}
         pattern = r'\$\{([^}:]+)(?::-([^}]*))?\}'
         

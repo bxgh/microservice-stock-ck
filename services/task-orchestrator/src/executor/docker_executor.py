@@ -15,6 +15,7 @@ class DockerExecutor:
                    command: List[str], 
                    environment: Optional[Dict[str, str]] = None,
                    volumes: Optional[Dict[str, Any]] = None,
+                   input_context: Optional[str] = None,
                    name_suffix: str = "") -> str:
         """
         Run gsd-worker container
@@ -69,18 +70,22 @@ class DockerExecutor:
                 "REDIS_PASSWORD": settings.REDIS_PASSWORD,
                 "REDIS_CLUSTER": str(settings.REDIS_CLUSTER).lower(),
                 "MOOTDX_API_URL": settings.WORKER_MOOTDX_API_URL,
-                "PYTHONPATH": "/app/src:/app/libs/gsd-shared",
-                "GSD_REDIS_URL": f"redis://{':' + settings.REDIS_PASSWORD + '@' if settings.REDIS_PASSWORD else ''}{settings.REDIS_HOST}:{settings.REDIS_PORT}"
+                "GSD_REDIS_URL": f"redis://{':' + settings.REDIS_PASSWORD + '@' if settings.REDIS_PASSWORD else ''}{settings.REDIS_HOST}:{settings.REDIS_PORT}",
+                "GSD_INPUT_CONTEXT": input_context or "{}"
             })
+            
+            # Ensure PYTHONPATH includes gsd-agent if mapped
+            env["PYTHONPATH"] = "/app/src:/app/libs/gsd-shared:/app/libs/gsd-agent"
             
             # Prepare volumes mount
             vols = volumes
             if not vols:
                 vols = {
-                    f'{settings.BASE_DIR}/data/gsd-worker': {'bind': '/app/data', 'mode': 'rw'},
-                    f'{settings.BASE_DIR}/libs/gsd-shared': {'bind': '/app/libs/gsd-shared', 'mode': 'ro'},
-                    f'{settings.BASE_DIR}/services/gsd-worker/config': {'bind': '/app/config', 'mode': 'ro'},
-                    f'{settings.BASE_DIR}/services/gsd-worker/src': {'bind': '/app/src', 'mode': 'ro'} # Added src!
+                    f'{settings.HOST_BASE_DIR}/data/gsd-worker': {'bind': '/app/data', 'mode': 'rw'},
+                    f'{settings.HOST_BASE_DIR}/libs/gsd-shared': {'bind': '/app/libs/gsd-shared', 'mode': 'ro'},
+                    f'{settings.HOST_BASE_DIR}/libs/gsd-agent/src': {'bind': '/app/libs/gsd-agent', 'mode': 'ro'},
+                    f'{settings.HOST_BASE_DIR}/services/gsd-worker/config': {'bind': '/app/config', 'mode': 'ro'},
+                    f'{settings.HOST_BASE_DIR}/services/gsd-worker/src': {'bind': '/app/src', 'mode': 'ro'}
                 }
 
             container = self.client.containers.run(
@@ -92,7 +97,8 @@ class DockerExecutor:
                 network=settings.WORKER_NETWORK if settings.WORKER_NETWORK != "host" else None,
                 name=container_name,
                 volumes=vols,
-                auto_remove=False  # Keep container for log inspection
+                auto_remove=False,  # Keep container for log inspection
+                tty=True            # Use TTY to get clean logs (no 8-byte headers)
             )
             
             logger.info(f"✅ Started container {container.short_id} ({container.name})")

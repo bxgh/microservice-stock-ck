@@ -68,8 +68,8 @@ async def list_tasks():
             id=task_def.id,
             name=task_def.name,
             enabled=task_def.enabled,
-            schedule_type=task_def.schedule.type.value,
-            schedule_expression=task_def.schedule.expression or "",
+            schedule_type=task_def.schedule.type.value if task_def.schedule else "workflow",
+            schedule_expression=task_def.schedule.expression if task_def.schedule else "",
             next_run_time=next_run,
             last_run_status=None  # TODO: 从数据库查询
         ))
@@ -98,8 +98,8 @@ async def get_task(task_id: str):
         id=task_def.id,
         name=task_def.name,
         enabled=task_def.enabled,
-        schedule_type=task_def.schedule.type.value,
-        schedule_expression=task_def.schedule.expression or "",
+        schedule_type=task_def.schedule.type.value if task_def.schedule else "workflow",
+        schedule_expression=task_def.schedule.expression if task_def.schedule else "",
         next_run_time=next_run
     )
 

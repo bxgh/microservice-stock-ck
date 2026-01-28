@@ -19,6 +19,14 @@ class Settings(BaseSettings):
             return env_base
         return os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../.."))
     
+    @property
+    def HOST_BASE_DIR(self) -> str:
+        """
+        The project root path ON THE HOST machine. 
+        Used for Docker volume mounting because the Docker daemon runs on the host.
+        """
+        return os.getenv("ORCHESTRATOR_HOST_BASE_DIR", self.BASE_DIR)
+    
     # Docker
     DOCKER_HOST: str = "unix:///var/run/docker.sock"
     WORKER_IMAGE: str = "gsd-worker:latest"
@@ -53,6 +61,12 @@ class Settings(BaseSettings):
     MARKET_CLOSE_TIME: str = "15:00"
     SYNC_START_TIME: str = "15:05"  # Start slightly after close
     
+    # LLM settings
+    DEEPSEEK_API_KEY: Optional[str] = os.getenv("DEEPSEEK_API_KEY")
+    SILICONFLOW_API_KEY: Optional[str] = os.getenv("SILICONFLOW_API_KEY")
+    OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")
+    LLM_DEFAULT_PROVIDER: str = "deepseek"
+    
     # Notifications
     NOTIFIER_WEBHOOK_URL: Optional[str] = None
     NOTIFIER_FEEDBACK_BOT_URL: Optional[str] = None # For interactive feedback later
@@ -60,6 +74,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_prefix = "ORCHESTRATOR_"
+        extra = "allow"
     
     # Orchestrator MySQL (for task logs)
     MYSQL_HOST: str = "127.0.0.1"

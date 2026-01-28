@@ -1,7 +1,8 @@
 import asyncio
 import logging
-import json
 import os
+import re
+import json
 from datetime import datetime
 import aiomysql
 from typing import Optional
@@ -60,13 +61,17 @@ class CommandPoller:
         # 如果当前 mysql_pool 连接的是本地库，则需要使用不同的连接或确保该池可访问云端库(通过隧道)
         # 根据设计，task-orchestrator 应连接到云端库 (通过 36301 端口隧道)
         
+        tasks_count = len(self.task_config.tasks)
+        task_ids = [t.id for t in self.task_config.tasks]
+        logger.info(f"🔎 CommandPoller checking for tasks... (Count: {tasks_count}, IDs: {task_ids})")
+        
         async with self.mysql_pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cursor:
                 # 1. 获取针对当前分片的 PENDING 命令 (FOR UPDATE 锁行)
                 if self.shard_id is None:
                     # 主控节点: 处理全局任务 (无 shard_id/shard_index) 或 Shard 0 任务
                     sql = """
-                        SELECT id, task_id, params 
+                        SELECT id, run_id, task_id, params, input_context 
                         FROM alwaysup.task_commands 
                         WHERE status = 'PENDING' 
                           AND (
@@ -81,7 +86,7 @@ class CommandPoller:
                 else:
                     # 远程分片节点: 仅处理匹配自己 id 的任务
                     sql = """
-                        SELECT id, task_id, params 
+                        SELECT id, run_id, task_id, params, input_context 
                         FROM alwaysup.task_commands 
                         WHERE status = 'PENDING' 
                           AND (JSON_EXTRACT(params, '$.shard_id') = %s
@@ -97,8 +102,10 @@ class CommandPoller:
                     return
                 
                 cmd_id = cmd['id']
+                run_id = cmd.get('run_id')
                 task_id = cmd['task_id']
                 params_json = cmd['params']
+                input_ctx_json = cmd.get('input_context')
                 
                 params = {}
                 if params_json:
@@ -109,6 +116,13 @@ class CommandPoller:
                             params = params_json
                     except Exception as e:
                         logger.warning(f"解析参数失败 #{cmd_id}: {e}")
+
+                input_ctx = "{}"
+                if input_ctx_json:
+                    if isinstance(input_ctx_json, str):
+                        input_ctx = input_ctx_json
+                    else:
+                        input_ctx = json.dumps(input_ctx_json)
                 
                 logger.info(f"⚡ 收到命令 #{cmd_id}: {task_id} params={params}")
 
@@ -178,13 +192,15 @@ class CommandPoller:
                 # 3. 执行任务
                 status = "DONE"
                 result = "SUCCESS"
+                output_context = {}
                 
                 try:
                     # 查找任务定义
+                    logger.info(f"🔍 CommandPoller looking for task_id: '{task_id}' (length: {len(task_id)})")
                     task_def = next((t for t in self.task_config.tasks if t.id == task_id), None)
                     if not task_def:
                         all_ids = [t.id for t in self.task_config.tasks]
-                        logger.error(f"❌ 任务 {task_id} 未找到. 当前可用任务: {all_ids}")
+                        logger.error(f"❌ 任务 '{task_id}' 未找到 in {all_ids}")
                         raise ValueError(f"任务 {task_id} 未在本地注册. 可用任务: {all_ids}")
 
                     # 如果是 Docker 任务且有参数，使用 DockerExecutor 动态执行
@@ -217,6 +233,9 @@ class CommandPoller:
                                     else:
                                         # 其他列表默认转 JSON
                                         cmd_list.append(json.dumps(v))
+                                elif isinstance(v, dict):
+                                    # 字典统一转 JSON
+                                    cmd_list.append(json.dumps(v))
                                 else:
                                     cmd_list.append(str(v))
                         
@@ -233,7 +252,7 @@ class CommandPoller:
                                 if len(parts) >= 2:
                                     host_path = parts[0]
                                     if host_path.startswith('.'):
-                                        host_path = os.path.join(settings.BASE_DIR, host_path.lstrip('./'))
+                                        host_path = os.path.join(settings.HOST_BASE_DIR, host_path.lstrip('./'))
                                     volumes_config[host_path] = {'bind': parts[1], 'mode': parts[2] if len(parts) > 2 else 'rw'}
 
                         task_vols = task_def.target.get('volumes', [])
@@ -242,15 +261,17 @@ class CommandPoller:
                             if len(parts) >= 2:
                                 host_path = parts[0]
                                 if host_path.startswith('.'):
-                                    host_path = os.path.join(settings.BASE_DIR, host_path.lstrip('./'))
+                                    host_path = os.path.join(settings.HOST_BASE_DIR, host_path.lstrip('./'))
                                 volumes_config[host_path] = {'bind': parts[1], 'mode': parts[2] if len(parts) > 2 else 'rw'}
 
+                        output_context = {}
                         cid = None
                         try:
                             cid = executor.run_worker(
                                 command=cmd_list,
                                 environment=task_def.target.get('environment'),
                                 volumes=volumes_config,
+                                input_context=input_ctx,
                                 name_suffix=f"adhoc-{cmd_id}"
                             )
                             
@@ -259,14 +280,40 @@ class CommandPoller:
                             exit_code = wait_res.get('StatusCode', 1)
                             
                             # 获取日志
+                            output_context = {}
+                            logs = "" # [Fix] 确保 logs 变量始终被定义
                             try:
                                 container = self.docker_client.containers.get(cid)
-                                logs = container.logs().decode('utf-8')[-2000:] 
+                                full_logs = container.logs().decode('utf-8')
+                                logs = full_logs[-2000:] 
+
+                                # 尝试从日志中提取结构化输出 (n8n 风格)
+                                # 寻找格式为: GSD_OUTPUT_JSON: {...}
+                                marker = "GSD_OUTPUT_JSON:"
+                                if marker in full_logs:
+                                    try:
+                                        start_idx = full_logs.find(marker) + len(marker)
+                                        content = full_logs[start_idx:].strip()
+                                        # 寻找第一个 { 和最后一个 }
+                                        first_brace = content.find('{')
+                                        last_brace = content.rfind('}')
+                                        if first_brace != -1 and last_brace != -1:
+                                            json_str = content[first_brace:last_brace+1]
+                                            # 清理不可见字符 (如 \r, \n 或 Docker 混合流头部)
+                                            # 只保留打印字符和必要的空白
+                                            import re
+                                            json_str = re.sub(r'[\x00-\x1F\x7F-\x9F]', '', json_str)
+                                            output_context = json.loads(json_str)
+                                            logger.info(f"✨ 捕获到结构化输出 (长度: {len(json_str)})")
+                                    except Exception as e:
+                                        logger.warning(f"解析结构化输出失败: {e}. JSON 长度: {len(json_str) if 'json_str' in locals() else 0}")
                             except Exception as e:
-                                logs = f"无法获取日志: {e}"
+                                logs = f"系统捕获日志异常: {e}"
                                 
                             if exit_code != 0:
-                                raise Exception(f"容器退出码 {exit_code}.\nLogs:\n{logs}")
+                                # Prepare error context for AI diagnosis
+                                output_context["error_logs"] = logs
+                                raise Exception(f"容器退出码 {exit_code}")
                                 
                             result = f"Success (Ad-hoc). Logs tail:\n{logs[-500:]}"
                         finally:
@@ -285,16 +332,21 @@ class CommandPoller:
                             
                         self.scheduler.modify_job(task_id, next_run_time=datetime.now())
                         result = "Triggered via Scheduler (Params ignored)"
+                        output_context = {}
                         
                 except Exception as e:
                     status = "FAILED"
                     result = str(e)
+                    # Preserve existing output_context (like error_logs)
+                    if not output_context:
+                        output_context = {}
+                    output_context["error"] = str(e)
                     logger.error(f"❌ 命令 #{cmd_id} 执行失败: {e}")
                 
                 # [Fix] 移除结果中的 4字节 UTF-8 字符 (如 emoji)，防止 utf8 字符集的 MySQL 报错
-                import re
                 try:
                     # 匹配任何非 BMP 字符 (U+10000 及以上)
+                    import re
                     non_bmp = re.compile(r'[^\u0000-\uFFFF]')
                     result = non_bmp.sub('', result)
                 except Exception as e:
@@ -302,8 +354,8 @@ class CommandPoller:
 
                 # 4. 更新结果
                 await cursor.execute(
-                    "UPDATE alwaysup.task_commands SET status=%s, result=%s WHERE id=%s",
-                    (status, result, cmd_id)
+                    "UPDATE alwaysup.task_commands SET status=%s, result=%s, output_context=%s WHERE id=%s",
+                    (status, result, json.dumps(output_context), cmd_id)
                 )
                 await conn.commit()
 

@@ -57,6 +57,14 @@ RUN if [ "$ENABLE_PROXY" = "true" ]; then \
         pip install -e /tmp/gsd-shared; \
     fi
 
+# 安装 gsd-agent
+COPY libs/gsd-agent /tmp/gsd-agent
+RUN if [ "$ENABLE_PROXY" = "true" ]; then \
+        http_proxy=$PROXY_URL https_proxy=$PROXY_URL pip install -e /tmp/gsd-agent; \
+    else \
+        pip install -e /tmp/gsd-agent; \
+    fi
+
 # 复制配置和迁移文件
 COPY services/task-orchestrator/config/ ./config/
 COPY services/task-orchestrator/migrations/ ./migrations/

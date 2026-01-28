@@ -17,6 +17,8 @@ from config.task_loader import TaskLoader, TaskConfig, ScheduleType, TaskDefinit
 from core.logger_service import TaskLogger
 from core.dag_engine import DAGEngine, Workflow, Task as DagTask
 from executor.docker_executor import DockerExecutor
+from core.flow_controller import FlowController
+from gsd_agent.core import SmartDecisionEngine
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -28,6 +30,7 @@ docker_client = None
 mysql_pool = None
 task_logger = None
 task_config: TaskConfig = None
+flow_controller = None
 
 async def auto_migrate():
     """启动时自动执行数据库迁移"""
@@ -36,36 +39,53 @@ async def auto_migrate():
     try:
         async with mysql_pool.acquire() as conn:
             async with conn.cursor() as cursor:
-                # 检查表是否存在
-                await cursor.execute(
-                    "SELECT COUNT(*) FROM information_schema.tables "
-                    "WHERE table_schema = %s AND table_name = 'task_execution_logs'",
-                    (settings.MYSQL_DATABASE,)
-                )
-                result = await cursor.fetchone()
+                # 1. Ensure migrations_history table exists
+                await cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS `alwaysup`.`migrations_history` (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        migration_name VARCHAR(255) UNIQUE NOT NULL,
+                        applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
                 
-                if result[0] == 0:
-                    logger.info("📝 Creating task_execution_logs table...")
+                # 2. Get list of all SQL files in migrations folder
+                migrations_dir = Path(__file__).parent.parent / "migrations"
+                sql_files = sorted(list(migrations_dir.glob("*.sql")))
+                
+                for migration_file in sql_files:
+                    migration_name = migration_file.name
                     
-                    # 读取迁移SQL文件
-                    migration_file = Path(__file__).parent.parent / "migrations" / "001_task_logs.sql"
+                    # Check if already applied
+                    await cursor.execute(
+                        "SELECT id FROM alwaysup.migrations_history WHERE migration_name = %s",
+                        (migration_name,)
+                    )
+                    if await cursor.fetchone():
+                        continue
+                        
+                    logger.info(f"📝 Applying migration: {migration_name}...")
                     with open(migration_file, 'r', encoding='utf-8') as f:
                         sql_content = f.read()
                     
-                    # 分割并执行SQL语句
+                    # Split and execute
                     statements = [s.strip() for s in sql_content.split(';') if s.strip() and not s.strip().startswith('--')]
-                    
                     for stmt in statements:
-                        if stmt:
-                            await cursor.execute(stmt)
+                        await cursor.execute(stmt)
                     
+                    # Mark as applied
+                    await cursor.execute(
+                        "INSERT INTO alwaysup.migrations_history (migration_name) VALUES (%s)",
+                        (migration_name,)
+                    )
                     await conn.commit()
-                    logger.info("✓ Database migration completed")
-                else:
-                    logger.info("✓ Database schema up to date")
+                    logger.info(f"✓ Migration {migration_name} applied")
+                
+                logger.info("✓ Database schema is up to date")
     
     except Exception as e:
         logger.error(f"❌ Migration failed: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         raise
 
 # --- Generic Runners ---
@@ -162,7 +182,7 @@ class GenericTaskRunner:
             "CLICKHOUSE_DATABASE": settings.WORKER_CLICKHOUSE_DATABASE,
             "MOOTDX_API_URL": settings.WORKER_MOOTDX_API_URL,
             "TZ": settings.TIMEZONE,
-            "PYTHONPATH": "/app/src:/app/libs/gsd-shared"
+            "PYTHONPATH": "/app/src:/app/libs/gsd-shared:/app/libs/gsd-agent"
         })
         # 2. Override with task-specific environment variables
         task_env = task.target.get('environment')
@@ -197,6 +217,12 @@ class GenericTaskRunner:
                 volumes_config[host_path] = {'bind': parts[1], 'mode': parts[2] if len(parts) > 2 else 'rw'}
 
         logger.info(f"▶️ Executing Docker task: {task.name} ({image}) net={network_mode} vols={len(volumes_config)}")
+        
+        # Ensure gsd-agent is mounted if it exists on host
+        agent_path = os.path.join(settings.BASE_DIR, "libs/gsd-agent")
+        if os.path.exists(agent_path):
+            volumes_config[agent_path] = {'bind': '/app/libs/gsd-agent', 'mode': 'ro'}
+
         try:
             container = docker_client.containers.run(
                 image=image,
@@ -337,6 +363,11 @@ async def register_jobs() -> None:
         
         # 注册所有任务
         for task_def in task_config.tasks:
+            # 0. Skip workflow-managed tasks (no schedule)
+            if not task_def.schedule:
+                logger.info(f"  ✓ Loaded Definition: {task_def.name} (Workflow Managed)")
+                continue
+
             # 1. 创建触发器
             trigger = None
             if task_def.schedule.type == ScheduleType.TRADING_CRON:
@@ -388,6 +419,67 @@ async def register_jobs() -> None:
                         await GenericTaskRunner.run_command_emitter_task(t)
                     job_func = emitter_wrapper
                     logger.info(f"  • {task_def.id}: Using Generic Command Emitter")
+
+                elif task_def.type == TaskType.WORKFLOW_TRIGGER:
+                    async def trigger_wrapper(t=task_def):
+                        if not flow_controller:
+                            logger.error("❌ FlowController not initialized")
+                            return
+                        
+                        workflow_id = t.target.get('workflow_id')
+                        logger.info(f"⚡ Triggering Workflow: {workflow_id} (Task: {t.name})")
+                        
+                        # Load definition from DB or file? 
+                        # Ideally FlowController should have loaded them. 
+                        # For now provided workflow_id assumes it's registered in DB.
+                        
+                        # Context preparation
+                        from datetime import datetime
+                        ctx = t.target.get('initial_context', {})
+                        ctx['trigger_time'] = datetime.now().isoformat()
+                        
+                        # If date placeholder exists
+                        if 'target_date' in ctx and ctx['target_date'] == '{{today_nodash}}':
+                             ctx['target_date'] = datetime.now().strftime("%Y%m%d")
+
+                        # We need to fetch definition first? 
+                        # flow_controller.create_run takes definition object, not just ID.
+                        # We need to extend FlowController to support Create Run by ID (it does lookup internally? No)
+                        
+                        # Let's check FlowController.create_run signature: 
+                        # async def create_run(self, workflow_id: str, definition: WorkflowDefinition, ...)
+                        
+                        # We need to helper to fetch definition from DB first.
+                        # Let's assume we implement a helper in GenericTaskRunner or just inline here.
+                        
+                        try:
+                            async with mysql_pool.acquire() as conn:
+                                async with conn.cursor(aiomysql.DictCursor) as cursor:
+                                    await cursor.execute(
+                                        "SELECT definition FROM alwaysup.workflow_definitions WHERE id = %s",
+                                        (workflow_id,)
+                                    )
+                                    row = await cursor.fetchone()
+                                    if not row:
+                                        logger.error(f"❌ Workflow definition {workflow_id} not found in DB")
+                                        return
+                                    
+                                    import json
+                                    from core.workflow_parser import WorkflowDefinition
+                                    def_json = row['definition']
+                                    if isinstance(def_json, str):
+                                        def_json = json.loads(def_json)
+                                        
+                                    wf_def = WorkflowDefinition.model_validate(def_json)
+                                    
+                                    run_id = await flow_controller.create_run(workflow_id, wf_def, ctx)
+                                    logger.info(f"✅ Triggered Workflow Run: {run_id}")
+
+                        except Exception as e:
+                            logger.error(f"❌ Failed to trigger workflow: {e}")
+
+                    job_func = trigger_wrapper
+                    logger.info(f"  • {task_def.id}: Using Workflow Trigger")
                 
                 else:
                     logger.warning(f"Skipping task {task_def.id}: unsupported task type {task_def.type}")
@@ -419,12 +511,30 @@ async def register_jobs() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    global docker_client, mysql_pool, task_logger, task_config
+    global docker_client, mysql_pool, task_logger, task_config, flow_controller
     logger.info("🚀 Starting Task Orchestrator...")
     
     # Initialize command_poller to None for proper cleanup
     command_poller = None
+    # flow_controller is global
     
+    
+    # 0. Initialize LLM Agent Engine
+    api_keys = {
+        "deepseek": settings.DEEPSEEK_API_KEY,
+        "siliconflow": settings.SILICONFLOW_API_KEY,
+        "openai": settings.OPENAI_API_KEY
+    }
+    # Filter out None values
+    api_keys = {k: v for k, v in api_keys.items() if v}
+    
+    agent_engine = SmartDecisionEngine(
+        api_keys=api_keys,
+        redis_url=f"redis://:{settings.REDIS_PASSWORD}@{settings.REDIS_HOST}:{settings.REDIS_PORT}/{settings.REDIS_DB}",
+        default_provider=settings.LLM_DEFAULT_PROVIDER
+    )
+    logger.info("✓ SmartDecisionEngine (gsd-agent) initialized")
+
     # 1. Initialize MySQL Connection Pool
     try:
         mysql_pool = await aiomysql.create_pool(
@@ -495,6 +605,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"⚠️ Failed to start CommandPoller: {e}")
         logger.warning("Orchestrator will continue without remote command polling")
+
+    # 7. Start FlowController (Workflow 4.0 Engine)
+    try:
+        flow_controller = FlowController(mysql_pool, docker_client, agent_engine)
+        await flow_controller.start()
+        logger.info("✓ FlowController started")
+    except Exception as e:
+        logger.error(f"❌ Failed to start FlowController: {e}")
     
     yield
     
@@ -506,7 +624,13 @@ async def lifespan(app: FastAPI):
             await command_poller.stop()
         except Exception as e:
             logger.error(f"Error stopping CommandPoller: {e}")
-        
+
+    if flow_controller:
+        # Assuming FlowController also has a stop method mirroring CommandPoller
+        flow_controller._running = False
+        if flow_controller._task:
+            flow_controller._task.cancel()
+            
     scheduler.shutdown()
     
     if docker_client:
