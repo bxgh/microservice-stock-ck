@@ -94,6 +94,7 @@ services:
     container_name: task-orchestrator
     network_mode: host
     restart: unless-stopped
+    env_file: .env
     environment:
       - ORCHESTRATOR_DEBUG=false
       - ORCHESTRATOR_DOCKER_HOST=unix:///var/run/docker.sock
@@ -108,9 +109,11 @@ services:
       - WORKER_CLICKHOUSE_HOST=127.0.0.1
       - WORKER_CLICKHOUSE_PORT=9000
       - ORCHESTRATOR_WORKER_MOOTDX_API_URL=http://127.0.0.1:8003
+      - PYTHONPATH=/app/src:/app/libs/gsd-agent/src:/app/libs/gsd-shared
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./libs/gsd-shared:/app/libs/gsd-shared:ro
+      - ./libs/gsd-agent:/app/libs/gsd-agent:ro
       - ./logs/task-orchestrator:/app/logs
       - ./services/task-orchestrator/config/tasks.yml:/app/config/tasks.yml:ro
       - ./services/task-orchestrator/src:/app/src
@@ -314,7 +317,7 @@ services:
       - REDIS_CLUSTER=false
       - NO_PROXY=localhost,127.0.0.1,192.168.151.41
       - ENVIRONMENT=development
-      - PYTHONPATH=/app:/app/libs/gsd-shared
+      - PYTHONPATH=/app/src:/app/libs/gsd-agent/src:/app/libs/gsd-shared
       # MySQL 配置
       - GSD_DB_HOST=${GSD_DB_HOST:-127.0.0.1}
       - GSD_DB_PORT=${GSD_DB_PORT:-36301}
@@ -335,6 +338,7 @@ services:
       - REDIS_DB=${REDIS_DB:-0}
     volumes:
       - ./libs/gsd-shared:/app/libs/gsd-shared:ro
+      - ./libs/gsd-agent:/app/libs/gsd-agent:ro
       - ./logs/gsd-worker:/app/logs
       - ./services/gsd-worker/src:/app/src
       - ./data/gsd-worker:/app/data

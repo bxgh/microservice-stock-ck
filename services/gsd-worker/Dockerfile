@@ -53,9 +53,17 @@ RUN if [ "$ENABLE_PROXY" = "true" ]; then \
 # 安装 gsd-shared
 COPY libs/gsd-shared /tmp/gsd-shared
 RUN if [ "$ENABLE_PROXY" = "true" ]; then \
-        http_proxy=$PROXY_URL https_proxy=$PROXY_URL pip install --prefix=/install /tmp/gsd-shared; \
+        http_proxy=$PROXY_URL https_proxy=$PROXY_URL pip install --prefix=/install --no-cache-dir /tmp/gsd-shared; \
     else \
-        pip install --prefix=/install /tmp/gsd-shared; \
+        pip install --prefix=/install --no-cache-dir /tmp/gsd-shared; \
+    fi
+
+# 安装 gsd-agent
+COPY libs/gsd-agent /tmp/gsd-agent
+RUN if [ "$ENABLE_PROXY" = "true" ]; then \
+        http_proxy=$PROXY_URL https_proxy=$PROXY_URL pip install --prefix=/install --no-cache-dir /tmp/gsd-agent; \
+    else \
+        pip install --prefix=/install --no-cache-dir /tmp/gsd-agent; \
     fi
 
 
