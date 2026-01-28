@@ -1,0 +1,25 @@
+[package]
+name = "gsd-agent"
+version = "0.1.0"
+description = "Shared LLM Agent Library for A-Share Stock System"
+authors = ["Antigravity"]
+readme = "README.md"
+packages = [{include = "gsd_agent", from = "src"}]
+
+[tool.poetry]
+name = "gsd-agent"
+version = "0.1.0"
+description = "Shared LLM Agent Library for A-Share Stock System"
+authors = ["Antigravity"]
+
+[tool.poetry.dependencies]
+python = "^3.12"
+openai = "^1.10.0"
+pydantic = "^2.6.0"
+tenacity = "^8.2.0"
+redis = "^5.0.0"
+jinja2 = "^3.1.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
