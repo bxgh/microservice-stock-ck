@@ -55,7 +55,8 @@ class TickFetcher:
     async def fetch(
         self, 
         stock_code: str, 
-        trade_date: Optional[str] = None
+        trade_date: Optional[str] = None,
+        start: int = 0
     ) -> List[Dict[str, Any]]:
         """
         Fetch tick data based on configured mode.
@@ -75,18 +76,19 @@ class TickFetcher:
         # - HISTORICAL: Matrix/Linear search
         
         if self.mode == self.Mode.REALTIME:
-            return await self._fetch_realtime(clean_code)
+            return await self._fetch_realtime(clean_code, start)
         else:
             # Always use Linear Scan to enforce integrity and avoid duplication
             # The Matrix strategy relied on aggressive deduplication which caused data loss
             return await self._fetch_linear_scan(clean_code, trade_date)
 
-    async def _fetch_realtime(self, code: str) -> List[Dict]:
+    async def _fetch_realtime(self, code: str, start: int = 0) -> List[Dict]:
         """Single request for realtime update"""
         url = self.api_url + MOOTDX_TICK_ENDPOINT.format(code=code)
         try:
             # Short timeout for realtime
-            async with self.http.get(url, timeout=aiohttp.ClientTimeout(total=4)) as resp:
+            params = {"start": start}
+            async with self.http.get(url, params=params, timeout=aiohttp.ClientTimeout(total=4)) as resp:
                 if resp.status == 200:
                     return await resp.json()
                 # 404 is expected for market open/not-started stocks

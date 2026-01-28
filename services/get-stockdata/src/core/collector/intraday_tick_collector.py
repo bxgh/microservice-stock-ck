@@ -187,7 +187,8 @@ class IntradayTickCollector:
                 writer=self.writer,
                 stock_pool=self.stock_pool,
                 semaphore=self.tick_sem,
-                mootdx_api_url=self.mootdx_api_url
+                mootdx_api_url=self.mootdx_api_url,
+                redis_client=self.redis_client
             )
 
     async def _load_stock_pool(self):
