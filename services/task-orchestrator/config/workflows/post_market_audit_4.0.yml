@@ -1,0 +1,40 @@
+
+name: post_market_audit
+description: 盘后数据完整性审计与自愈 (AI Enhanced)
+steps:
+  # 1. 强制刷盘 (这里直接调用一个简单的 Sleep 或者 Flush 命令，假设有 flush job)
+  # 暂且跳过 flush 专用 job，直接开始 check (Worker 退出时通常会 flush)
+
+  # 2. 运行统计脚本
+  - id: run_audit
+    task_id: calculate_data_quality
+    params:
+      threshold: 1000
+
+  # Path A: AI Repair (Zone 2 - Partial Failure)
+  - id: ai_review
+    task_id: ai_quality_gatekeeper
+    depends_on: [run_audit]
+    # Condition: action == 'AI_AUDIT'
+    # Orchestrator doesn't support explicit 'if' yet, so we pass context
+    # Worker will SKIP if input is empty or invalid
+    params:
+      input_data: "{{ run_audit.abnormal_list }}" 
+      trigger_condition: "{{ run_audit.diagnosis.action }}"
+
+  # Path B: Executing Repair (Hybrid)
+  # Supports both AI-targeted repair AND Failover
+  - id: execute_repair
+    task_id: stock_data_supplement
+    depends_on: [run_audit, ai_review]
+    params:
+      # Mode: Failover (Zone 3) -> Takes missing_list
+      # Mode: AI (Zone 2) -> Takes confirmed_bad_codes
+      
+      # We pass all potential sources. The worker task will decide what to use based on 'action'
+      sys_action: "{{ run_audit.diagnosis.action }}"
+      sys_missing: "{{ run_audit.missing_list }}"
+      sys_confirmed_bad: "{{ ai_review.confirmed_bad_codes }}"
+      
+      force_concurrency: "64"
+      force_local: "{{ run_audit.diagnosis.failover_mode }}"

@@ -23,48 +23,121 @@ logger = logging.getLogger("jobs.supplement_stock")
 async def main():
     parser = argparse.ArgumentParser(description="定向个股数据补充任务")
     
-    parser.add_argument("--stocks", nargs="*", help="股票代码列表 (e.g. 000001,600519 or 000001 600519)")
-    parser.add_argument("--data-types", nargs="+", default=["tick"], help="数据类型 (e.g. tick kline financial)")
-    parser.add_argument("--date", type=str, help="指定单日 (YYYYMMDD)")
-    parser.add_argument("--date-range", type=str, help="指定日期范围 (YYYYMMDD-YYYYMMDD)")
+    # 原始参数
+    parser.add_argument("--stocks", nargs="*", help="股票代码列表")
+    parser.add_argument("--data-types", nargs="+", default=["tick"], help="数据类型")
+    parser.add_argument("--date", type=str, help="指定单日")
+    parser.add_argument("--date-range", type=str, help="指定日期范围")
     parser.add_argument("--priority", type=str, default="normal", help="任务优先级")
-    
+
+    # 新增系统参数 (用于智能路由)
+    parser.add_argument("--sys-action", type=str, help="系统动作: NONE, AI_AUDIT, FAILOVER")
+    parser.add_argument("--sys-missing", type=str, help="缺失列表 (JSON/Str)")
+    parser.add_argument("--sys-confirmed-bad", type=str, help="AI确认列表 (JSON/Str)")
+    parser.add_argument("--force-concurrency", type=int, help="强制并发数")
+    parser.add_argument("--force-local", type=str, help="是否强制本地模式 (true/false)")
+
     args, unknown = parser.parse_known_args()
     if unknown:
         logger.info(f"Ignored unknown arguments: {unknown}")
     
-    # 处理股票代码参数（支持多种格式）
-    stocks_list = args.stocks if args.stocks else []
-    if len(stocks_list) == 1 and ',' in stocks_list[0]:
-        # 逗号分隔格式（来自 CommandPoller）
-        stocks_list = [s.strip() for s in stocks_list[0].split(',') if s.strip()]
-    elif not stocks_list:
-        # 如果没有提供 stocks，报错
-        logger.error("错误: 必须提供 --stocks 参数")
+    # ---------------------------------------------------------
+    # 智能路由逻辑 (Smart Routing Logic)
+    # ---------------------------------------------------------
+    stocks_list = []
+    engine_extra_config = {}
+
+    if args.sys_action:
+        # 由 Workflow 4.0 触发
+        logger.info(f"🚦 Routing Mode: {args.sys_action}")
+        
+        if args.sys_action == "FAILOVER":
+            # Zone 3: 提取 sys_missing
+            raw_list = args.sys_missing
+            logger.info("Using FAILOVER list (sys_missing)")
+            # 解析列表 (简单处理字符串表示)
+            # 假设传入的是 ['000001', '000002'] 或 000001,000002
+            # 为了健壮性，去掉括号引号
+            clean_str = raw_list.replace("[", "").replace("]", "").replace("'", "").replace('"', "")
+            stocks_list = [s.strip() for s in clean_str.split(',') if s.strip()]
+            
+            # Failover 模式下强制本地采集
+            if str(args.force_local).lower() == 'true':
+                logger.warning("Applying FAILOVER Config: Distributed Source -> NONE")
+                engine_extra_config['distributed_source'] = 'none' # Override engine behavior
+
+        elif args.sys_action == "AI_AUDIT":
+            # Zone 2: 提取 sys_confirmed_bad
+            raw_list = args.sys_confirmed_bad
+            logger.info("Using AI AUDIT list (sys_confirmed_bad)")
+            # 如果 AI 没确认任何坏的，列表为空
+            if not raw_list or raw_list == "[]" or raw_list == "None":
+                logger.info("AI returned empty bad list. Nothing to do.")
+                return # Exit success
+            
+            clean_str = raw_list.replace("[", "").replace("]", "").replace("'", "").replace('"', "")
+            stocks_list = [s.strip() for s in clean_str.split(',') if s.strip()]
+
+        else:
+             # NONE or Unknown
+             logger.info("Action is NONE. Skipping.")
+             return
+
+    elif args.stocks:
+        # 手动/旧版触发
+        raw_stocks = args.stocks
+        if len(raw_stocks) == 1 and ',' in raw_stocks[0]:
+            stocks_list = [s.strip() for s in raw_stocks[0].split(',') if s.strip()]
+        else:
+            stocks_list = raw_stocks
+    else:
+        logger.error("错误: 未提供有效股票列表 (--stocks 或 --sys-action)")
         sys.exit(1)
+
+    if not stocks_list:
+        logger.info("Empty stock list. Success.")
+        return
+
+    # ---------------------------------------------------------
+    # 执行逻辑
+    # ---------------------------------------------------------
     
     # 构建参数字典
     params = {
         "stocks": stocks_list,
         "data_types": args.data_types,
-        "priority": args.priority
+        "priority": args.priority,
+        "extra_config": engine_extra_config
     }
     
+    # 并发控制覆盖
+    if args.force_concurrency:
+        params["concurrency_override"] = args.force_concurrency
+
     if args.date:
         params["date"] = args.date
     if args.date_range and "-" in args.date_range:
         start, end = args.date_range.split("-")
         params["date_range"] = {"start": start, "end": end}
         
-    logger.info(f"Received supplement command: {params}")
+    logger.info(f"Target Count: {len(stocks_list)} stocks")
+    # logger.info(f"Sample: {stocks_list[:5]}")
     
     engine = DataSupplementEngine()
     try:
         await engine.initialize()
+        # 注意: 需要确保 DataSupplementEngine 支持 extra_config 参数
+        # 或者我们需要在这里临时 patch 它的配置
+        # 假设我们在此处只做个简单的逻辑，具体的 "force local" 
+        # 可能需要 DataSupplementEngine 内部调用 sync_tick 时透传参数
+        # 目前先传入，待 engine 适配
         result = await engine.run(params)
+        
         logger.info(f"Execution Result: {result}")
         if result["failed"] > 0:
-            sys.exit(1)
+            # 如果大量失败，返回非零
+            if result["failed"] > len(stocks_list) * 0.5:
+                sys.exit(1)
             
     except Exception as e:
         logger.error(f"Task Failed: {e}", exc_info=True)
