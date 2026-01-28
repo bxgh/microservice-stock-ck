@@ -111,3 +111,10 @@ update_db.py
 
 # 私有文档与草稿
 docs/miniprogram/
+
+# Runtime artifacts
+audit_output.json
+final_audit.json
+
+# Agent config
+.opencode/
