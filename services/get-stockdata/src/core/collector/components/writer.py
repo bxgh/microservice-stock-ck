@@ -12,7 +12,7 @@ logger = logging.getLogger("IntradayTickCollector.Writer")
 CST = pytz.timezone('Asia/Shanghai')
 
 # 常量定义
-FLUSH_THRESHOLD = int(os.getenv("FLUSH_THRESHOLD", "1000"))
+FLUSH_THRESHOLD = int(os.getenv("FLUSH_THRESHOLD", "3000"))
 FLUSH_INTERVAL_SECONDS = float(os.getenv("FLUSH_INTERVAL_SECONDS", "5"))
 
 class ClickHouseWriter:

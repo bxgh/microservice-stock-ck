@@ -29,13 +29,15 @@ class SnapshotWorker:
         semaphore: asyncio.Semaphore,
         mootdx_api_url: str,
         batch_size: int = 150,
-        interval: float = 3.0
+        interval: float = 3.0,
+        circuit_breaker: Any = None
     ):
         self.http_session = http_session
         self.writer = writer
         self.sem = semaphore
         self.mootdx_api_url = mootdx_api_url
         self.interval = interval
+        self.circuit_breaker = circuit_breaker
         
         # 预计算批次
         self.batches = [
@@ -114,18 +116,25 @@ class SnapshotWorker:
 
     async def _fetch_snapshot_batch(self, batch: List[str], today: Any, snapshot_time: datetime) -> List[Tuple]:
         """单个批次的 HTTP 请求"""
+        if self.circuit_breaker and not self.circuit_breaker.is_available():
+            return []
+
         rows = []
         codes_param = ",".join(batch)
         url = f"{self.mootdx_api_url}/api/v1/quotes?codes={codes_param}"
         
         async with self.http_session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
             if resp.status == 200:
+                if self.circuit_breaker:
+                    self.circuit_breaker.record_success()
                 data = await resp.json()
                 for item in data:
                     row = self._map_snapshot_row(item, today, snapshot_time)
                     if row:
                         rows.append(row)
             else:
+                if self.circuit_breaker:
+                    self.circuit_breaker.record_failure()
                 logger.warning(f"⚠️ Snapshot API returned {resp.status}")
         
         return rows

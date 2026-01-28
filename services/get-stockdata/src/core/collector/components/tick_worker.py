@@ -10,13 +10,14 @@ import pytz
 
 from src.core.collector.components.writer import ClickHouseWriter
 from gsd_shared.tick import TickFetcher, TickDeduplicator, clean_stock_code
+from gsd_shared.tick.status import SyncStatusTracker
 
 logger = logging.getLogger("IntradayTickCollector.TickWorker")
 CST = pytz.timezone('Asia/Shanghai')
 
 # 配置常量
 POLL_INTERVAL_SECONDS = float(os.getenv("POLL_INTERVAL_SECONDS", "5"))
-FINGERPRINT_CACHE_SIZE = int(os.getenv("FINGERPRINT_CACHE_SIZE", "1500"))
+FINGERPRINT_CACHE_SIZE = int(os.getenv("FINGERPRINT_CACHE_SIZE", "60000"))
 
 class TickWorker:
     """
@@ -42,10 +43,12 @@ class TickWorker:
         self.stock_pool = stock_pool
         self.sem = semaphore
         self.redis = redis_client
+        self.circuit_breaker = circuit_breaker
         
         # Shared Components
         self.fetcher = TickFetcher(http_session, mootdx_api_url, mode=TickFetcher.Mode.REALTIME)
         self.deduplicator = TickDeduplicator(cache_size=FINGERPRINT_CACHE_SIZE)
+        self.tracker = SyncStatusTracker(redis_client)
         
         self.offsets: Dict[str, int] = {}
         self.is_running = False
@@ -55,8 +58,10 @@ class TickWorker:
         self.is_running = True
         logger.info(f"📊 Starting tick loop for {len(self.stock_pool)} stocks...")
         
-        # 加载初始 Offsets
-        await self._load_offsets()
+        # 加载初始 Offsets (Centrally)
+        today_str = datetime.now(CST).strftime('%Y%m%d')
+        self.offsets = await self.tracker.load_offsets(self.stock_pool, today_str)
+        logger.info(f"✅ Loaded offsets for {len(self.offsets)} stocks via Central Tracker")
         
         while not stop_event.is_set():
             if not is_trading_time_func():
@@ -82,36 +87,12 @@ class TickWorker:
                     pass
 
         logger.info("📊 TickWorker stopped")
-        
-    async def _load_offsets(self):
-        """从 Redis 加载断点 Offsets"""
-        if not self.redis:
-            return
-            
-        today_str = datetime.now(CST).strftime('%Y%m%d')
-        # 批量构建 Keys
-        keys = [f"tick:offset:{today_str}:{clean_stock_code(code)}" for code in self.stock_pool]
-        
-        try:
-            # 批量获取 (MGET)
-            values = await self.redis.mget(keys)
-            
-            loaded_count = 0
-            for code, val in zip(self.stock_pool, values):
-                clean = clean_stock_code(code)
-                if val:
-                    self.offsets[clean] = int(val)
-                    loaded_count += 1
-                else:
-                    self.offsets[clean] = 0
-            
-            logger.info(f"✅ Loaded offsets for {loaded_count}/{len(self.stock_pool)} stocks from Redis")
-            
-        except Exception as e:
-            logger.error(f"❌ Failed to load offsets from Redis: {e}")
 
     async def poll_stock(self, code: str):
         """采集单只股票"""
+        if self.circuit_breaker and not self.circuit_breaker.is_available():
+            return
+
         async with self.sem:
             try:
                 clean_code = clean_stock_code(code)
@@ -155,18 +136,18 @@ class TickWorker:
                     new_offset = start_offset + count
                     self.offsets[clean_code] = new_offset
                     
-                    # Persist to Redis (Sync await for reliability)
-                    if self.redis:
-                        try:
-                            today_str = today.strftime('%Y%m%d')
-                            key = f"tick:offset:{today_str}:{clean_code}"
-                            await self.redis.set(key, new_offset, ex=86400) # 24h expiry
-                        except Exception as re:
-                            logger.error(f"❌ Redis offset update failed for {clean_code}: {re}")
+                    # Persist to Redis (Centrally)
+                    today_str = today.strftime('%Y%m%d')
+                    await self.tracker.save_offset(clean_code, today_str, new_offset)
                     
             except Exception as e:
+                if self.circuit_breaker:
+                    self.circuit_breaker.record_failure()
                 # logger.warning(f"⚠️ Poll {code} failed: {repr(e)[:50]}")
                 pass
+            else:
+                if self.circuit_breaker:
+                    self.circuit_breaker.record_success()
 
     def _map_direction(self, d: str) -> int:
         mapping = {"BUY": 0, "SELL": 1, "NEUTRAL": 2}

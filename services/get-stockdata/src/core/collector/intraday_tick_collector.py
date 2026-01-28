@@ -26,12 +26,12 @@ logger = logging.getLogger("IntradayTickCollector")
 CST = pytz.timezone('Asia/Shanghai')
 
 # 常量定义 (可通过环境变量覆盖)
-FINGERPRINT_CACHE_SIZE = int(os.getenv("FINGERPRINT_CACHE_SIZE", "1000"))
-FLUSH_THRESHOLD = int(os.getenv("FLUSH_THRESHOLD", "1000"))
+FINGERPRINT_CACHE_SIZE = int(os.getenv("FINGERPRINT_CACHE_SIZE", "60000"))
+FLUSH_THRESHOLD = int(os.getenv("FLUSH_THRESHOLD", "3000"))
 FLUSH_INTERVAL_SECONDS = float(os.getenv("FLUSH_INTERVAL_SECONDS", "5"))
 POLL_INTERVAL_SECONDS = float(os.getenv("POLL_INTERVAL_SECONDS", "4.0"))
-POLL_OFFSET = int(os.getenv("POLL_OFFSET", "800"))  # 每次拉取的最新条数
-DEFAULT_CONCURRENCY = int(os.getenv("CONCURRENCY", "16"))
+POLL_OFFSET = int(os.getenv("POLL_OFFSET", "200"))  # 获取深度对齐文档建议
+DEFAULT_CONCURRENCY = int(os.getenv("CONCURRENCY", "64"))
 
 # 分片配置 (分布式模式)
 SHARD_INDEX = int(os.getenv("SHARD_INDEX", "0"))
@@ -48,6 +48,35 @@ REDIS_MAX_CONNECTIONS = 10  # Redis 连接池最大连接数
 SNAPSHOT_INTERVAL_SECONDS = 3.0  # 快照采集间隔
 SNAPSHOT_BATCH_SIZE = int(os.getenv("SNAPSHOT_BATCH_SIZE", "150"))  # 快照API单批大小(增大以减少请求数)
 
+class CircuitBreaker:
+    """简单的熔断器实现，对齐文档质量标准"""
+    def __init__(self, failure_threshold: int = 5, recovery_timeout: int = 60):
+        self.failure_threshold = failure_threshold
+        self.recovery_timeout = recovery_timeout
+        self.failure_count = 0
+        self.last_failure_time = 0
+        self.state = "CLOSED" # CLOSED, OPEN
+
+    def is_available(self) -> bool:
+        if self.state == "OPEN":
+            if asyncio.get_running_loop().time() - self.last_failure_time > self.recovery_timeout:
+                self.state = "CLOSED"
+                self.failure_count = 0
+                return True
+            return False
+        return True
+
+    def record_failure(self):
+        self.failure_count += 1
+        self.last_failure_time = asyncio.get_running_loop().time()
+        if self.failure_count >= self.failure_threshold:
+            self.state = "OPEN"
+            logging.getLogger("CircuitBreaker").error(f"🚨 Circuit Breaker OPEN! Cooling down for {self.recovery_timeout}s")
+
+    def record_success(self):
+        self.failure_count = 0
+        self.state = "CLOSED"
+
 class IntradayTickCollector:
     """
     盘中分笔采集器 (支持单机/分布式模式)
@@ -59,7 +88,7 @@ class IntradayTickCollector:
     - 批量异步写入 ClickHouse
     
     模式:
-    - SHARD_TOTAL=1: 单机模式，从 YAML 文件加载股票池
+    - SHARD_TOTAL=1: 单机模式，从本地 YAML 文件加载股票池 (HS300池)
     - SHARD_TOTAL>1: 分布式模式，从 Redis 读取分片股票池
     """
 
@@ -100,6 +129,9 @@ class IntradayTickCollector:
         # 分片配置
         self.shard_index = SHARD_INDEX
         self.shard_total = SHARD_TOTAL
+
+        # 熔断器 (对齐 03_CODE_QUALITY.md)
+        self.api_circuit_breaker = CircuitBreaker(failure_threshold=5, recovery_timeout=60)
 
 
         
@@ -177,7 +209,8 @@ class IntradayTickCollector:
                 semaphore=self.snapshot_sem,
                 mootdx_api_url=self.mootdx_api_url,
                 batch_size=SNAPSHOT_BATCH_SIZE,
-                interval=SNAPSHOT_INTERVAL_SECONDS
+                interval=SNAPSHOT_INTERVAL_SECONDS,
+                circuit_breaker=self.api_circuit_breaker
             )
 
         # 初始化 TickWorker
@@ -188,7 +221,8 @@ class IntradayTickCollector:
                 stock_pool=self.stock_pool,
                 semaphore=self.tick_sem,
                 mootdx_api_url=self.mootdx_api_url,
-                redis_client=self.redis_client
+                redis_client=self.redis_client,
+                circuit_breaker=self.api_circuit_breaker
             )
 
     async def _load_stock_pool(self):
@@ -203,8 +237,14 @@ class IntradayTickCollector:
                 logger.info(f"Using Distributed Mode: Loading Shard {self.shard_index}/{self.shard_total}")
                 raw_stocks = await self.stock_universe.get_shard_stocks(self.shard_index, self.shard_total)
             else:
-                logger.info("Using Standalone Mode: Loading All A-Shares")
-                raw_stocks = await self.stock_universe.get_all_a_stocks()
+                logger.info(f"Using Standalone Mode: Loading from {self.stock_pool_path}")
+                if os.path.exists(self.stock_pool_path):
+                    with open(self.stock_pool_path, 'r') as f:
+                        config = yaml.safe_load(f)
+                        raw_stocks = config.get('stocks', [])
+                else:
+                    logger.warning(f"⚠️ YAML not found at {self.stock_pool_path}, falling back to All A-Shares")
+                    raw_stocks = await self.stock_universe.get_all_a_stocks()
             
             if not raw_stocks:
                 logger.warning("⚠️ StockUniverse returned empty list!")

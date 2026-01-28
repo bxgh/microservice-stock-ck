@@ -39,11 +39,19 @@ class TickWriter:
         self, 
         stock_code: str, 
         trade_date: str, 
-        data: List[Dict[str, Any]]
+        data: List[Dict[str, Any]],
+        idempotent: bool = True
     ) -> int:
         """
         Write tick data to ClickHouse.
         Auto-determines target table based on date.
+        
+        Args:
+            stock_code: Stock code
+            trade_date: YYYYMMDD
+            data: List of tick records
+            idempotent: If True, clear existing data for this stock/date before inserting.
+                        Recommended for historical backfills.
         
         Returns:
             Number of rows written
@@ -59,13 +67,15 @@ class TickWriter:
             target_table = TABLE_HISTORY_DIST if self.use_distributed else TABLE_HISTORY_LOCAL
             
         try:
-            # 2. Transform Data
-            rows = []
             trade_date_obj = datetime.strptime(trade_date, "%Y%m%d").date()
-            
-            # Clean code (ensure no prefixes)
             clean_code = self._clean_code(stock_code)
-            
+
+            # 2. Strong Idempotency: Clear existing data
+            if idempotent:
+                await self._clear_existing_data(target_table, clean_code, trade_date_obj)
+
+            # 3. Transform Data
+            rows = []
             for item in data:
                 # Time normalize (HH:MM -> HH:MM:00)
                 time_str = str(item.get('time', '09:30'))
@@ -91,8 +101,7 @@ class TickWriter:
             if not rows:
                 return 0
                 
-            # 3. Insert into ClickHouse (Using LOCAL table)
-            # Note: We write to LOCAL tables directly for performance and strict sharding control
+            # 4. Insert into ClickHouse
             async with self.ch_pool.acquire() as conn:
                 async with conn.cursor() as cursor:
                     await cursor.execute(
@@ -105,6 +114,21 @@ class TickWriter:
         except Exception as e:
             logger.error(f"Tick write failed for {stock_code} to {target_table}: {e}")
             raise
+
+    async def _clear_existing_data(self, table: str, code: str, date_obj: Any):
+        """Execute DELETE mutation for strong idempotency"""
+        try:
+            # Note: ClickHouse Mutations are asynchronous, but for backfills this is 
+            # the standard way to ensure no duplicates without relying on 'FINAL' keyword.
+            async with self.ch_pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute(
+                        f"ALTER TABLE stock_data.{table} DELETE WHERE stock_code = %(code)s AND trade_date = %(date)s",
+                        {"code": code, "date": date_obj}
+                    )
+            logger.debug(f"🗑️ Cleared existing data for {code} on {date_obj} in {table}")
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to clear existing data for {code}: {e}")
 
     def _map_direction(self, value: Any) -> int:
         """
