@@ -42,9 +42,10 @@ class TickDeduplicator:
         Generate deduplication key.
         Format: "time|price|vol"
         """
-        # Handle field alias: volume vs vol
+        # Handle field alias: volume vs vol, type vs buyorsell
         vol = item.get('vol', item.get('volume', 0))
-        return f"{item.get('time')}|{item.get('price')}|{vol}"
+        direction = item.get('type', item.get('buyorsell', 'NEUTRAL'))
+        return f"{item.get('time')}|{item.get('price')}|{vol}|{direction}"
 
     def clear(self, code: str = None):
         """Clear cache for a specific code or all codes"""

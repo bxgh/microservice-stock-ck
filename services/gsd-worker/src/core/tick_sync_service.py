@@ -110,7 +110,6 @@ class TickSyncService:
 
             # 2. Initialize Components
             self.task_queue = TickTaskQueue(self.redis_client)
-            self.task_queue = TickTaskQueue(self.redis_client)
             
             # ClickHouse client wrapper needed for StockUniverse (simple adapter)
             # Since asynch pool is used here, we pass the pool directly if StockUniverse supports it
@@ -157,6 +156,42 @@ class TickSyncService:
                 await self.redis_client.aclose()
                 self.redis_client = None
             logger.info("✓ Resources Closed")
+
+    async def purge_tick_data(self, trade_date: str, stock_codes: List[str]) -> bool:
+        """
+        [NEW] 物理清理异常分笔数据
+        用于修复策略前置动作: 发现质量不合格即刻删除已有脏数据，确保重新拉取后不产生重复/混杂。
+        """
+        if not stock_codes or not self.clickhouse_pool:
+            return False
+
+        try:
+            # 统一日期格式 YYYY-MM-DD
+            trade_date_dt = trade_date.replace('-', '')
+            formatted_date = f"{trade_date_dt[:4]}-{trade_date_dt[4:6]}-{trade_date_dt[6:8]}"
+            
+            codes_str = ",".join([f"'{c}'" for c in stock_codes])
+            
+            # 使用分布式全量清理
+            # 注意: ClickHouse 的 DELETE 是异步 Mutation，但我们会在此处阻塞等待一个基本的提交确认
+            sql = f"""
+            ALTER TABLE stock_data.tick_data_intraday 
+            DELETE WHERE trade_date = '{formatted_date}' 
+              AND stock_code IN ({codes_str})
+            """
+            
+            logger.warning(f"🗑️ [Hard Purge] 正在清理 {len(stock_codes)} 只个股的脏数据: {formatted_date}")
+            
+            async with self.clickhouse_pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute(sql)
+            
+            logger.info(f"✅ 清理指令已同步至 ClickHouse, 准备执行补采...")
+            return True
+
+        except Exception as e:
+            logger.error(f"❌ 清理数据失败: {e}", exc_info=True)
+            return False
 
     # --- Delegated Methods (Compatible with sync_tick.py) ---
 
@@ -263,8 +298,6 @@ class TickSyncService:
             
         logger.info(f"开始批量同步: {len(stock_codes)} 只, 日期 {trade_date}, 并发 {concurrency}")
         
-        semaphore = asyncio.Semaphore(concurrency)
-        results_lock = asyncio.Lock()
         semaphore = asyncio.Semaphore(concurrency)
         results_lock = asyncio.Lock()
         results = {"success": 0, "failed": 0, "skipped": 0, "total_records": 0, "errors": [], "failed_codes": []}

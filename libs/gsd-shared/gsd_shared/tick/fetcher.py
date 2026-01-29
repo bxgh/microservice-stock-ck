@@ -66,21 +66,14 @@ class TickFetcher:
             trade_date: Optional date string "YYYYMMDD". 
                         If None, fetches TODAY's data.
         """
-        # 1. Clean stock code (remove prefixes)
-        clean_code = self._clean_code(stock_code)
-        
+        # 1. Use raw code for API calls to preserve market prefix (sh/sz)
         # 2. Determine strategy
-        # Even in HISTORICAL mode, if date is today, we might use a lighter strategy or full matrix.
-        # But per specs:
-        # - REALTIME: Single request
-        # - HISTORICAL: Matrix/Linear search
-        
         if self.mode == self.Mode.REALTIME:
-            return await self._fetch_realtime(clean_code, start)
+            return await self._fetch_realtime(stock_code, start)
         else:
             # Always use Linear Scan to enforce integrity and avoid duplication
             # The Matrix strategy relied on aggressive deduplication which caused data loss
-            return await self._fetch_linear_scan(clean_code, trade_date)
+            return await self._fetch_linear_scan(stock_code, trade_date)
 
     async def _fetch_realtime(self, code: str, start: int = 0) -> List[Dict]:
         """Single request for realtime update"""
