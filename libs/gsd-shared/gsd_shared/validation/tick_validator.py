@@ -217,3 +217,137 @@ class TickValidator:
         except Exception as e:
             logger.error(f"❌ 检查盘中分笔覆盖率失败: {e}")
             return len(stock_codes), 0, stock_codes
+
+    async def validate_stock(self, stock_code: str, trade_date: str, kline_ref: Optional[dict] = None) -> dict:
+        """
+        个股分笔数据全维度校验 (Level 1-3)
+        
+        Args:
+            stock_code: 股票代码
+            trade_date: 交易日期
+            kline_ref: 参考日K数据, 如 {"close": 10.5, "volume": 1234500}
+            
+        Returns:
+            dict: {
+                "code": str,
+                "status": "PASS" | "FAIL",
+                "level": "L1" | "L2" | "L3" | None,
+                "reasons": list,
+                "action": "REPAIR" | "NONE"
+            }
+        """
+        # 结果初始化
+        result = {
+            "code": stock_code,
+            "status": "PASS",
+            "level": None,
+            "reasons": [],
+            "action": "NONE"
+        }
+
+        if not self.ch_pool:
+            result.update({"status": "FAIL", "reasons": ["No DB Connection"], "action": "REPAIR"})
+            return result
+
+        try:
+            # 格式化日期 & 确定表名
+            if len(trade_date) == 8:
+                trade_date_str = datetime.strptime(trade_date, "%Y%m%d").strftime("%Y-%m-%d")
+            else:
+                trade_date_str = trade_date
+            
+            today_str = datetime.now(CST).strftime("%Y-%m-%d")
+            target_table = "tick_data_intraday" if trade_date_str == today_str else "tick_data"
+            
+            # 1. 基础数据聚合 (覆盖 L1, L2, L3 需要的基础指标)
+            async with self.ch_pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute(f"""
+                        SELECT 
+                            count() as tick_count,
+                            min(tick_time) as first_tick,
+                            max(tick_time) as last_tick,
+                            countDistinct(substring(tick_time, 1, 5)) as active_minutes,
+                            sum(volume) as total_volume,
+                            argMax(price, tick_time) as last_price
+                        FROM {target_table}
+                        WHERE stock_code = %(code)s AND trade_date = %(date)s
+                    """, {"code": stock_code, "date": trade_date_str})
+                    row = await cursor.fetchone()
+            
+            # --- Level 1: Existence ---
+            if not row or row[0] == 0:
+                result.update({
+                    "status": "FAIL",
+                    "level": "L1",
+                    "reasons": ["Missing: No Data found in ClickHouse"],
+                    "action": "REPAIR"
+                })
+                return result
+
+            tick_count, first_tick, last_tick, active_minutes, total_volume, last_price = row
+            std = TickStandards.IntradayPostMarket
+
+            # --- Level 2: Completeness ---
+            l2_reasons = []
+            
+            # 活跃分钟数
+            if active_minutes < std.MIN_ACTIVE_MINUTES:
+                l2_reasons.append(f"Low Active Minutes ({active_minutes}/{std.MIN_ACTIVE_MINUTES})")
+            
+            # 开盘时间
+            f_cmp = first_tick if len(first_tick) == 8 else f"{first_tick}:00"
+            if f_cmp > std.MIN_TIME:
+                l2_reasons.append(f"Late Open ({first_tick} > {std.MIN_TIME})")
+
+            # 收盘时间
+            l_cmp = last_tick if len(last_tick) == 8 else f"{last_tick}:00"
+            if l_cmp < std.MAX_TIME:
+                l2_reasons.append(f"Early Close ({last_tick} < {std.MAX_TIME})")
+            
+            if l2_reasons:
+                result.update({
+                    "status": "FAIL",
+                    "level": "L2",
+                    "reasons": l2_reasons,
+                    "action": "REPAIR"
+                })
+                return result
+
+            # --- Level 3: Accuracy ---
+            if kline_ref:
+                l3_reasons = []
+                
+                # 价格对账 (容忍 0.015 误差)
+                ref_close = kline_ref.get("close")
+                if ref_close is not None:
+                    if abs(last_price - ref_close) > 0.015:
+                        l3_reasons.append(f"Price Mismatch: Tick={last_price} vs KLine={ref_close}")
+                
+                # 成交量对账 (容忍 5% 误差)
+                ref_vol = kline_ref.get("volume")
+                if ref_vol is not None and ref_vol > 0:
+                    vol_diff_rate = abs(total_volume - ref_vol) / ref_vol
+                    if vol_diff_rate > 0.05:
+                        l3_reasons.append(f"Volume Mismatch: Tick={total_volume} vs KLine={ref_vol} (Diff={vol_diff_rate:.1%})")
+
+                if l3_reasons:
+                    result.update({
+                        "status": "FAIL",
+                        "level": "L3",
+                        "reasons": l3_reasons,
+                        "action": "REPAIR"
+                    })
+                    return result
+
+            # 全部通过
+            return result
+
+        except Exception as e:
+            logger.error(f"Validation failed for {stock_code}: {e}", exc_info=True)
+            result.update({
+                "status": "FAIL",
+                "reasons": [f"Runtime Error: {str(e)}"],
+                "action": "REPAIR"
+            })
+            return result
