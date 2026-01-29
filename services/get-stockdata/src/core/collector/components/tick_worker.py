@@ -36,7 +36,8 @@ class TickWorker:
         stock_pool: List[str],
         semaphore: asyncio.Semaphore,
         mootdx_api_url: str,
-        redis_client: Any = None
+        redis_client: Any = None,
+        circuit_breaker: Any = None
     ):
         self.http_session = http_session
         self.writer = writer
@@ -131,9 +132,11 @@ class TickWorker:
                 if new_rows:
                     await self.writer.add_ticks(new_rows)
                     
-                    # Update Offset only after writer accepts data
-                    count = len(ticks) # Use total retrieved count, not just filtered ones
-                    new_offset = start_offset + count
+                    # NOTE: 在实时模式下，start 应该是 0 (指标从最新开始倒序)
+                    # 我们不需要在这里累加偏移量，指纹去重器会处理新老数据。
+                    # 如果为了兼容某些逻辑需要持久化，可以存 0 或当前 round 的计数。
+                    # new_offset = start_offset + count # 不要累加
+                    new_offset = 0 # 实时轮询保持为 0
                     self.offsets[clean_code] = new_offset
                     
                     # Persist to Redis (Centrally)

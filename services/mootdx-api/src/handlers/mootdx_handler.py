@@ -171,8 +171,8 @@ class MootdxHandler:
                     )
                 else:
                     # 当日实时成交 (Singular: transaction)
-                    # Important: Remove 'sh'/'sz' prefix generally for transaction() as it expects raw code
-                    symbol = codes[0].lower().replace('sh', '').replace('sz', '')
+                    # Use raw symbol with prefix to ensure mootdx identifies market correctly
+                    symbol = codes[0]
                     
                     data = await loop.run_in_executor(
                         None,
