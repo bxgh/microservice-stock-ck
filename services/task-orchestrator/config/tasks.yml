@@ -200,18 +200,19 @@ tasks:
   # ========== 策略任务 ==========
   
   # 每日策略扫描 (P1)
+  # 改为由 post_market_audit 工作流驱动，禁用独立调度
   - id: daily_strategy_scan
     name: 每日策略扫描
     type: docker
     enabled: true
     schedule:
-      type: trading_cron
-      expression: "30 20 * * 1-5"  # 20:30 (必须在数据完整性校验后执行)
+      type: cron
+      expression: "0 0 1 1 *" # 被工作流取代，设为 Dummy Schedule
     target:
       image: quant-strategy:latest
       command: ["jobs.daily_scan"]
     dependencies:
-      - post_market_gate
+      - calculate_data_quality
     retry:
       max_attempts: 2
       backoff_seconds: 300
@@ -234,13 +235,14 @@ tasks:
   
   # 盘后数据质量大检查 (P0) - 深度审计与收盘对账
   # 19:00 执行，在数据同步完成后立即进行质量核查与修复
+  # 已被新架构取代，改为从属于 workflow，禁用独立调度
   - id: post_market_gate
     name: 盘后数据质量门禁 (Gate-3)
     type: docker
     enabled: true
     schedule:
-      type: trading_cron
-      expression: "0 19 * * 1-5"  # 19:00 交易日
+      type: cron
+      expression: "0 0 1 1 *" # 被工作流取代，设为 Dummy Schedule
     target:
       command: ["jobs.post_market_gate"]
       environment:
@@ -340,15 +342,23 @@ tasks:
       max_attempts: 2
       backoff_seconds: 300
 
-  # [NEW] 1. 计算数据质量
+  # [NEW] 1. K线就绪探测 (Barrier)
+  - id: wait_for_kline
+    name: K线就绪探测
+    type: docker
+    enabled: false
+    target:
+      command: ["jobs.wait_for_kline"]
+
+  # [NEW] 2. 计算数据质量 (Audit & Purge)
   - id: calculate_data_quality
-    name: 计算数据质量 (Audit)
+    name: 计算数据质量 (L1-L3 Audit)
     type: docker
     enabled: false
     target:
       command: ["jobs.audit_tick_resilience"]
       environment:
-        PYTHONPATH: "/app/src"
+        PYTHONPATH: "/app/src:/app/libs/gsd-shared"
 
   # [NEW] 2. AI 质量门禁
   - id: ai_quality_gatekeeper
