@@ -51,10 +51,10 @@ async def main():
                 target_date = now
             trade_date = target_date.strftime("%Y-%m-%d")
 
-        logger.info(f"�️ 开始深度审计: {trade_date}")
+        logger.info(f"️ 开始深度审计 (Level 1-3): {trade_date}")
 
         # 1. 加载预期名单 (Inventory)
-        # 获取全市场 A 股名单 (排除北交所逻辑已内置在 StockUniverse)
+        # 获取全市场 A 股名单
         expected_codes = await service.stock_universe.get_all_a_stocks()
         expected_count = len(expected_codes)
         logger.info(f"📋 预期 A 股总数: {expected_count}")
@@ -63,31 +63,39 @@ async def main():
             logger.error("❌ 无法获取预期股票名单，审计无法进行")
             sys.exit(1)
 
-        # 2. 查询 ClickHouse 实际数据 - 深度连续性校验
-        # 对接 PostMarketGateService._check_all_ticks_continuity 逻辑
-        std = TickStandards.IntradayPostMarket
-        min_active = std.MIN_ACTIVE_MINUTES
-        min_time = std.MIN_TIME
-        max_time = std.MAX_TIME
+        # 2. 联合查询 ClickHouse: Tick指标 + K线对账指标
+        # 整合 L1, L2, L3 需要的所有字段
+        # L3 依赖 stock_kline_daily 进行对账
         
         query = f"""
         SELECT 
-            stock_code,
-            first_tick,
-            last_tick,
-            active_minutes,
-            tick_count
+            t.stock_code,
+            t.tick_count,
+            t.first_tick,
+            t.last_tick,
+            t.active_minutes,
+            t.total_volume,
+            t.last_price,
+            k.close_price as kline_close,
+            k.volume as kline_volume
         FROM (
             SELECT 
                 stock_code,
+                count() as tick_count,
                 min(tick_time) as first_tick,
                 max(tick_time) as last_tick,
                 countDistinct(substring(tick_time, 1, 5)) as active_minutes,
-                count() as tick_count
+                sum(volume) as total_volume,
+                argMax(price, tick_time) as last_price
             FROM stock_data.tick_data_intraday 
-            WHERE trade_date = '{trade_date.replace('-', '')}'
+            WHERE trade_date = '{trade_date}'
             GROUP BY stock_code
-        )
+        ) AS t
+        LEFT JOIN (
+            SELECT stock_code, close_price, volume
+            FROM stock_data.stock_kline_daily
+            WHERE trade_date = '{trade_date}'
+        ) AS k ON t.stock_code = k.stock_code
         """
         
         async with service.clickhouse_pool.acquire() as conn:
@@ -95,52 +103,74 @@ async def main():
                 await cursor.execute(query)
                 rows = await cursor.fetchall()
         
-        # 3. 分析指标
+        # 3. 深度多维分析 (L1-L3)
         actual_data = {row[0]: row for row in rows}
-        logger.info(f"📉 实际入库股票数: {len(actual_data)}")
+        logger.info(f"📉 实际 Tick 入库股票数: {len(actual_data)}")
 
-        missing_list = []
-        abnormal_list = []
+        missing_list = []      # L1 缺失
+        abnormal_list = []     # L2/L3 异常
         
-        # 遍历预期名单，检查完整性
+        std = TickStandards.IntradayPostMarket
+        
         for code in expected_codes:
+            # --- Level 1: Existence ---
             if code not in actual_data:
                 missing_list.append(code)
                 continue
             
-            # 连续性校验
-            # row: [stock_code, first_tick, last_tick, active_minutes, tick_count]
-            _, first_t, last_t, active_m, count = actual_data[code]
-            
-            # 标准化时间用于比较
-            f_cmp = first_t if len(first_t) == 8 else f"{first_t}:00"
-            l_cmp = last_t if len(last_t) == 8 else f"{last_t}:00"
+            # --- 解析指标 ---
+            # row: [code, count, first, last, active, sum_vol, last_p, k_close, k_vol]
+            _, count, first_t, last_t, active_m, sum_vol, last_p, k_close, k_vol = actual_data[code]
             
             is_abnormal = False
             reasons = []
+            error_level = None
+
+            # --- Level 2: Completeness (结构性检查) ---
+            f_cmp = first_t if len(first_t) == 8 else f"{first_t}:00"
+            l_cmp = last_t if len(last_t) == 8 else f"{last_t}:00"
             
-            if active_m < min_active:
+            if active_m < std.MIN_ACTIVE_MINUTES:
                 is_abnormal = True
-                reasons.append(f"时长不足({active_m}/{min_active})")
+                error_level = "L2"
+                reasons.append(f"时长不足({active_m}/{std.MIN_ACTIVE_MINUTES})")
             
-            if f_cmp > min_time:
+            if f_cmp > std.MIN_TIME:
                 is_abnormal = True
+                error_level = "L2"
                 reasons.append(f"开盘晚({first_t})")
                 
-            if l_cmp < max_time:
+            if l_cmp < std.MAX_TIME:
                 is_abnormal = True
+                error_level = "L2"
                 reasons.append(f"收盘早({last_t})")
-            
-            # 基础行数辅助检查 (args.threshold)
-            if count < args.threshold:
-                # 如果还没被判定为 abnormal，补一个理由
-                if not is_abnormal:
+
+            # --- Level 3: Accuracy (数据对账检查) ---
+            if not is_abnormal and k_close is not None:
+                # 1. 价格对账 (容忍 0.015 误差)
+                if abs(last_p - k_close) > 0.015:
                     is_abnormal = True
-                    reasons.append(f"行数少({count})")
+                    error_level = "L3"
+                    reasons.append(f"价格不匹配(Tick:{last_p}/K:{k_close})")
+                
+                # 2. 成交量对账 (容忍 5% 误差, 文档要求)
+                if k_vol and k_vol > 0:
+                    vol_diff = abs(sum_vol - k_vol) / k_vol
+                    if vol_diff > 0.05:
+                        is_abnormal = True
+                        error_level = "L3"
+                        reasons.append(f"成交量差额大({vol_diff:.1%})")
+
+            # 行数硬性兜底 (args.threshold)
+            if not is_abnormal and count < args.threshold:
+                is_abnormal = True
+                error_level = "L2" 
+                reasons.append(f"Tick太稀疏({count})")
 
             if is_abnormal:
                 abnormal_list.append({
                     "code": code,
+                    "level": error_level,
                     "count": count,
                     "active_minutes": active_m,
                     "first_tick": first_t,
@@ -157,33 +187,36 @@ async def main():
         action_recommendation = "NONE"
         failover_mode = False
 
-        logger.info(f"🚦 审计摘要: 缺失={missing_count}({missing_rate:.2%}), 异常={abnormal_count}({abnormal_rate:.2%})")
+        logger.info(f"🚦 审计摘要: 缺失(L1)={missing_count}, 异常(L2/L3)={abnormal_count}")
+        logger.info(f"📊 质量指标: 缺失率={missing_rate:.2%}, 异常率={abnormal_rate:.2%}")
 
-        # 对接 Node-58 韧性策略
         if missing_rate < 0.01 and abnormal_rate < 0.05:
-            # Zone 1: Green -> 几乎完美
-            logger.info("🟢 Zone 1 (Green): 质量极佳，无需特殊干预")
+            logger.info("🟢 Zone 1 (Green): 质量达标，无需自动修复")
             action_recommendation = "NONE"
-            
         elif missing_rate < 0.10 and abnormal_rate < 0.10:
-            # Zone 2: Yellow -> 局部抖动，触发 AI 核查
-            logger.info("🟡 Zone 2 (Yellow): 局部数据异常，启用 AI 审计门禁")
+            logger.info("🟡 Zone 2 (Yellow): 触发 AI 深度定性门禁")
             action_recommendation = "AI_AUDIT"
             
+            # [NEW] 即使在 Yellow Zone，已知异常的个股也需要先行清理其脏数据
+            if abnormal_list:
+                purge_codes = [item['code'] for item in abnormal_list]
+                await service.purge_tick_data(trade_date, purge_codes)
+
         else:
-            # Zone 3: Red -> 系统性缺失 或 大面积异常
-            logger.info(f"🔴 Zone 3 (Red): 集群级数据塌方 (Missing={missing_rate:.1%}, Abnormal={abnormal_rate:.1%})，启动补偿补采模式")
+            logger.info(f"🔴 Zone 3 (Red): 数据大面积缺失，启动 Failover 集中修复模式")
             action_recommendation = "FAILOVER"
             failover_mode = True
             
-            # 在 Failover 模式下，异常数据也视为缺失，强制加入补采队列
-            logger.info("🔧 [Failover] 合并异常股票至补采名单...")
+            # [NEW] Failover 模式下，立即清理所有异常股，准备补采
+            if abnormal_list:
+                purge_codes = [item['code'] for item in abnormal_list]
+                await service.purge_tick_data(trade_date, purge_codes)
+            
+            # Failover 模式下，全量修复
             extra_codes = [item['code'] for item in abnormal_list]
             missing_list.extend(extra_codes)
-            #这种情况下，abnormal_list 可以清空或者保留作为参考，
-            #但为了下游(stock_data_supplement)能通过 sys_missing 拿到全量，必须 merge。
 
-        # 5. 输出结果 (StdOut)
+        # 5. 输出规范 JSON
         result = {
             "date": trade_date,
             "metrics": {
@@ -196,12 +229,7 @@ async def main():
             },
             "diagnosis": {
                 "action": action_recommendation,
-                "failover_mode": failover_mode,
-                "standards": {
-                    "min_active_minutes": min_active,
-                    "min_time": min_time,
-                    "max_time": max_time
-                }
+                "failover_mode": failover_mode
             },
             "missing_list": missing_list,
             "abnormal_list": abnormal_list,
@@ -211,7 +239,7 @@ async def main():
         print(f"GSD_OUTPUT_JSON: {json.dumps(result)}")
 
     except Exception as e:
-        logger.error(f"❌ 审计失败: {e}", exc_info=True)
+        logger.error(f"❌ 深度审计 Job 运行异常: {e}", exc_info=True)
         sys.exit(1)
     finally:
         await service.close()

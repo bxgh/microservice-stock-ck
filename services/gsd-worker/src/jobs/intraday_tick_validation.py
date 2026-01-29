@@ -68,27 +68,27 @@ async def main():
     try:
         # 1. 确定交易日期
         if args.date:
-            trade_date = args.date
+            try:
+                dt = datetime.strptime(args.date, "%Y%m%d")
+                trade_date = dt.strftime("%Y-%m-%d")
+            except ValueError:
+                trade_date = args.date
         else:
-            trade_date = datetime.now(CST).strftime("%Y%m%d")
+            trade_date = datetime.now(CST).strftime("%Y-%m-%d")
         
         logger.info(f"📅 目标日期: {trade_date}")
         
-        # 2. 从 Redis 获取全部股票池 (3个分片合并)
-        expected_codes = []
-        for i in range(3):
-            try:
-                codes = await service.get_sharded_stocks(i)
-                expected_codes.extend(codes)
-                logger.info(f"  Shard {i}: {len(codes)} 只股票")
-            except Exception as e:
-                logger.warning(f"  Shard {i} 加载失败: {e}")
-        
-        if not expected_codes:
-            logger.error("❌ 未能从 Redis 加载股票池，退出")
+        # 2. 获取全量股票名单 (Inventory)
+        # 统一使用 fetch_sync_list 保证名单标准化
+        try:
+            expected_codes = await service.fetch_sync_list(scope="all")
+            if not expected_codes:
+                logger.error("❌ 未能获取全量股票名单，退出")
+                return
+            logger.info(f"✅ 股票池加载完成: 共 {len(expected_codes)} 只")
+        except Exception as e:
+            logger.error(f"❌ 加载股票池失败: {e}")
             return
-        
-        logger.info(f"✅ 股票池加载完成: 共 {len(expected_codes)} 只")
         
         # 3. 调用扩展的 check_intraday_coverage()
         expected, actual, missing = await service.validator.check_intraday_coverage(
@@ -110,9 +110,13 @@ async def main():
         # 5. 如果有缺失且非 dry-run，执行补采
         if missing and not args.dry_run:
             if coverage < args.threshold:
-                logger.info(f"🔧 覆盖率 ({coverage:.1%}) 低于阈值 ({args.threshold:.0%})，开始补采 {len(missing)} 只股票...")
+                logger.info(f"🔧 覆盖率 ({coverage:.1%}) 低于阈值 ({args.threshold:.0%})，准备修复 {len(missing)} 只股票...")
                 
-                # 直接复用现有 sync_stocks()，它会自动判断当日/历史
+                # [NEW] 修复前清算：删除已有残缺数据，防止重复
+                # 对于午盘校验，即使是存在的也会被重拉(如果没过校验)
+                await service.purge_tick_data(trade_date, missing)
+                
+                # 直接复用现有 sync_stocks()
                 results = await service.sync_stocks(missing, trade_date, concurrency=64)
                 
                 logger.info(f"\n✅ 补采完成:")
