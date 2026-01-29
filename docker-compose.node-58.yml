@@ -96,7 +96,7 @@ services:
       - CLICKHOUSE_DB=stock_data
       - CLICKHOUSE_USER=admin
       - CLICKHOUSE_PASSWORD=admin123
-      - MOOTDX_API_URL=http://127.0.0.1:8003
+      - MOOTDX_API_URL=http://192.168.151.41:8003
       # 分布式采集配置
       - SHARD_INDEX=1
       - SHARD_TOTAL=3

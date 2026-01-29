@@ -36,7 +36,8 @@ class TickWorker:
         stock_pool: List[str],
         semaphore: asyncio.Semaphore,
         mootdx_api_url: str,
-        redis_client: Any = None
+        redis_client: Any = None,
+        circuit_breaker: Any = None
     ):
         self.http_session = http_session
         self.writer = writer

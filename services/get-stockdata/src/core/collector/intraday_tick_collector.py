@@ -42,7 +42,7 @@ REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "redis123")
 REDIS_SHARD_KEY_PREFIX = "metadata:stock_codes:shard"
 REDIS_CONNECT_TIMEOUT = 5  # Redis 连接超时 (秒)
 REDIS_SOCKET_TIMEOUT = 10  # Redis 读写超时 (秒)
-REDIS_MAX_CONNECTIONS = 10  # Redis 连接池最大连接数
+REDIS_MAX_CONNECTIONS = 100 # Redis 连接池最大连接数
 
 # 快照采集配置
 SNAPSHOT_INTERVAL_SECONDS = 3.0  # 快照采集间隔
