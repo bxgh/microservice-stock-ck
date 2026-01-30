@@ -31,11 +31,9 @@
 ### 3.1 环境变量 (Environment Variables)
 这些配置在各节点的 `docker-compose.node-*.yml` 中定义：
 
-| 变量名 | 推荐值 | 说明 |
-|---|---|---|
-| `TDX_POOL_SIZE` | 3 - 5 | 每个进程维护的独占 TDX 连接数 |
-| `TDX_HOSTS` | (由 bestip 自动发现) | TDX 采集节点列表 |
-| `SOCKS_PROXY` | `192.168.151.18:12345` | (可选) 出国/加速代理 |
+| `TDX_POOL_SIZE` | 3 - 75 | 每个进程维护的独占 TDX 连接数，41节点建议 75 |
+| `TDX_HOSTS` | (优选海通/华为云) | 核心 TDX 采集节点列表，详见 `tdx_ip.md` |
+| `TDX_AUTO_DISCOVER` | `false` | 禁用自动发现，强制使用 `TDX_HOSTS` 中的验证 IP |
 | `TDX_BIND_IP` | 宿主机内网 IP | 显式绑定本地网卡，优化多网卡路由 |
 
 ### 3.2 性能调优
@@ -44,13 +42,18 @@
 
 ---
 
-## 4. 连接池机制 (TDX Client Pool)
-`mootdx-api` 内部实现了一个 `AsyncContextManager` 风格的连接池：
-1.  **借出 (Acquire)**: Collector 发起请求，Handler 从池中获取空闲的 `TdxHq_API` 实例。
-2.  **执行 (Execute)**: 调用 `transaction()` 接口抓取分笔。
-3.  **归还 (Release)**: 请求结束后立即将连接归还池中，备下次使用。
+## 4. 连接池与自愈机制 (TDX Pool & Watchdog)
+`mootdx-api` 内部实现了一个带 **Watchdog 巡检** 的 `AsyncContextManager` 连接池：
+1.  **健壮实例 (RobustQuotes)**: 自 v1.2 起弃用 `mootdx` 自带的 `factory` 模式，改用直连 `pytdx` 的 `RobustQuotes` 包装器。这解决了 `mootdx` 初始化过程中常见的 `bestip` 逻辑竞争和属性丢失等不稳定性问题。
+2.  **借出 (Acquire)**: Handler 从池中获取空闲的客户端实例。
+3.  **执行 (Execute)**: 调用 TDX 接口执行业务逻辑（通过 `to_data` 进行协议转换）。
+4.  **归还 (Release)**: 请求结束后立即将连接归还池中。
+5.  **巡检 (Watchdog)**: 自 v1.1 起引入后台协程，每 60 秒巡检一次空闲连接：
+    *   **健康检查**: 通过 `get_security_count` 验证协议握手。
+    *   **过期替换**: 发现延迟 > 2s 或连接断开的节点，自动执行热替换，确保采集不中断。
+6.  **端口重用与绑定**: 结合 `SO_REUSEADDR` 和 `TDX_BIND_IP` 补丁，确保高并发下的网卡稳定性和端口可用性。
 
-> **监控提示**: 在 `/health` 接口中可以实时观察 `pool.active` 和 `pool.available` 指标。如果 `available` 长期为 0，应考虑增大 `TDX_POOL_SIZE`。
+> **监控提示**: 在 `/health` 接口中可以实时观察连接池状态。
 
 ---
 

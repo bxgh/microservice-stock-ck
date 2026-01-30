@@ -41,8 +41,12 @@
 *   **诊断 1**: 检查代理服务状态（如使用了 Gost）。
 *   **诊断 2**: 模拟请求测试。
     `curl "http://localhost:8003/api/v1/tick/000001"`
+*   **诊断 3 (NEW)**: 检查 `mootdx-api` 日志是否出现 `ConnectionResetError` 或 `AttributeError: 'TdxHq_API' object has no attribute 'api'`。
+    这通常是因为 `mootdx` 的 `factory` 模式在高并发或网络波动时，由于内部 `bestip` 优选逻辑竞争导致的初始化不完全。
 *   **修复**: 
     - 若特定 TDX IP 被封禁，需更新该节点的 `tdx_ip.md` 或重启 `mootdx-api` 刷新连接。
+    - 确保 `RobustQuotes` 已启用（详见 06 文档）。
+    - 检查 `TDX_HOSTS` 中的 IP 是否都在 `tdx_ip.md` 中标注为支持 `TICK`（分笔成交）。
 
 ---
 
