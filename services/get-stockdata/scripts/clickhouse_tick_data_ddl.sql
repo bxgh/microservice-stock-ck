@@ -29,6 +29,8 @@ CREATE TABLE IF NOT EXISTS tick_data
     -- 0: 买盘, 1: 卖盘, 2: 中性（集合竞价）
     direction     UInt8 COMMENT '买卖方向（0=买 1=卖 2=中性）',
     
+    num           UInt32 DEFAULT 0 COMMENT '成交笔数',
+    
     -- ==================== 元数据 ====================
     created_at    DateTime DEFAULT now() COMMENT '入库时间'
     

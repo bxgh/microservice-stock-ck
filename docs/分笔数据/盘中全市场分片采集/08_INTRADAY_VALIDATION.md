@@ -1,72 +1,49 @@
-# 盘中分笔数据校验与补采系统 (08_INTRADAY_VALIDATION.md)
+# 盘后分笔数据校验逻辑 (Post-Market Tick Validation)
 
-## 1. 系统背景
-盘中分笔采集采用三节点分布式实时流式采集。由于网络波动或 TDX 节点不稳定，可能导致部分个股数据缺失或采集不全。
-本校验系统作为“数据保险层”，在交易时段的特定时刻自动检索全局覆盖情况，并触发靶向补采。
+## 1. 概述
+本逻辑仅适用于**盘后 (15:00 后)** 对当日已采集的分笔数据进行最终质量审计。校验的核心目的是确定**数据是否合格**，若不合格则通过返回状态驱动上层业务进行清洗或补采。
 
-## 2. 核心架构与逻辑
+## 2. 校验模型：L1/L2 双层体系
 
-### 2.1 全局视图校验 (Global Visibility)
-在分布式环境下，单个节点只能看到自己的 `_local` 表。校验任务通过 ClickHouse **分布式表 (`tick_data_intraday`)** 进行查询：
-- **逻辑**: 计算 `(Redis 预期的全市场股票总数) vs (分布式表中实际存在的股票数)`。
-- **关键修复**: 所有的校验逻辑必须通过分布式表视图进行，避免 Master 节点因看不到其他节点的分片数据而产生误判，导致疯狂重复补采。
+采用极简的 **“有 vs 无” -> “对 vs 错”** 双层漏斗模型。
 
-### 2.2 靶向补采逻辑 (Targeted Repair)
-当检测到覆盖率低于设定阈值（默认 95%）或存在明确缺失时，触发补采：
-1. **查重 (Idempotency)**: 补采前调用 `check_quality`。
-   - 如果是当日，查询 `tick_data_intraday`。
-   - 如果是历史，查询 `tick_data`。
-2. **分布式写入 (Distributed Write)**: 补采任务抓取到的数据**必须写入分布式表**，而非本地表。由 ClickHouse 负责将数据均匀散列到 41、58、111 节点。
-3. **低频股优化**: 将判定股票存在的门槛设定为 `count() >= 1`。只要库里有记录，即认为 API 访问过且成功，不再反复补采交易极不活跃的个股。
+### Level 1: 存在性校验 (Availability)
+*   **目标**: 快速识别完全漏抓的股票。
+*   **输入**: ClickHouse 当日 Tick 数据行数 (`check_quality`).
+*   **逻辑**:
+    *   `Tick Count > 0` -> **Pass (进入 L2)**
+    *   `Tick Count == 0` -> **Fail (MISSING)**
 
-## 3. 任务调度配置
+### Level 2: 准确性校验 (Accuracy)
+*   **目标**: 通过与权威日 K 线数据“对账”，确保 Tick 数据内容的正确性。
+*   **输入**: 全量 Tick 聚合数据 (包含 15:00 后的盘后交易) vs 权威日 K 线数据。
+*   **逻辑**:
+    1.  **价格一致性**: `Last(Tick.Price) == KLine.Close` (允许误差 ≤ 0.01)
+    2.  **量能一致性**: `Sum(Tick.Volume) ≈ KLine.Volume` (允许误差 ≤ 2%)
+*   **判定**:
+    *   两项均满足 -> **Pass (VALID)**
+    *   任一项不满足 -> **Fail (INVALID)**
 
-系统在 `tasks.yml` 中配置了两个一体化任务（校验 + 补采）：
+## 3. 校验状态矩阵
 
-| 任务 ID | 执行时间 | 描述 | 目标表 |
+| 状态代码 | 含义 | 触发条件 | 后续建议动作 |
 | :--- | :--- | :--- | :--- |
-| `intraday_tick_validation_noon` | 11:35 | **午休校验**: 检查 9:25-11:30 的覆盖情况并补齐 | `tick_data_intraday` |
-| `intraday_tick_validation_close` | 15:05 | **盘后校验**: 检查全天数据完整性并执行最终补齐 | `tick_data_intraday` |
+| **MISSING** | **缺失** | L1 失败 (Count=0) | 触发补采 |
+| **INVALID** | **异常** | L1 通过，但 L2 失败 (对账不符) | 清洗并触发补采 |
+| **VALID** | **合格** | L1 & L2 均通过 | 归档，允许策略消费 |
 
-## 4. 关键组件与 Job
+## 4. 关键实现细则
 
-- **Job 脚本**: `services/gsd-worker/src/jobs/intraday_tick_validation.py`
-- **校验类**: `libs/gsd-shared/gsd_shared/validation/tick_validator.py`
-  - 核心方法: `check_intraday_coverage()`, `check_quality()`
-- **写入类**: `services/gsd-worker/src/core/tick_writer.py`
-  - 导出目标: `target_table = "tick_data_intraday"`
+### 4.1 盘后交易处理
+*   **原则**: **严禁过滤 15:00 后的数据**。
+*   **说明**: 科创/创业板盘后固定价格交易及主板延迟推送的成交均计入当日总量。计算 `Sum(Volume)` 时必须统计所有记录，否则会导致 L2 误报。
 
-## 5. 手动运维指令
+### 4.2 L2 校验参数
+*   **价格容差**: `0.01` (元)。
+*   **成交量容差**: `0.02` (2%)。
+    *   *注*: 允许 5% 误差是因为部分非交易性质的 Tick (如撤单、某些特殊成交) 在不同数据源的统计口径可能存在微小差异。
 
-### 5.1 手动触发校验 (Dry-run)
-```bash
-docker run --rm --network host gsd-worker:latest \
-  python -m jobs.intraday_tick_validation --session close --dry-run
-```
-
-### 5.2 历史数据覆盖率检查 (指定日期)
-```bash
-docker run --rm --network host gsd-worker:latest \
-  python -m jobs.intraday_tick_validation --session close --date 20260121 --dry-run
-```
-
-### 5.3 检查数据重复情况 (SQL)
-```sql
--- 检查某只股票是否有非预期的重复入库
-SELECT stock_code, count() 
-FROM stock_data.tick_data_intraday 
-WHERE trade_date = '2026-01-21' 
-GROUP BY stock_code 
-ORDER BY count() DESC LIMIT 10;
-```
-
-## 6. 审计与 observability
-
-所有的校验结果会通过 `save_audit_summary` 记录：
-- **日志记录**: 控制台输出 `Coverag: XX.X% (Missing: N)`。
-- **MySQL 审计**: 记录至 `alwaysup.data_audit_summaries`。
-- **重复报警**: 如果同一日期补采后数据量依然异常堆积（如分笔数 > 2万），需检查 TDX 数据源质量。
-
----
-**更新日期**: 2026-01-22  
-**维护者**: Quant Engineering Team
+## 5. 组件映射
+*   **校验核心类**: `libs/gsd-shared/gsd_shared/validation/tick_validator.py`
+    *   方法: `validate_stock(code, date, kline_ref)`
+*   **调用方**: 盘后审计 Job (`audit_tick_resilience`)

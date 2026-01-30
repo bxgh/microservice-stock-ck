@@ -10,8 +10,6 @@ import aiohttp
 import asynch
 import pytz
 import yaml
-from pathlib import Path
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 import redis.asyncio as aioredis
 from gsd_shared.stock_universe import StockUniverseService
 
@@ -92,7 +90,7 @@ class IntradayTickCollector:
     - SHARD_TOTAL>1: 分布式模式，从 Redis 读取分片股票池
     """
 
-    def __init__(self, stock_pool_path: str = None):
+    def __init__(self, stock_pool_path: Optional[str] = None):
         self.mootdx_api_url = os.getenv("MOOTDX_API_URL", "http://127.0.0.1:8003")
         self.stock_pool_path = stock_pool_path or os.getenv("STOCK_POOL_PATH", "/app/config/hs300_stocks.yaml")
         
@@ -292,8 +290,9 @@ class IntradayTickCollector:
         p = item.get('price', 0)
         v = item.get('volume', item.get('vol', 0))
         d = item.get('type', item.get('buyorsell', 'NEUTRAL'))
+        num = item.get('num', 0)
         
-        s = f"{t}|{p}|{v}|{d}"
+        s = f"{t}|{p}|{v}|{d}|{num}"
         return hashlib.md5(s.encode()).hexdigest()
 
     async def _fetch_stock_ticks(self, code: str) -> List[Dict[str, Any]]:
@@ -301,6 +300,9 @@ class IntradayTickCollector:
         url = f"{self.mootdx_api_url}/api/v1/tick/{code}"
         params = {"start": 0, "offset": POLL_OFFSET}  # 获取最新 N 条
         
+        if self.http_session is None:
+            return []
+            
         try:
             async with self.http_session.get(url, params=params) as resp:
                 if resp.status == 200:
@@ -328,14 +330,16 @@ class IntradayTickCollector:
                 if fp not in self.fingerprints[code]:
                     # 映射字段到 ClickHouse 
                     time_str = str(item.get('time', ''))
-                    if len(time_str) == 5: time_str += ":00"
+                    if len(time_str) == 5:
+                        time_str += ":00"
                     
                     price = float(item.get('price', 0))
                     volume = int(item.get('volume', item.get('vol', 0)))
                     direction_str = item.get('type', 'NEUTRAL')
                     direction = self._map_direction(direction_str)
+                    num = int(item.get('num', 0))
                     
-                    # (stock_code, trade_date, tick_time, price, volume, amount, direction)
+                    # (stock_code, trade_date, tick_time, price, volume, amount, direction, num)
                     new_rows.append((
                         code.lstrip('sh').lstrip('sz'), # 存储纯代码
                         today,
@@ -343,7 +347,8 @@ class IntradayTickCollector:
                         price,
                         volume,
                         price * volume,
-                        direction
+                        direction,
+                        num
                     ))
                     self.fingerprints[code].append(fp)
             

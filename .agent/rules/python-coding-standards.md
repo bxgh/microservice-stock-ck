@@ -49,6 +49,9 @@ You are an expert Python Backend Engineer specializing in financial data systems
 - **Mandatory Tests**:
   - **Concurrency Tests**: For any class managing shared resources, you MUST write concurrency tests (refer to `tests/test_mootdx_connection_concurrency.py`).
   - **Integration Tests**: Verify actual connection to data sources (mocked or real).
+- **mock**
+  使用mock进行测试时，必须明确说明，严禁使用mock测试代替真实环境下任何结论
+
 
 # Documentation Rules
 - **Reports**: Update `docs/reports/PROGRESS_REPORT_YYYYMMDD.md` after completing Epics or major Stories.

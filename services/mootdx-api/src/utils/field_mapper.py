@@ -6,7 +6,6 @@ Mootdx 字段映射和数据清洗工具
 """
 
 import pandas as pd
-from typing import Dict, Any
 
 # 买卖方向映射表
 BUYORSELL_MAP = {
@@ -47,7 +46,7 @@ def clean_tick_data(df: pd.DataFrame) -> pd.DataFrame:
         df = df.rename(columns=rename_map)
     
     # 3. 标准化字段顺序
-    standard_columns = ['time', 'price', 'volume', 'type']
+    standard_columns = ['time', 'price', 'volume', 'type', 'num']
     
     # 选择存在的列
     final_columns = [c for c in standard_columns if c in df.columns]

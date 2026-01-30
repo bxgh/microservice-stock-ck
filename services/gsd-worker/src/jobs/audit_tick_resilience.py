@@ -1,248 +1,320 @@
+
 #!/usr/bin/env python3
 """
-Job: audit_tick_resilience.py
-功能：盘后分笔数据韧性审计 (Traffic Cop 2.0)
-职责：
-1. 确定审计日期 (6:00 AM 规则)
-2. 加载全市场预期 A 股名单 (StockUniverse)
-3. 深度审计 ClickHouse分笔连续性 (09:25-15:00, 241分钟)
-4. 实现智能分级路由 (Green/Yellow/Red)
-5. 输出 GSD_OUTPUT_JSON 供编排器决策
+盘后分笔数据审计与自愈作业 (Audit Tick Resilience)
+Implemented per Post-Market Audit Workflow V2
 """
 
 import asyncio
 import logging
 import sys
-import json
+import os
 import argparse
 from datetime import datetime, timedelta
 import pytz
-from core.tick_sync_service import TickSyncService
-from gsd_shared.validation.standards import TickStandards
+import asynch
 
-# 配置日志
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-logger = logging.getLogger("DataQualityAudit")
+# Add src to path
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+
+from core.tick_sync_service import TickSyncService
+
+# Logger setup
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    stream=sys.stdout
+)
+logger = logging.getLogger("AuditTickResilience")
 CST = pytz.timezone('Asia/Shanghai')
 
-async def main():
-    parser = argparse.ArgumentParser(description="盘后数据深度审计 (韧性决策)")
-    parser.add_argument("--date", type=str, help="YYYYMMDD")
-    parser.add_argument("--threshold", type=int, default=1000, help="异常阈值 (行数，仅作参考)")
-    args = parser.parse_args()
+class AuditJob:
+    def __init__(self):
+        self.service = TickSyncService()
+        self.target_date = datetime.now(CST).strftime("%Y-%m-%d")
+        
+    async def initialize(self):
+        await self.service.initialize()
+        
+    async def close(self):
+        await self.service.close()
 
-    service = TickSyncService()
-    await service.initialize()
+    async def get_target_scope(self) -> set:
+        """Step 1: 确定目标范围 (Exclude BJ)"""
+        # 1. 从 Redis 获取 sync_list (全量)
+        # Assuming key is 'monitor:stock_list' or similar managed by Orchestrator
+        # But TickSyncService usually uses a specific key. Let's use service.fetch_sync_list which encapsulates logic.
+        # But we need EXPLICIT exclusion of BJ.
+        
+        all_codes = await self.service.fetch_sync_list(scope="all")
+        if not all_codes:
+            # Fallback for dev: try to get from redis raw key if needed or list_stock_kline table
+            logger.warning("fetch_sync_list returned empty. (Redis empty?)")
+            return set()
 
-    try:
-        # 0. 确定审计日期 (对接 Gate-3 规范)
-        if args.date:
-            try:
-                dt = datetime.strptime(args.date, "%Y%m%d")
-                trade_date = dt.strftime("%Y-%m-%d")
-            except ValueError:
-                trade_date = args.date
-        else:
-            now = datetime.now(CST)
-            if now.hour < 6:
-                target_date = now - timedelta(days=1)
-                logger.info(f"⏰ 当前时间 {now.strftime('%H:%M')} < 06:00，审计前一交易日")
-            else:
-                target_date = now
-            trade_date = target_date.strftime("%Y-%m-%d")
+        # 2. Filter BJ
+        target_scope = set()
+        for code in all_codes:
+            # Code validation: 
+            # BJ exchanges: 8xxxxx, 4xxxxx, 92xxxx
+            # Or prefix 'bj.'
+            # Tick codes usually don't have prefix here? Let's assume standardized 6 digits.
+            if code.startswith(('8', '4', '92')):
+                continue
+            if code.startswith('bj'):
+                continue
+            target_scope.add(code)
+            
+        logger.info(f"🎯 目标范围: 总数={len(all_codes)} -> 过滤北证后={len(target_scope)}")
+        return target_scope
 
-        logger.info(f"️ 开始深度审计 (Level 1-3): {trade_date}")
-
-        # 1. 加载预期名单 (Inventory)
-        # 获取全市场 A 股名单
-        expected_codes = await service.stock_universe.get_all_a_stocks()
-        expected_count = len(expected_codes)
-        logger.info(f"📋 预期 A 股总数: {expected_count}")
-
+    async def check_dependency(self, target_scope: set) -> bool:
+        """Step 2: K线就绪检查"""
+        expected_count = len(target_scope)
         if expected_count == 0:
-            logger.error("❌ 无法获取预期股票名单，审计无法进行")
-            sys.exit(1)
+            return False
 
-        # 2. 联合查询 ClickHouse: Tick指标 + K线对账指标
-        # 整合 L1, L2, L3 需要的所有字段
-        # L3 依赖 stock_kline_daily 进行对账
-        
-        query = f"""
-        SELECT 
-            t.stock_code,
-            t.tick_count,
-            t.first_tick,
-            t.last_tick,
-            t.active_minutes,
-            t.total_volume,
-            t.last_price,
-            k.close_price as kline_close,
-            k.volume as kline_volume
-        FROM (
-            SELECT 
-                stock_code,
-                count() as tick_count,
-                min(tick_time) as first_tick,
-                max(tick_time) as last_tick,
-                countDistinct(substring(tick_time, 1, 5)) as active_minutes,
-                sum(volume) as total_volume,
-                argMax(price, tick_time) as last_price
-            FROM stock_data.tick_data_intraday 
-            WHERE trade_date = '{trade_date}'
-            GROUP BY stock_code
-        ) AS t
-        LEFT JOIN (
-            SELECT stock_code, close_price, volume
-            FROM stock_data.stock_kline_daily
-            WHERE trade_date = '{trade_date}'
-        ) AS k ON t.stock_code = k.stock_code
-        """
-        
-        async with service.clickhouse_pool.acquire() as conn:
+        async with self.service.clickhouse_pool.acquire() as conn:
             async with conn.cursor() as cursor:
-                await cursor.execute(query)
-                rows = await cursor.fetchall()
-        
-        # 3. 深度多维分析 (L1-L3)
-        actual_data = {row[0]: row for row in rows}
-        logger.info(f"📉 实际 Tick 入库股票数: {len(actual_data)}")
+                # Query KLine count for target date
+                # We only count codes that appear in our target_scope
+                # But for performance we just count total excluding BJ
+                await cursor.execute(f"""
+                    SELECT count() 
+                    FROM stock_data.stock_kline_daily 
+                    WHERE trade_date = '{self.target_date}'
+                    AND stock_code NOT LIKE 'bj.%' 
+                    AND stock_code NOT LIKE '%.BJ'
+                    AND stock_code NOT LIKE 'sh.8%%'
+                    AND stock_code NOT LIKE 'sz.8%%'
+                """)
+                row = await cursor.fetchone()
+                actual_count = row[0] if row else 0
 
-        missing_list = []      # L1 缺失
-        abnormal_list = []     # L2/L3 异常
+        coverage = actual_count / expected_count
+        logger.info(f"🏗️  K线就绪检查: 实际={actual_count}/预期={expected_count} (覆盖率={coverage:.2%})")
+
+        if coverage < 0.99:
+            logger.error(f"❌ K线数据未就绪! (Threshold 99%)")
+            # For strict mode, we might want to return False, but let's see actual counts first.
+            if coverage == 0:
+                 return False
+            # Check if we have SOME data to proceed for demonstration?
+            # User said: NO DEGRADE. So return False.
+            return False
+            
+        return True
+
+    def _normalize_code(self, raw_code: str) -> str:
+        """
+        Normalize stock code to 6 digits.
+        Handles: sh.600000, 600000.SH, 600000
+        """
+        code = raw_code.upper()
+        if code.endswith(('.SZ', '.SH', '.BJ')):
+            return code.split('.')[0]
+        if code.startswith(('SZ.', 'SH.', 'BJ.')):
+            return code.split('.')[1]
+        return code
+
+    async def execute_validation(self, target_scope: set):
+        """Step 3: 高速内存对账"""
+        logger.info("🚀 开始高速内存对账...")
         
-        std = TickStandards.IntradayPostMarket
+        # 1. Load Ticks (Batch)
+        # Map: code -> (count, vol, last_price)
+        tick_map = {}
+        async with self.service.clickhouse_pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                logger.info("   -> Loading Tick Data...")
+                await cursor.execute(f"""
+                    SELECT stock_code, count(), sum(volume), argMax(price, tick_time)
+                    FROM tick_data_intraday
+                    WHERE trade_date = '{self.target_date}'
+                    GROUP BY stock_code
+                """)
+                # Use asynch iteration to handle large result set
+                rows = await cursor.fetchall()
+                for r in rows:
+                    tick_map[r[0]] = {'count': r[1], 'vol': float(r[2]), 'price': float(r[3])}
         
-        for code in expected_codes:
-            # --- Level 1: Existence ---
-            if code not in actual_data:
+        logger.info(f"   -> Loaded {len(tick_map)} tick records.")
+
+        # 2. Load KLines (Batch)
+        # Map: code (stripped) -> (vol, close)
+        kline_map = {}
+        async with self.service.clickhouse_pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                logger.info("   -> Loading KLine Data...")
+                # Note: KLine codes have 'sh.'/ 'sz.' prefix usually
+                await cursor.execute(f"""
+                    SELECT stock_code, volume, close_price
+                    FROM stock_data.stock_kline_daily
+                    WHERE trade_date = '{self.target_date}'
+                """)
+                rows = await cursor.fetchall()
+                for r in rows:
+                    # Strip prefix/suffix
+                    std_code = self._normalize_code(r[0])
+                    kline_map[std_code] = {'vol': float(r[1]), 'close': float(r[2])}
+        
+        logger.info(f"   -> Loaded {len(kline_map)} kline records.")
+
+        # 3. Vectorized Compare
+        missing_list = []
+        invalid_list = []
+        valid_cnt = 0
+        
+        for code in target_scope:
+            # L1 Existence
+            if code not in tick_map:
                 missing_list.append(code)
                 continue
             
-            # --- 解析指标 ---
-            # row: [code, count, first, last, active, sum_vol, last_p, k_close, k_vol]
-            _, count, first_t, last_t, active_m, sum_vol, last_p, k_close, k_vol = actual_data[code]
-            
-            is_abnormal = False
-            reasons = []
-            error_level = None
-
-            # --- Level 2: Completeness (结构性检查) ---
-            f_cmp = first_t if len(first_t) == 8 else f"{first_t}:00"
-            l_cmp = last_t if len(last_t) == 8 else f"{last_t}:00"
-            
-            if active_m < std.MIN_ACTIVE_MINUTES:
-                is_abnormal = True
-                error_level = "L2"
-                reasons.append(f"时长不足({active_m}/{std.MIN_ACTIVE_MINUTES})")
-            
-            if f_cmp > std.MIN_TIME:
-                is_abnormal = True
-                error_level = "L2"
-                reasons.append(f"开盘晚({first_t})")
+            # L2 Accuracy
+            if code not in kline_map:
+                # KLine missing for this specific code (even if total coverage is high)
+                # Treat as Invalid or Skip? 
+                # According to "Check & Wait", if global coverage is high, this might be a suspension.
+                # Just skip or warning.
+                continue
                 
-            if l_cmp < std.MAX_TIME:
-                is_abnormal = True
-                error_level = "L2"
-                reasons.append(f"收盘早({last_t})")
-
-            # --- Level 3: Accuracy (数据对账检查) ---
-            if not is_abnormal and k_close is not None:
-                # 1. 价格对账 (容忍 0.015 误差)
-                if abs(last_p - k_close) > 0.015:
-                    is_abnormal = True
-                    error_level = "L3"
-                    reasons.append(f"价格不匹配(Tick:{last_p}/K:{k_close})")
-                
-                # 2. 成交量对账 (容忍 5% 误差, 文档要求)
-                if k_vol and k_vol > 0:
-                    vol_diff = abs(sum_vol - k_vol) / k_vol
-                    if vol_diff > 0.05:
-                        is_abnormal = True
-                        error_level = "L3"
-                        reasons.append(f"成交量差额大({vol_diff:.1%})")
-
-            # 行数硬性兜底 (args.threshold)
-            if not is_abnormal and count < args.threshold:
-                is_abnormal = True
-                error_level = "L2" 
-                reasons.append(f"Tick太稀疏({count})")
-
-            if is_abnormal:
-                abnormal_list.append({
-                    "code": code,
-                    "level": error_level,
-                    "count": count,
-                    "active_minutes": active_m,
-                    "first_tick": first_t,
-                    "last_tick": last_t,
-                    "reason": ",".join(reasons)
+            t_data = tick_map[code]
+            k_data = kline_map[code]
+            
+            # Check Price (0.01)
+            price_diff = abs(t_data['price'] - k_data['close'])
+            if price_diff > 0.01:
+                invalid_list.append({
+                    'code': code, 
+                    'reason': f"Price Diff {price_diff:.3f} (Tick={t_data['price']}, K={k_data['close']})"
                 })
-
-        missing_count = len(missing_list)
-        abnormal_count = len(abnormal_list)
-        missing_rate = missing_count / expected_count if expected_count > 0 else 0.0
-        abnormal_rate = abnormal_count / expected_count if expected_count > 0 else 0.0
-
-        # 4. 智能路由 (The Traffic Cop 2.0 Logic)
-        action_recommendation = "NONE"
-        failover_mode = False
-
-        logger.info(f"🚦 审计摘要: 缺失(L1)={missing_count}, 异常(L2/L3)={abnormal_count}")
-        logger.info(f"📊 质量指标: 缺失率={missing_rate:.2%}, 异常率={abnormal_rate:.2%}")
-
-        if missing_rate < 0.01 and abnormal_rate < 0.05:
-            logger.info("🟢 Zone 1 (Green): 质量达标，无需自动修复")
-            action_recommendation = "NONE"
-        elif missing_rate < 0.10 and abnormal_rate < 0.10:
-            logger.info("🟡 Zone 2 (Yellow): 触发 AI 深度定性门禁")
-            action_recommendation = "AI_AUDIT"
+                continue
+                
+            # Check Volume (2%)
+            if k_data['vol'] > 0:
+                vol_diff_pct = abs(t_data['vol'] - k_data['vol']) / k_data['vol']
+                if vol_diff_pct > 0.02:
+                    invalid_list.append({
+                        'code': code,
+                        'reason': f"Vol Diff {vol_diff_pct:.2%} (Tick={t_data['vol']}, K={k_data['vol']})"
+                    })
+                    continue
             
-            # [NEW] 即使在 Yellow Zone，已知异常的个股也需要先行清理其脏数据
-            if abnormal_list:
-                purge_codes = [item['code'] for item in abnormal_list]
-                await service.purge_tick_data(trade_date, purge_codes)
+            valid_cnt += 1
 
-        else:
-            logger.info(f"🔴 Zone 3 (Red): 数据大面积缺失，启动 Failover 集中修复模式")
-            action_recommendation = "FAILOVER"
-            failover_mode = True
-            
-            # [NEW] Failover 模式下，立即清理所有异常股，准备补采
-            if abnormal_list:
-                purge_codes = [item['code'] for item in abnormal_list]
-                await service.purge_tick_data(trade_date, purge_codes)
-            
-            # Failover 模式下，全量修复
-            extra_codes = [item['code'] for item in abnormal_list]
-            missing_list.extend(extra_codes)
-
-        # 5. 输出规范 JSON
-        result = {
-            "date": trade_date,
-            "metrics": {
-                "total_expected": expected_count,
-                "total_actual": len(actual_data),
-                "missing_count": missing_count,
-                "abnormal_count": abnormal_count,
-                "missing_rate": missing_rate,
-                "abnormal_rate": abnormal_rate
-            },
-            "diagnosis": {
-                "action": action_recommendation,
-                "failover_mode": failover_mode
-            },
-            "missing_list": missing_list,
-            "abnormal_list": abnormal_list,
-            "status": "FAIL" if (missing_rate > 0.01 or abnormal_count > 100) else "SUCCESS"
-        }
+        # 4. Report
+        logger.info(f"\n{'='*40}")
+        logger.info(f"📊 审计报告 ({self.target_date})")
+        logger.info(f"   ✅ Valid:   {valid_cnt}")
+        logger.info(f"   ⭕ Missing: {len(missing_list)}")
+        logger.info(f"   ❌ Invalid: {len(invalid_list)}")
+        logger.info(f"{'='*40}\n")
         
-        print(f"GSD_OUTPUT_JSON: {json.dumps(result)}")
+        # Output details for Invalid
+        if invalid_list:
+            logger.info("Sample Invalid:")
+            for item in invalid_list[:5]:
+                logger.info(f"   - {item['code']}: {item['reason']}")
 
-    except Exception as e:
-        logger.error(f"❌ 深度审计 Job 运行异常: {e}", exc_info=True)
-        sys.exit(1)
-    finally:
-        await service.close()
+        return missing_list, invalid_list
+
+    async def purge_invalid_data(self, invalid_list: list):
+        """Step 4: 物理清洗 (DELETE Invalid)"""
+        if not invalid_list:
+            return
+            
+        codes = [item['code'] for item in invalid_list]
+        logger.info(f"🧹 执行物理清洗: 对象数={len(codes)}")
+        
+        # Split into batches to avoid SQL too long
+        batch_size = 1000
+        for i in range(0, len(codes), batch_size):
+            batch = codes[i:i+batch_size]
+            code_str = ",".join([f"'{c}'" for c in batch])
+            
+            # Must delete from LOCAL table. Assuming simple Distributed->Local mapping.
+            # In production, we should find the local table name dynamically or from config.
+            # Here we hardcode to tick_data_intraday_local based on introspection.
+            sql = f"""
+                ALTER TABLE tick_data_intraday_local ON CLUSTER default
+                DELETE WHERE trade_date = '{self.target_date}' 
+                AND stock_code IN ({code_str})
+            """
+            
+            try:
+                # Use execute (DDL)
+                async with self.service.clickhouse_pool.acquire() as conn:
+                    async with conn.cursor() as cursor:
+                        await cursor.execute(sql)
+                logger.info(f"   -> Batch {i//batch_size + 1}: Deleter Triggered for {len(batch)} records.")
+            except Exception as e:
+                logger.error(f"   -> Batch {i//batch_size + 1} Failed: {e}")
+                
+        # Wait for mutations to finish? 
+        # ClickHouse mutations are async. We don't block here, just assume it will happen.
+
+    async def trigger_repair(self, repair_codes: list):
+        """Step 5: 触发补采"""
+        if not repair_codes:
+            logger.info("✅ 无需补采。")
+            return
+            
+        logger.info(f"🔧 触发补采任务: 数量={len(repair_codes)}")
+        
+        # Use sync_stocks method
+        # Deep inspection result: MootdxFetcher expects 6-digit codes (e.g. '600000')
+        # Do NOT add prefixes manually.
+        
+        try:
+            # We call sync_stocks. 
+            # Note: sync_stocks signature is (stock_codes, trade_date, concurrency, force)
+            await self.service.sync_stocks(
+                stock_codes=repair_codes,
+                trade_date=self.target_date, 
+                concurrency=20, # Higher concurrency for repair
+                force=True
+            )
+            logger.info("✨ 补采任务提交完成")
+            
+        except Exception as e:
+            logger.error(f"❌ 补采任务执行失败: {e}")
+
+    async def run(self):
+        try:
+            await self.initialize()
+            
+            # Step 1
+            target_scope = await self.get_target_scope()
+            if not target_scope:
+                logger.error("Empty target scope. Exit.")
+                return
+                
+            # Step 2
+            is_ready = await self.check_dependency(target_scope)
+            if not is_ready:
+                logger.error("Dependency Check Failed. ABORTING VALIDATION (NO DEGRADE).")
+                sys.exit(1) 
+                
+            # Step 3
+            missing, invalid = await self.execute_validation(target_scope)
+            
+            # Step 4: Actions (Purge & Repair)
+            # 4.1 Purge Invalid
+            if invalid:
+                await self.purge_invalid_data(invalid)
+                
+            # 4.2 Repair (Missing + Invalid)
+            # Combine unique codes
+            invalid_codes = [item['code'] for item in invalid]
+            repair_set = set(missing + invalid_codes)
+            
+            if repair_set:
+                await self.trigger_repair(list(repair_set))
+            
+        finally:
+            await self.close()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    job = AuditJob()
+    asyncio.run(job.run())

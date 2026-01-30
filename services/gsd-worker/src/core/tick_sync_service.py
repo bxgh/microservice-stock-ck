@@ -247,18 +247,19 @@ class TickSyncService:
     async def filter_stocks_need_repair(self, stock_codes: list, trade_date: str) -> list:
         return await self.validator.filter_need_repair(stock_codes, trade_date)
 
-    async def sync_stock(self, stock_code: str, trade_date: str) -> int:
+    async def sync_stock(self, stock_code: str, trade_date: str, force: bool = False) -> int:
         """同步单只股票 (Orchestration Logic)"""
         # 0. init status
         await self.tracker.update(stock_code, trade_date, "processing")
         
         try:
-            # 1. Pre-validation
-            is_valid = await self.validator.check_quality(stock_code, trade_date)
-            if is_valid:
-                logger.debug(f"⏭️ {stock_code} 已跳过 (数据合格)")
-                await self.tracker.update(stock_code, trade_date, "skipped", 0)
-                return -1
+            # 1. Pre-validation (Skip if quality is good AND not forcing)
+            if not force:
+                is_valid = await self.validator.check_quality(stock_code, trade_date)
+                if is_valid:
+                    logger.debug(f"⏭️ {stock_code} 已跳过 (数据合格)")
+                    await self.tracker.update(stock_code, trade_date, "skipped", 0)
+                    return -1
 
             # 2. Fetch
             tick_data = await self.fetcher.fetch(stock_code, trade_date)
@@ -290,13 +291,14 @@ class TickSyncService:
         self, 
         stock_codes: List[str], 
         trade_date: Optional[str] = None,
-        concurrency: int = 3
+        concurrency: int = 3,
+        force: bool = False
     ) -> Dict[str, Any]:
         """批量同步"""
         if trade_date is None:
             trade_date = datetime.now(CST).strftime("%Y%m%d")
             
-        logger.info(f"开始批量同步: {len(stock_codes)} 只, 日期 {trade_date}, 并发 {concurrency}")
+        logger.info(f"开始批量同步: {len(stock_codes)} 只, 日期 {trade_date}, 并发 {concurrency}, 强制={force}")
         
         semaphore = asyncio.Semaphore(concurrency)
         results_lock = asyncio.Lock()
@@ -306,7 +308,7 @@ class TickSyncService:
             async with semaphore:
                 start_t = asyncio.get_running_loop().time()
                 try:
-                    count = await self.sync_stock(code, trade_date)
+                    count = await self.sync_stock(code, trade_date, force=force)
                     async with results_lock:
                         if count > 0:
                             results["success"] += 1

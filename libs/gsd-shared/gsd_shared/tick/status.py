@@ -16,6 +16,7 @@ class SyncStatusTracker:
     
     REDIS_STATUS_EXPIRE_SECONDS = 86400 * 7  # 7 days
     OFFSET_KEY_PATTERN = "tick:offset:{date}:{code}"
+    CHECKPOINT_KEY_PATTERN = "tick:checkpoint:{date}:{code}"
     STATUS_KEY_PATTERN = "tick_sync:status:{date}"
 
     def __init__(self, redis_client: Optional[redis.Redis]):
@@ -45,8 +46,44 @@ class SyncStatusTracker:
         except Exception as e:
             logger.warning(f"Failed to update status in Redis for {stock_code}: {e}")
 
+    async def save_checkpoint(self, stock_code: str, trade_date: str, offset: int, last_fp: str) -> None:
+        """[NEW] 同时保存位点和数据指纹，用于断线重连后的精准补盲"""
+        if not self.redis: return
+        key = self.CHECKPOINT_KEY_PATTERN.format(date=trade_date, code=self._clean_code(stock_code))
+        try:
+            # 存储格式: offset|last_fingerprint
+            value = f"{offset}|{last_fp}"
+            await self.redis.set(key, value, ex=86400)
+        except Exception as e:
+            logger.error(f"Failed to save checkpoint for {stock_code}: {e}")
+
+    async def load_checkpoints(self, stock_codes: List[str], trade_date: str) -> Dict[str, Dict[str, Any]]:
+        """[NEW] 批量加载检查点"""
+        if not self.redis: 
+            return {self._clean_code(c): {"offset": 0, "last_fp": ""} for c in stock_codes}
+        
+        clean_codes = [self._clean_code(c) for c in stock_codes]
+        keys = [self.CHECKPOINT_KEY_PATTERN.format(date=trade_date, code=c) for c in clean_codes]
+        
+        results = {}
+        try:
+            values = await self.redis.mget(keys)
+            for code, val in zip(clean_codes, values):
+                if val:
+                    parts = val.decode().split('|') if isinstance(val, bytes) else val.split('|')
+                    results[code] = {
+                        "offset": int(parts[0]) if len(parts) > 0 else 0,
+                        "last_fp": parts[1] if len(parts) > 1 else ""
+                    }
+                else:
+                    results[code] = {"offset": 0, "last_fp": ""}
+        except Exception as e:
+            logger.error(f"Failed to load checkpoints in bulk: {e}")
+            return {self._clean_code(c): {"offset": 0, "last_fp": ""} for c in stock_codes}
+        return results
+
     async def save_offset(self, stock_code: str, trade_date: str, offset: int) -> None:
-        """Save iteration offset for incremental fetching (24h expiry)"""
+        """Save iteration offset (legacy support)"""
         if not self.redis: return
         key = self.OFFSET_KEY_PATTERN.format(date=trade_date, code=self._clean_code(stock_code))
         try:

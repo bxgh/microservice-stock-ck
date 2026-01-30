@@ -1,9 +1,8 @@
 import asyncio
 import logging
 import os
-from collections import deque
 from datetime import datetime
-from typing import List, Dict, Tuple, Any
+from typing import List, Dict, Any, Optional
 
 import aiohttp
 import pytz
@@ -37,7 +36,7 @@ class TickWorker:
         semaphore: asyncio.Semaphore,
         mootdx_api_url: str,
         redis_client: Any = None,
-        circuit_breaker: Any = None
+        circuit_breaker: Optional[Any] = None
     ):
         self.http_session = http_session
         self.writer = writer
@@ -51,7 +50,8 @@ class TickWorker:
         self.deduplicator = TickDeduplicator(cache_size=FINGERPRINT_CACHE_SIZE)
         self.tracker = SyncStatusTracker(redis_client)
         
-        self.offsets: Dict[str, int] = {}
+        self.checkpoints: Dict[str, Dict[str, Any]] = {}
+        self.bootstrapped_stocks: set = set() # 记录已完成启动接轨的个股
         self.is_running = False
         
     async def run(self, stop_event: asyncio.Event, is_trading_time_func):
@@ -59,10 +59,10 @@ class TickWorker:
         self.is_running = True
         logger.info(f"📊 Starting tick loop for {len(self.stock_pool)} stocks...")
         
-        # 加载初始 Offsets (Centrally)
+        # 加载初始 Checkpoints (NEW: 包含位点与特征指纹)
         today_str = datetime.now(CST).strftime('%Y%m%d')
-        self.offsets = await self.tracker.load_offsets(self.stock_pool, today_str)
-        logger.info(f"✅ Loaded offsets for {len(self.offsets)} stocks via Central Tracker")
+        self.checkpoints = await self.tracker.load_checkpoints(self.stock_pool, today_str)
+        logger.info(f"✅ Loaded checkpoints for {len(self.checkpoints)} stocks. Ready for bootstrap.")
         
         while not stop_event.is_set():
             if not is_trading_time_func():
@@ -90,25 +90,59 @@ class TickWorker:
         logger.info("📊 TickWorker stopped")
 
     async def poll_stock(self, code: str):
-        """采集单只股票"""
+        """
+        采集单只股票
+        策略：启动接轨模式 (Backward Search) + 常态化实时模式 (Start=0)
+        """
         if self.circuit_breaker and not self.circuit_breaker.is_available():
             return
 
         async with self.sem:
             try:
                 clean_code = clean_stock_code(code)
-                start_offset = self.offsets.get(clean_code, 0)
+                checkpoint = self.checkpoints.get(clean_code, {"offset": 0, "last_fp": ""})
+                last_fp = checkpoint.get("last_fp", "")
                 
-                # Fetch with start offset
-                ticks = await self.fetcher.fetch(code, start=start_offset)
-                if not ticks:
+                is_bootstrap = clean_code not in self.bootstrapped_stocks
+                all_raw_ticks = []
+                
+                # --- 核心接轨逻辑 ---
+                if is_bootstrap and last_fp:
+                    # 引导阶段：深度向后回溯直到发现重复或到达深度极限 (10x200=2000行)
+                    current_start = 0
+                    found_anchor = False
+                    
+                    while current_start < 2000 and not found_anchor:
+                        batch = await self.fetcher.fetch(code, start=current_start)
+                        if not batch:
+                            break
+                        
+                        for item in batch:
+                            fp = self.deduplicator._make_key(item)
+                            if fp == last_fp:
+                                found_anchor = True
+                                break
+                            all_raw_ticks.append(item)
+                        
+                        if found_anchor or len(batch) < 100:
+                            break
+                        current_start += 200
+                    
+                    self.bootstrapped_stocks.add(clean_code)
+                else:
+                    # 常态化模式：始终拉取最新一页 (start=0)
+                    all_raw_ticks = await self.fetcher.fetch(code, start=0)
+                    if is_bootstrap:
+                        self.bootstrapped_stocks.add(clean_code)
+
+                if not all_raw_ticks:
                     return
 
                 new_rows = []
                 today = datetime.now(CST).date()
                 
-                for item in ticks:
-                    # Use Shared Deduplicator (Still useful for overlap safety)
+                # 处理新数据（从旧到新反转处理，确保指纹入队顺序更符合时间演进）
+                for item in reversed(all_raw_ticks):
                     if self.deduplicator.is_duplicate(clean_code, item):
                         continue
                         
@@ -119,35 +153,29 @@ class TickWorker:
                     direction_str = item.get('type', 'NEUTRAL')
                     direction = self._map_direction(direction_str)
                     
+                    num = int(item.get('num', 0))
+                    
                     new_rows.append((
-                        clean_code,
-                        today,
-                        time_str,
-                        price,
-                        volume,
-                        price * volume,
-                        direction
+                        clean_code, today, time_str, price, volume, 
+                        price * volume, direction, num
                     ))
             
                 if new_rows:
                     await self.writer.add_ticks(new_rows)
                     
-                    # NOTE: 在实时模式下，start 应该是 0 (指标从最新开始倒序)
-                    # 我们不需要在这里累加偏移量，指纹去重器会处理新老数据。
-                    # 如果为了兼容某些逻辑需要持久化，可以存 0 或当前 round 的计数。
-                    # new_offset = start_offset + count # 不要累加
-                    new_offset = 0 # 实时轮询保持为 0
-                    self.offsets[clean_code] = new_offset
+                    # 更新 Checkpoint (取全量返回中最顶端的一条作为新的 Last Fingerprint)
+                    latest_tick = all_raw_ticks[0]
+                    new_fp = self.deduplicator._make_key(latest_tick)
                     
-                    # Persist to Redis (Centrally)
+                    # 记录并持久化到 Redis
                     today_str = today.strftime('%Y%m%d')
-                    await self.tracker.save_offset(clean_code, today_str, new_offset)
+                    await self.tracker.save_checkpoint(clean_code, today_str, 0, new_fp)
+                    self.checkpoints[clean_code] = {"offset": 0, "last_fp": new_fp}
                     
-            except Exception as e:
+            except Exception:
                 if self.circuit_breaker:
                     self.circuit_breaker.record_failure()
-                # logger.warning(f"⚠️ Poll {code} failed: {repr(e)[:50]}")
-                pass
+                # logger.warning(f"⚠️ Poll {code} failed: {e}")
             else:
                 if self.circuit_breaker:
                     self.circuit_breaker.record_success()

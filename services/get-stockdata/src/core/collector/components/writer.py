@@ -1,8 +1,7 @@
 import asyncio
 import logging
 import os
-from datetime import datetime
-from typing import List, Tuple, Any, Optional
+from typing import List, Tuple, Any
 
 import pytz
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
@@ -128,7 +127,7 @@ class ClickHouseWriter:
                 async with conn.cursor() as cursor:
                     await cursor.execute(
                         f"""INSERT INTO {self.table_name} 
-                        (stock_code, trade_date, tick_time, price, volume, amount, direction) VALUES""",
+                        (stock_code, trade_date, tick_time, price, volume, amount, direction, num) VALUES""",
                         rows_to_write
                     )
             logger.info(f"💾 Flushed {len(rows_to_write)} ticks to ClickHouse ({self.table_name})")

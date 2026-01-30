@@ -189,9 +189,17 @@ class TickValidator:
             time_filter = "tick_time <= '11:30:00'" if session == 'noon' else "1=1"
             
             # 根据 session 设定最小记录数阈值
-            # Noon (120mins): 设为 110 做宽松检查
+            # Noon (120mins): 设为 110 做宽松检查 + 结束时间检查
             # Close (240mins): 设为 230 做完整性检查 (参照 IntradayPostMarket 标准)
             min_count = 110 if session == 'noon' else 230
+            
+            # 构建 having 子句
+            having_sql = "count() >= %(min_count)s AND min(tick_time) <= '09:30:00'"
+            params = {"trade_date": trade_date_str, "min_count": min_count}
+            
+            if session == 'noon':
+                # 午盘额外检查截止时间，防止采集器中途崩溃
+                having_sql += " AND max(tick_time) >= '11:25:00'"
             
             # 查询 tick_data_intraday 表
             async with self.ch_pool.acquire() as conn:
@@ -201,8 +209,8 @@ class TickValidator:
                         FROM tick_data_intraday 
                         WHERE trade_date = %(trade_date)s AND {time_filter}
                         GROUP BY stock_code
-                        HAVING count() >= %(min_count)s AND min(tick_time) <= '09:30:00'
-                    """, {"trade_date": trade_date_str, "min_count": min_count})
+                        HAVING {having_sql}
+                    """, params)
                     rows = await cursor.fetchall()
                     actual_codes = {row[0] for row in rows}
             
@@ -275,7 +283,7 @@ class TickValidator:
                     """, {"code": stock_code, "date": trade_date_str})
                     row = await cursor.fetchone()
             
-            # --- Level 1: Existence ---
+            # --- Level 1: Existence (Availability) ---
             if not row or row[0] == 0:
                 result.update({
                     "status": "FAIL",
@@ -286,59 +294,46 @@ class TickValidator:
                 return result
 
             tick_count, first_tick, last_tick, active_minutes, total_volume, last_price = row
-            std = TickStandards.IntradayPostMarket
-
-            # --- Level 2: Completeness ---
-            l2_reasons = []
             
-            # 活跃分钟数
-            if active_minutes < std.MIN_ACTIVE_MINUTES:
-                l2_reasons.append(f"Low Active Minutes ({active_minutes}/{std.MIN_ACTIVE_MINUTES})")
-            
-            # 开盘时间
-            f_cmp = first_tick if len(first_tick) == 8 else f"{first_tick}:00"
-            if f_cmp > std.MIN_TIME:
-                l2_reasons.append(f"Late Open ({first_tick} > {std.MIN_TIME})")
-
-            # 收盘时间
-            l_cmp = last_tick if len(last_tick) == 8 else f"{last_tick}:00"
-            if l_cmp < std.MAX_TIME:
-                l2_reasons.append(f"Early Close ({last_tick} < {std.MAX_TIME})")
-            
-            if l2_reasons:
-                result.update({
-                    "status": "FAIL",
-                    "level": "L2",
-                    "reasons": l2_reasons,
-                    "action": "REPAIR"
-                })
-                return result
-
-            # --- Level 3: Accuracy ---
+            # --- Level 2: Accuracy (Cross-Validation) ---
             if kline_ref:
-                l3_reasons = []
+                l2_reasons = []
                 
                 # 价格对账 (容忍 0.015 误差)
                 ref_close = kline_ref.get("close")
                 if ref_close is not None:
-                    if abs(last_price - ref_close) > 0.015:
-                        l3_reasons.append(f"Price Mismatch: Tick={last_price} vs KLine={ref_close}")
+                    # 类型强转防止 Decimal 报错
+                    last_price_f = float(last_price)
+                    ref_close_f = float(ref_close)
+                    
+                    if abs(last_price_f - ref_close_f) > 0.015:
+                        l2_reasons.append(f"Price Mismatch: Tick={last_price_f} vs KLine={ref_close_f}")
                 
                 # 成交量对账 (容忍 5% 误差)
                 ref_vol = kline_ref.get("volume")
+                # 注意: 这里对比的是 Sum(Tick.Volume) 全量，包含 15:00 后的盘后成交
                 if ref_vol is not None and ref_vol > 0:
-                    vol_diff_rate = abs(total_volume - ref_vol) / ref_vol
-                    if vol_diff_rate > 0.05:
-                        l3_reasons.append(f"Volume Mismatch: Tick={total_volume} vs KLine={ref_vol} (Diff={vol_diff_rate:.1%})")
+                    total_volume_f = float(total_volume)
+                    ref_vol_f = float(ref_vol)
+                    
+                    vol_diff_rate = abs(total_volume_f - ref_vol_f) / ref_vol_f
+                    if vol_diff_rate > 0.02:
+                        l2_reasons.append(f"Volume Mismatch: Tick={total_volume_f} vs KLine={ref_vol_f} (Diff={vol_diff_rate:.1%})")
 
-                if l3_reasons:
+                if l2_reasons:
                     result.update({
                         "status": "FAIL",
-                        "level": "L3",
-                        "reasons": l3_reasons,
+                        "level": "L2",
+                        "reasons": l2_reasons,
                         "action": "REPAIR"
                     })
                     return result
+            
+            # 若无 KLine 参考，则默认 PASS (或根据需求记录 Warning)
+            # 目前策略: 仅当有 KLine 时才进行 L2, 否则视为 L1 通过即可
+            
+            # 全部通过
+            return result
 
             # 全部通过
             return result
