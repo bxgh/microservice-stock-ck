@@ -47,41 +47,34 @@ async def main():
     stocks_list = []
     engine_extra_config = {}
 
-    if args.sys_action:
+    if args.sys_action and args.sys_action != "NONE":
         # 由 Workflow 4.0 触发
         logger.info(f"🚦 Routing Mode: {args.sys_action}")
         
-        if args.sys_action == "FAILOVER":
-            # Zone 3: 提取 sys_missing
-            raw_list = args.sys_missing
-            logger.info("Using FAILOVER list (sys_missing)")
-            # 解析列表 (简单处理字符串表示)
-            # 假设传入的是 ['000001', '000002'] 或 000001,000002
-            # 为了健壮性，去掉括号引号
-            clean_str = raw_list.replace("[", "").replace("]", "").replace("'", "").replace('"', "")
-            stocks_list = [s.strip() for s in clean_str.split(',') if s.strip()]
+        # 1. 尝试从 sys_missing 提取
+        if args.sys_missing and args.sys_missing != "[]" and args.sys_missing != "None":
+            logger.info("Adding stocks from sys_missing")
+            raw_missing = args.sys_missing
+            clean_str = raw_missing.replace("[", "").replace("]", "").replace("'", "").replace('"', "")
+            missing_list = [s.strip() for s in clean_str.split(',') if s.strip()]
+            stocks_list.extend(missing_list)
+        
+        # 2. 尝试从 sys_confirmed_bad 提取
+        if args.sys_confirmed_bad and args.sys_confirmed_bad != "[]" and args.sys_confirmed_bad != "None":
+            logger.info("Adding stocks from sys_confirmed_bad")
+            raw_bad = args.sys_confirmed_bad
+            clean_str = raw_bad.replace("[", "").replace("]", "").replace("'", "").replace('"', "")
+            bad_list = [s.strip() for s in clean_str.split(',') if s.strip()]
+            stocks_list.extend(bad_list)
             
-            # Failover 模式下强制本地采集
-            if str(args.force_local).lower() == 'true':
-                logger.warning("Applying FAILOVER Config: Distributed Source -> NONE")
-                engine_extra_config['distributed_source'] = 'none' # Override engine behavior
-
-        elif args.sys_action == "AI_AUDIT":
-            # Zone 2: 提取 sys_confirmed_bad
-            raw_list = args.sys_confirmed_bad
-            logger.info("Using AI AUDIT list (sys_confirmed_bad)")
-            # 如果 AI 没确认任何坏的，列表为空
-            if not raw_list or raw_list == "[]" or raw_list == "None":
-                logger.info("AI returned empty bad list. Nothing to do.")
-                return # Exit success
-            
-            clean_str = raw_list.replace("[", "").replace("]", "").replace("'", "").replace('"', "")
-            stocks_list = [s.strip() for s in clean_str.split(',') if s.strip()]
-
-        else:
-             # NONE or Unknown
-             logger.info("Action is NONE. Skipping.")
-             return
+        # 3. 去重
+        stocks_list = list(set(stocks_list))
+        logger.info(f"Total stocks to process: {len(stocks_list)}")
+        
+        # 4. 特殊配置处理
+        if args.sys_action == "FAILOVER" or str(args.force_local).upper() in ('TRUE', 'LOCAL'):
+            logger.warning("Applying FAILOVER/LOCAL Config: Distributed Source -> NONE")
+            engine_extra_config['distributed_source'] = 'none'
 
     elif args.stocks:
         # 手动/旧版触发

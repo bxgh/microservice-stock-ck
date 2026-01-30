@@ -13,6 +13,7 @@ import argparse
 from datetime import datetime, timedelta
 import pytz
 import asynch
+import json
 
 # Add src to path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
@@ -237,7 +238,7 @@ class AuditJob:
             # In production, we should find the local table name dynamically or from config.
             # Here we hardcode to tick_data_intraday_local based on introspection.
             sql = f"""
-                ALTER TABLE tick_data_intraday_local ON CLUSTER default
+                ALTER TABLE tick_data_intraday_local ON CLUSTER stock_cluster
                 DELETE WHERE trade_date = '{self.target_date}' 
                 AND stock_code IN ({code_str})
             """
@@ -309,8 +310,51 @@ class AuditJob:
             invalid_codes = [item['code'] for item in invalid]
             repair_set = set(missing + invalid_codes)
             
-            if repair_set:
-                await self.trigger_repair(list(repair_set))
+            # [Workflow 4.0] Internal repair is disabled. Orchestrator handles repair via stock_data_supplement step.
+            # if repair_set:
+            #     await self.trigger_repair(list(repair_set))
+
+            # Step 4: Diagnosis & Workflow Control (The "Traffic Cop")
+            missing_count = len(missing)
+            invalid_count = len(invalid)
+            total_faults = missing_count + invalid_count
+            
+            # Determine Action based on fault scale (Zones)
+            # Zone 1: Green (< 50 stocks) - Low noise, ignore or light repair
+            if total_faults < 50:
+                action = "NONE"
+                failover_mode = "DEFAULT"
+                logger.info(f"🟢 Zone 1 (Green): Faults={total_faults} < 50. Action=NONE")
+                
+            # Zone 2: Yellow (50 - 500 stocks) - Medium fault, use AI for precision
+            elif total_faults <= 500:
+                action = "AI_AUDIT"
+                failover_mode = "DEFAULT"
+                logger.info(f"🟡 Zone 2 (Yellow): Faults={total_faults}. Action=AI_AUDIT")
+                
+            # Zone 3: Red (> 500 stocks) - Cluster level failure, use Failover (Plan B)
+            else:
+                action = "FAILOVER"
+                failover_mode = "LOCAL" # Force local mode on repair node
+                logger.error(f"🔴 Zone 3 (Red): Faults={total_faults}. Action=FAILOVER (Plan B)")
+
+            # Structured output for Orchestrator (Workflow 4.0)
+            output = {
+                "target_date": self.target_date,
+                "stats": {
+                    "valid": len(target_scope) - missing_count - invalid_count,
+                    "missing": missing_count,
+                    "invalid": invalid_count
+                },
+                "missing_list": missing,
+                "abnormal_list": [item['code'] for item in invalid],
+                "diagnosis": {
+                    "action": action,
+                    "failover_mode": failover_mode
+                }
+            }
+            # Use flush=True and and explicit markers to help capture
+            print(f"\n---GSD_START---\nGSD_OUTPUT_JSON: {json.dumps(output)}\n---GSD_END---", flush=True)
             
         finally:
             await self.close()

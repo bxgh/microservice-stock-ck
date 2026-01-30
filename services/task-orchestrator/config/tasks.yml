@@ -209,7 +209,7 @@ tasks:
       type: cron
       expression: "0 0 1 1 *" # 被工作流取代，设为 Dummy Schedule
     target:
-      image: quant-strategy:latest
+      image: quant-strategy:dev
       command: ["jobs.daily_scan"]
     dependencies:
       - calculate_data_quality
@@ -346,7 +346,7 @@ tasks:
   - id: wait_for_kline
     name: K线就绪探测
     type: docker
-    enabled: false
+    enabled: true
     target:
       command: ["jobs.wait_for_kline"]
 
@@ -354,7 +354,7 @@ tasks:
   - id: calculate_data_quality
     name: 计算数据质量 (L1-L3 Audit)
     type: docker
-    enabled: false
+    enabled: true
     target:
       command: ["jobs.audit_tick_resilience"]
       environment:

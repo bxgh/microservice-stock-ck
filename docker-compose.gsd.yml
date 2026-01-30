@@ -109,10 +109,12 @@ services:
       - ORCHESTRATOR_DOCKER_HOST=unix:///var/run/docker.sock
       - ORCHESTRATOR_WORKER_IMAGE=gsd-worker:latest
       - ORCHESTRATOR_WORKER_NETWORK=host
+      - ORCHESTRATOR_HOST_BASE_DIR=/home/bxgh/microservice-stock
       - ORCHESTRATOR_REDIS_HOST=127.0.0.1
       - ORCHESTRATOR_REDIS_PORT=6379
       - ORCHESTRATOR_REDIS_PASSWORD=redis123
       - ORCHESTRATOR_REDIS_DB=1
+      - ORCHESTRATOR_WORKER_MOOTDX_API_URL=http://127.0.0.1:8003
       - PYTHONPATH=/app/src:/app/libs/gsd-shared:/app/libs/gsd-agent/src
 
       # Worker DB Config (Passed to workers)

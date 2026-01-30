@@ -155,18 +155,34 @@ class DataSupplementEngine:
             "details": []
         }
 
-        # 执行循环
-        for stock_code in stocks:
-            stock_result = await self._process_stock(stock_code, date_list, data_types)
+        # 执行并发处理
+        concurrency = params.get("concurrency_override", 5)
+        semaphore = asyncio.Semaphore(concurrency)
+        
+        async def _worker(code):
+            async with semaphore:
+                return await self._process_stock(code, date_list, data_types)
+
+        logger.info(f"🚀 并发执行补充任务: 总数={len(stocks)}, 并发={concurrency}")
+        
+        tasks = [_worker(code) for code in stocks]
+        total = len(stocks)
+        processed = 0
+        
+        for f in asyncio.as_completed(tasks):
+            stock_result = await f
             results["details"].append(stock_result)
-            if stock_result["status"] == "success":
+            
+            if stock_result["status"] in ("success", "partial"):
                 results["success"] += 1
-            elif stock_result["status"] == "partial":
-                 results["success"] += 1
             else:
                 results["failed"] += 1
+            
+            processed += 1
+            if processed % 100 == 0 or processed == total:
+                logger.info(f"📊 进度: {processed}/{total} ({(processed/total):.1%})")
 
-        logger.info(f"Supplement task completed. Success: {results['success']}, Failed: {results['failed']}")
+        logger.info(f"✨ Supplement task completed. Success: {results['success']}, Failed: {results['failed']}")
         return results
 
     async def _process_stock(self, code: str, dates: List[str], data_types: List[str]) -> Dict[str, Any]:

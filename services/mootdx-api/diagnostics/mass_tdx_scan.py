@@ -64,13 +64,16 @@ async def test_protocol(ip, port):
             lambda: Quotes.factory(market='std', server=(ip, int(port)), bestip=False, timeout=2.0)
         )
         
-        # Test a real command
-        data = await loop.run_in_executor(None, lambda: client.get_security_count(0))
+        # Test a real command (Transaction)
+        # client.transaction(symbol, start, offset)
+        # We use a common stock like sz000001
+        data = await loop.run_in_executor(None, lambda: client.transaction(symbol='sz000001', start=0, offset=1))
         
         latency = (time.time() - start) * 1000
-        if data and data > 0:
-            return True, latency, f"OK ({data})"
-        return False, 0, "No data"
+        # data is DataFrame when successful
+        if data is not None and not data.empty:
+            return True, latency, f"OK ({len(data)} Ticks)"
+        return False, 0, "No data (Empty DataFrame)"
     except Exception as e:
         return False, 0, str(e)
 
