@@ -175,7 +175,7 @@ class TickWorker:
             except Exception:
                 if self.circuit_breaker:
                     self.circuit_breaker.record_failure()
-                # logger.warning(f"⚠️ Poll {code} failed: {e}")
+                logger.warning(f"⚠️ Poll {code} failed: {e}")
             else:
                 if self.circuit_breaker:
                     self.circuit_breaker.record_success()
