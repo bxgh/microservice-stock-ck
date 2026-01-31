@@ -138,14 +138,20 @@ class TickFetcher:
         return self._merge_and_sort(all_frames)
 
     def _merge_and_sort(self, frames: List[List[Dict]]) -> List[Dict]:
-        """Merge frames and sort. REMOVED aggressive deduplication."""
+        """Merge frames and sort. Assign unique sequence keys."""
         if not frames: return []
         
         merged = []
         for f in frames: merged.extend(f)
         
-        # Sort by time
+        # 1. Sort by time normally
         merged.sort(key=lambda x: x.get('time', ''))
+
+        # 2. [CRITICAL FIX] Generate unique 'num' for each row to prevent ClickHouse deduplication
+        # This ensures that even if time/price/vol are identical, each record is preserved.
+        for i, item in enumerate(merged):
+            item['num'] = i + 1  # 1-based monotonic index for the day
+            
         return merged
 
     def _clean_code(self, code: str) -> str:

@@ -87,6 +87,8 @@ class TickWriter:
                 vol = int(item.get('volume', item.get('vol', 0)))
                 # Handle direction string/int mapping
                 direction = self._map_direction(item.get('type', item.get('buyorsell', 2)))
+                # [FIXED] Extract 'num' (trade index) to prevent deduplication
+                num = int(item.get('num', 0))
                 
                 rows.append((
                     clean_code,
@@ -95,7 +97,8 @@ class TickWriter:
                     price,
                     vol,
                     price * vol,  # amount approx
-                    direction
+                    direction,
+                    num
                 ))
 
             if not rows:
@@ -105,7 +108,7 @@ class TickWriter:
             async with self.ch_pool.acquire() as conn:
                 async with conn.cursor() as cursor:
                     await cursor.execute(
-                        f"INSERT INTO stock_data.{target_table} (stock_code, trade_date, tick_time, price, volume, amount, direction) VALUES",
+                        f"INSERT INTO stock_data.{target_table} (stock_code, trade_date, tick_time, price, volume, amount, direction, num) VALUES",
                         rows
                     )
             
