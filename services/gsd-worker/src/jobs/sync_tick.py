@@ -298,9 +298,8 @@ if __name__ == "__main__":
         args.distributed_source,
         args.distributed_role,
         args.concurrency,
-        args.distributed_role,
-        args.concurrency,
         passed_codes,
+        idempotent=args.idempotent
         idempotent=args.idempotent
     ))
     sys.exit(exit_code)
