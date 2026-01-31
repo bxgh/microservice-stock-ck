@@ -37,7 +37,7 @@ async def main(
     distributed_role: str = "consumer",
     concurrency: int = 6,
     stock_codes: list = None,
-    idempotent: bool = True
+    idempotent: bool = False  # Changed default to False for safety
 ) -> int:
     """
     分笔数据同步主函数
@@ -271,10 +271,10 @@ if __name__ == "__main__":
         help="分片ID (Alias for shard-index)"
     )
     parser.add_argument(
-        "--idempotent",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="同步前是否执行幂等清理 (默认开启)"
+        "--force-clean",
+        action="store_true",
+        dest="idempotent",
+        help="[危险] 同步前强制清理旧数据 (默认关闭)"
     )
     args, unknown = parser.parse_known_args()
     if unknown:
@@ -296,6 +296,8 @@ if __name__ == "__main__":
         args.shard_index,
         args.shard_total,
         args.distributed_source,
+        args.distributed_role,
+        args.concurrency,
         args.distributed_role,
         args.concurrency,
         passed_codes,

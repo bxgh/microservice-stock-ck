@@ -259,7 +259,11 @@ class TickSyncService:
     async def filter_stocks_need_repair(self, stock_codes: list, trade_date: str) -> list:
         return await self.validator.filter_need_repair(stock_codes, trade_date)
 
-    async def sync_stock(self, stock_code: str, trade_date: str, force: bool = False, idempotent: bool = True) -> int:
+    async def sync_stock(self, stock_code: str, trade_date: str, force: bool = False, idempotent: bool = False) -> int:
+        """
+        同步单只股票分笔数据
+        :param idempotent: 是否先清理旧数据 (默认 False，安全优先)
+        """
         """同步单只股票 (Orchestration Logic)"""
         # 0. init status
         await self.tracker.update(stock_code, trade_date, "processing")
@@ -305,7 +309,9 @@ class TickSyncService:
         trade_date: Optional[str] = None,
         concurrency: int = 3,
         force: bool = False,
-        idempotent: bool = True
+        concurrency: int = 3,
+        force: bool = False,
+        idempotent: bool = False
     ) -> Dict[str, Any]:
         """批量同步"""
         if trade_date is None:
