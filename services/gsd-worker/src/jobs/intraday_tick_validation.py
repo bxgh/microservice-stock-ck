@@ -117,7 +117,8 @@ async def main():
                 await service.purge_tick_data(trade_date, missing)
                 
                 # 直接复用现有 sync_stocks()
-                results = await service.sync_stocks(missing, trade_date, concurrency=64)
+                # 修复版本: 设置 idempotent=False，因为前面已经批量清理过了
+                results = await service.sync_stocks(missing, trade_date, concurrency=64, idempotent=False)
                 
                 logger.info(f"\n✅ 补采完成:")
                 logger.info(f"  成功: {results['success']}")

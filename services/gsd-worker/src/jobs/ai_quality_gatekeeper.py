@@ -44,8 +44,22 @@ async def main():
     args = parser.parse_args()
 
     # 0. 检查触发条件
+    if args.trigger_condition == "FAILOVER":
+        logger.warning(f"🔴 触发 FAILOVER 模式，跳过 AI 直接补采 {len(args.input_data or '[]')}...")
+        # 提取输入中的列表并全量输出
+        try:
+            report = json.loads(args.input_data or "[]")
+            confirmed = []
+            if isinstance(report, list): confirmed = report
+            elif isinstance(report, dict): confirmed = report.get("abnormal_list", [])
+            print(f"GSD_OUTPUT_JSON: {{\"confirmed_bad_codes\": {json.dumps(confirmed)}}}")
+            return
+        except:
+            print("GSD_OUTPUT_JSON: {\"confirmed_bad_codes\": []}")
+            return
+
     if args.trigger_condition and args.trigger_condition != "AI_AUDIT":
-        logger.info(f"⏭️ 触发条件不满足 ({args.trigger_condition} != AI_AUDIT)，跳过 AI 审核。")
+        logger.info(f"⏭️ 触发条件不满足 ({args.trigger_condition})，且非 FAILOVER，跳过。")
         print("GSD_OUTPUT_JSON: {\"confirmed_bad_codes\": []}")
         return
 

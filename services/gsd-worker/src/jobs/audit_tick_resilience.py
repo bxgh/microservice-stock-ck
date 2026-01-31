@@ -49,20 +49,23 @@ class AuditJob:
         
         all_codes = await self.service.fetch_sync_list(scope="all")
         if not all_codes:
-            # Fallback for dev: try to get from redis raw key if needed or list_stock_kline table
-            logger.warning("fetch_sync_list returned empty. (Redis empty?)")
+            logger.warning("fetch_sync_list returned empty. (Redis empty?) Attempting Fallback to ClickHouse Kline...")
+            async with self.service.clickhouse_pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    # 获取当日有K线记录的所有股票作为基准
+                    await cursor.execute(f"SELECT DISTINCT stock_code FROM stock_data.stock_kline_daily WHERE trade_date = '{self.target_date}'")
+                    rows = await cursor.fetchall()
+                    # 剔除 sh./sz. 前缀并去重
+                    all_codes = list(set([self._normalize_code(r[0]) for r in rows]))
+            
+        if not all_codes:
+            logger.error("❌ Failed to get target scope from both Redis and ClickHouse.")
             return set()
 
         # 2. Filter BJ
         target_scope = set()
         for code in all_codes:
-            # Code validation: 
-            # BJ exchanges: 8xxxxx, 4xxxxx, 92xxxx
-            # Or prefix 'bj.'
-            # Tick codes usually don't have prefix here? Let's assume standardized 6 digits.
             if code.startswith(('8', '4', '92')):
-                continue
-            if code.startswith('bj'):
                 continue
             target_scope.add(code)
             
@@ -129,7 +132,7 @@ class AuditJob:
             async with conn.cursor() as cursor:
                 logger.info("   -> Loading Tick Data...")
                 await cursor.execute(f"""
-                    SELECT stock_code, count(), sum(volume), argMax(price, tick_time)
+                    SELECT stock_code, count(), sum(volume), sum(amount), argMax(price, tick_time)
                     FROM tick_data_intraday
                     WHERE trade_date = '{self.target_date}'
                     GROUP BY stock_code
@@ -137,7 +140,12 @@ class AuditJob:
                 # Use asynch iteration to handle large result set
                 rows = await cursor.fetchall()
                 for r in rows:
-                    tick_map[r[0]] = {'count': r[1], 'vol': float(r[2]), 'price': float(r[3])}
+                    tick_map[r[0]] = {
+                        'count': r[1], 
+                        'vol': float(r[2]), 
+                        'amt': float(r[3]) if r[3] is not None else 0.0,
+                        'price': float(r[4])
+                    }
         
         logger.info(f"   -> Loaded {len(tick_map)} tick records.")
 
@@ -149,7 +157,7 @@ class AuditJob:
                 logger.info("   -> Loading KLine Data...")
                 # Note: KLine codes have 'sh.'/ 'sz.' prefix usually
                 await cursor.execute(f"""
-                    SELECT stock_code, volume, close_price
+                    SELECT stock_code, volume, amount, close_price
                     FROM stock_data.stock_kline_daily
                     WHERE trade_date = '{self.target_date}'
                 """)
@@ -157,7 +165,11 @@ class AuditJob:
                 for r in rows:
                     # Strip prefix/suffix
                     std_code = self._normalize_code(r[0])
-                    kline_map[std_code] = {'vol': float(r[1]), 'close': float(r[2])}
+                    kline_map[std_code] = {
+                        'vol': float(r[1]), 
+                        'amt': float(r[2]) if r[2] is not None else 0.0,
+                        'close': float(r[3])
+                    }
         
         logger.info(f"   -> Loaded {len(kline_map)} kline records.")
 
@@ -183,24 +195,38 @@ class AuditJob:
             t_data = tick_map[code]
             k_data = kline_map[code]
             
-            # Check Price (0.01)
+            # Prepare diffs
             price_diff = abs(t_data['price'] - k_data['close'])
+            amt_diff_abs = abs(t_data['amt'] - k_data['amt'])
+
+            # Check Price (0.01)
             if price_diff > 0.01:
                 invalid_list.append({
                     'code': code, 
-                    'reason': f"Price Diff {price_diff:.3f} (Tick={t_data['price']}, K={k_data['close']})"
+                    'reason': f"Price Diff {price_diff:.3f} (Tick={t_data['price']}, K={k_data['close']})",
+                    'amt_diff': amt_diff_abs
                 })
                 continue
                 
-            # Check Volume (2%)
+            # L3: Volume & Amount Compare (2% Threshold)
+            vol_diff_pct = 0
             if k_data['vol'] > 0:
                 vol_diff_pct = abs(t_data['vol'] - k_data['vol']) / k_data['vol']
-                if vol_diff_pct > 0.02:
-                    invalid_list.append({
-                        'code': code,
-                        'reason': f"Vol Diff {vol_diff_pct:.2%} (Tick={t_data['vol']}, K={k_data['vol']})"
-                    })
-                    continue
+                
+            amt_diff_abs = abs(t_data['amt'] - k_data['amt'])
+            amt_diff_pct = 0
+            if k_data['amt'] > 0:
+                amt_diff_pct = abs(t_data['amt'] - k_data['amt']) / k_data['amt']
+
+            # Trigger condition: Vol or Amount mismatch > 2%
+            if vol_diff_pct > 0.02 or amt_diff_pct > 0.02:
+                invalid_list.append({
+                    'code': code,
+                    'reason': f"Mismatch (Vol={vol_diff_pct:.1%}, Amt={amt_diff_pct:.1%})",
+                    'amt_diff': amt_diff_abs,
+                    'vol_diff_pct': vol_diff_pct
+                })
+                continue
             
             valid_cnt += 1
 
@@ -300,13 +326,16 @@ class AuditJob:
             # Step 3
             missing, invalid = await self.execute_validation(target_scope)
             
-            # Step 4: Actions (Purge & Repair)
-            # 4.1 Purge Invalid
-            if invalid:
-                await self.purge_invalid_data(invalid)
-                
-            # 4.2 Repair (Missing + Invalid)
-            # Combine unique codes
+            # Step 4: Actions (Workflow 4.0 Mode)
+            # In Workflow 4.0, AuditJob is purely for observation and diagnosis.
+            # Data purging and repair are delegated to subsequent workflow steps (AI + Supplement)
+            # based on the audit's structured output.
+            
+            # 4.1 Purge Invalid (REMOVED: Delegated to Repair step)
+            # if invalid:
+            #     await self.purge_invalid_data(invalid)
+            
+            # Combine unique codes for reporting
             invalid_codes = [item['code'] for item in invalid]
             repair_set = set(missing + invalid_codes)
             
@@ -314,43 +343,44 @@ class AuditJob:
             # if repair_set:
             #     await self.trigger_repair(list(repair_set))
 
-            # Step 4: Diagnosis & Workflow Control (The "Traffic Cop")
+            # Step 4: Diagnosis & Workflow Control (The "Tiered Triage" Traffic Cop)
+            # Tier A: Heavy Fault (Amount Diff >= 100,000)
+            heavy_faults = [item['code'] for item in invalid if item['amt_diff'] >= 100000]
+            # Tier B: Light Fault (Amount Diff < 100,000)
+            light_faults = [item['code'] for item in invalid if item['amt_diff'] < 100000]
+            
             missing_count = len(missing)
             invalid_count = len(invalid)
             total_faults = missing_count + invalid_count
             
-            # Determine Action based on fault scale (Zones)
-            # Zone 1: Green (< 50 stocks) - Low noise, ignore or light repair
-            if total_faults < 50:
+            # Tiered Logic:
+            # - Missing + Heavy Faults -> Direct Repair
+            # - Light Faults -> AI Review (unless > 50 stocks)
+            
+            if total_faults == 0:
                 action = "NONE"
-                failover_mode = "DEFAULT"
-                logger.info(f"🟢 Zone 1 (Green): Faults={total_faults} < 50. Action=NONE")
-                
-            # Zone 2: Yellow (50 - 500 stocks) - Medium fault, use AI for precision
-            elif total_faults <= 500:
-                action = "AI_AUDIT"
-                failover_mode = "DEFAULT"
-                logger.info(f"🟡 Zone 2 (Yellow): Faults={total_faults}. Action=AI_AUDIT")
-                
-            # Zone 3: Red (> 500 stocks) - Cluster level failure, use Failover (Plan B)
+            elif len(light_faults) > 50:
+                action = "FAILOVER" # In Workflow, this can trigger direct repair or different routing
+                logger.warning(f"🔴 Light Faults ({len(light_faults)}) > 50. Eskalating to direct repair workflow.")
             else:
-                action = "FAILOVER"
-                failover_mode = "LOCAL" # Force local mode on repair node
-                logger.error(f"🔴 Zone 3 (Red): Faults={total_faults}. Action=FAILOVER (Plan B)")
+                action = "AI_AUDIT"
+                logger.info(f"🟡 Tiered Triage: Missing={missing_count}, Heavy={len(heavy_faults)}, Light={len(light_faults)}. Action={action}")
 
             # Structured output for Orchestrator (Workflow 4.0)
             output = {
                 "target_date": self.target_date,
                 "stats": {
-                    "valid": len(target_scope) - missing_count - invalid_count,
+                    "valid": len(target_scope) - total_faults,
                     "missing": missing_count,
-                    "invalid": invalid_count
+                    "heavy_fault": len(heavy_faults),
+                    "light_fault": len(light_faults)
                 },
-                "missing_list": missing,
-                "abnormal_list": [item['code'] for item in invalid],
+                # Workflow Keys:
+                "missing_list": list(set(missing + heavy_faults)), # Combined for execute_repair.sys_missing
+                "abnormal_list": light_faults,                     # Sent to AI review
                 "diagnosis": {
                     "action": action,
-                    "failover_mode": failover_mode
+                    "failover_mode": "DEFAULT"
                 }
             }
             # Use flush=True and and explicit markers to help capture
@@ -360,5 +390,13 @@ class AuditJob:
             await self.close()
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="盘后分笔数据审计")
+    parser.add_argument("--date", type=str, help="审计日期 (YYYY-MM-DD)")
+    parser.add_argument("--threshold", type=float, default=1000, help="故障阈值")
+    args = parser.parse_args()
+    
     job = AuditJob()
+    if args.date:
+        job.target_date = args.date
+    
     asyncio.run(job.run())
