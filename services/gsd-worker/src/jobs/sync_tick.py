@@ -300,6 +300,5 @@ if __name__ == "__main__":
         args.concurrency,
         passed_codes,
         idempotent=args.idempotent
-        idempotent=args.idempotent
     ))
     sys.exit(exit_code)
