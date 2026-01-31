@@ -309,8 +309,6 @@ class TickSyncService:
         trade_date: Optional[str] = None,
         concurrency: int = 3,
         force: bool = False,
-        concurrency: int = 3,
-        force: bool = False,
         idempotent: bool = False
     ) -> Dict[str, Any]:
         """批量同步"""
