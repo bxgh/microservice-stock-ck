@@ -36,7 +36,8 @@ async def main(
     distributed_source: str = "none",
     distributed_role: str = "consumer",
     concurrency: int = 6,
-    stock_codes: list = None
+    stock_codes: list = None,
+    idempotent: bool = True
 ) -> int:
     """
     分笔数据同步主函数
@@ -173,12 +174,12 @@ async def main(
                 results = {"success": processed_count, "failed": failed_count, "total_records": processed_count}
                 
         else:
-            # 原始模式: 直接并发列表
             results = await service.sync_stocks(
                 stock_codes=stock_codes,
                 trade_date=target_date,
                 concurrency=concurrency,
-                force=(mode == "full")
+                force=(mode == "full"),
+                idempotent=idempotent
             )
         
         duration = (datetime.now() - start_time).total_seconds()
@@ -269,6 +270,12 @@ if __name__ == "__main__":
         default=None,
         help="分片ID (Alias for shard-index)"
     )
+    parser.add_argument(
+        "--idempotent",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="同步前是否执行幂等清理 (默认开启)"
+    )
     args, unknown = parser.parse_known_args()
     if unknown:
         logger.info(f"Ignored unknown arguments: {unknown}")
@@ -291,6 +298,7 @@ if __name__ == "__main__":
         args.distributed_source,
         args.distributed_role,
         args.concurrency,
-        passed_codes
+        passed_codes,
+        idempotent=args.idempotent
     ))
     sys.exit(exit_code)

@@ -11,6 +11,7 @@ import sys
 import os
 import argparse
 from datetime import datetime, timedelta
+from typing import List, Optional
 import pytz
 import asynch
 import json

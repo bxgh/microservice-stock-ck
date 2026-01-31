@@ -25,6 +25,8 @@ from core.task_queue import TickTaskQueue
 from gsd_shared.stock_universe import StockUniverseService
 from gsd_shared.validation.tick_validator import TickValidator
 from gsd_shared.tick import TickFetcher, TickWriter
+from gsd_shared.tick.constants import TABLE_INTRADAY_LOCAL, TABLE_HISTORY_LOCAL
+from gsd_shared.tick.utils import clean_stock_code
 from core.sync_status import SyncStatusTracker
 
 logger = logging.getLogger(__name__)
@@ -161,7 +163,7 @@ class TickSyncService:
         """
         [NEW] 物理清理异常分笔数据
         用于修复策略前置动作: 发现质量不合格即刻删除已有脏数据，确保重新拉取后不产生重复/混杂。
-        修复版本: 增加分批处理以避免 ClickHouse Mutation 堆积
+        修复版本: 增加分批处理以避免 ClickHouse Mutation 堆积，并动态选择表。
         """
         if not stock_codes or not self.clickhouse_pool:
             return False
@@ -171,20 +173,26 @@ class TickSyncService:
             trade_date_dt = trade_date.replace('-', '')
             formatted_date = f"{trade_date_dt[:4]}-{trade_date_dt[4:6]}-{trade_date_dt[6:8]}"
             
+            # 动态选择目标表
+            today_str = datetime.now(CST).strftime("%Y%m%d")
+            target_table = TABLE_INTRADAY_LOCAL if trade_date_dt == today_str else TABLE_HISTORY_LOCAL
+
             # 分批执行清理 (每 500 只股票一组)，防止 SQL 过长或 Mutation 过于复杂
             batch_size = 500
             for i in range(0, len(stock_codes), batch_size):
                 batch = stock_codes[i:i+batch_size]
-                codes_str = ",".join([f"'{c}'" for c in batch])
+                # 必须清理代码前缀以匹配 ClickHouse 存储格式
+                cleaned_batch = [clean_stock_code(c) for c in batch]
+                codes_str = ",".join([f"'{c}'" for c in cleaned_batch])
                 
                 # 使用分布式全量清理 (需操作 _local 表 + ON CLUSTER)
                 sql = f"""
-                ALTER TABLE stock_data.tick_data_intraday_local ON CLUSTER stock_cluster
+                ALTER TABLE stock_data.{target_table} ON CLUSTER stock_cluster
                 DELETE WHERE trade_date = '{formatted_date}' 
                   AND stock_code IN ({codes_str})
                 """
                 
-                logger.warning(f"🗑️ [Hard Purge] 正在清理 {len(batch)} 只个股的数据批次: {formatted_date}")
+                logger.warning(f"🗑️ [Batch Purge] 正在从 {target_table} 清理 {len(batch)} 只个股的数据批次: {formatted_date}")
                 
                 async with self.clickhouse_pool.acquire() as conn:
                     async with conn.cursor() as cursor:
@@ -305,6 +313,13 @@ class TickSyncService:
             
         logger.info(f"开始批量同步: {len(stock_codes)} 只, 日期 {trade_date}, 并发 {concurrency}, 强制={force}, 幂等清理={idempotent}")
         
+        # [Mutation Storm Fix]: 如果需要幂等同步，在这里进行一次性的批量清理。
+        # 避免在 loop 中每只股票都发起一个 ALTER TABLE DELETE 任务导致 ClickHouse 队列阻塞。
+        if idempotent and stock_codes:
+            await self.purge_tick_data(trade_date, stock_codes)
+            # 全量清理后，禁用单只股票的内部幂等清理，以提升插入吞吐量并保护数据库。
+            idempotent = False
+            
         semaphore = asyncio.Semaphore(concurrency)
         results_lock = asyncio.Lock()
         results = {"success": 0, "failed": 0, "skipped": 0, "total_records": 0, "errors": [], "failed_codes": []}
