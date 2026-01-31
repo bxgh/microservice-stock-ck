@@ -290,7 +290,7 @@ class IntradayTickCollector:
         p = item.get('price', 0)
         v = item.get('volume', item.get('vol', 0))
         d = item.get('type', item.get('buyorsell', 'NEUTRAL'))
-        num = item.get('num', 0)
+        num = item.get('num', item.get('no', item.get('index', 0)))
         
         s = f"{t}|{p}|{v}|{d}|{num}"
         return hashlib.md5(s.encode()).hexdigest()
@@ -337,7 +337,7 @@ class IntradayTickCollector:
                     volume = int(item.get('volume', item.get('vol', 0)))
                     direction_str = item.get('type', 'NEUTRAL')
                     direction = self._map_direction(direction_str)
-                    num = int(item.get('num', 0))
+                    num = int(item.get('num', item.get('no', item.get('index', 0))))
                     
                     # (stock_code, trade_date, tick_time, price, volume, amount, direction, num)
                     new_rows.append((

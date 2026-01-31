@@ -30,9 +30,10 @@ logger = logging.getLogger("AuditTickResilience")
 CST = pytz.timezone('Asia/Shanghai')
 
 class AuditJob:
-    def __init__(self):
+    def __init__(self, stock_codes: Optional[List[str]] = None):
         self.service = TickSyncService()
         self.target_date = datetime.now(CST).strftime("%Y-%m-%d")
+        self.stock_codes = stock_codes
         
     async def initialize(self):
         await self.service.initialize()
@@ -42,34 +43,34 @@ class AuditJob:
 
     async def get_target_scope(self) -> set:
         """Step 1: 确定目标范围 (Exclude BJ)"""
-        # 1. 从 Redis 获取 sync_list (全量)
-        # Assuming key is 'monitor:stock_list' or similar managed by Orchestrator
-        # But TickSyncService usually uses a specific key. Let's use service.fetch_sync_list which encapsulates logic.
-        # But we need EXPLICIT exclusion of BJ.
-        
-        all_codes = await self.service.fetch_sync_list(scope="all")
+        # Priority 1: User specified stock codes
+        if self.stock_codes:
+            all_codes = self.stock_codes
+        else:
+            # Priority 2: From Redis sync_list
+            all_codes = await self.service.fetch_sync_list(scope="all")
+            
         if not all_codes:
             logger.warning("fetch_sync_list returned empty. (Redis empty?) Attempting Fallback to ClickHouse Kline...")
             async with self.service.clickhouse_pool.acquire() as conn:
                 async with conn.cursor() as cursor:
-                    # 获取当日有K线记录的所有股票作为基准
                     await cursor.execute(f"SELECT DISTINCT stock_code FROM stock_data.stock_kline_daily WHERE trade_date = '{self.target_date}'")
                     rows = await cursor.fetchall()
-                    # 剔除 sh./sz. 前缀并去重
                     all_codes = list(set([self._normalize_code(r[0]) for r in rows]))
             
         if not all_codes:
-            logger.error("❌ Failed to get target scope from both Redis and ClickHouse.")
+            logger.error("❌ Failed to get target scope.")
             return set()
 
-        # 2. Filter BJ
+        # Filter BJ for standard audit
         target_scope = set()
         for code in all_codes:
-            if code.startswith(('8', '4', '92')):
+            normalized = self._normalize_code(code)
+            if normalized.startswith(('8', '4', '92')):
                 continue
-            target_scope.add(code)
+            target_scope.add(normalized)
             
-        logger.info(f"🎯 目标范围: 总数={len(all_codes)} -> 过滤北证后={len(target_scope)}")
+        logger.info(f"🎯 目标范围: 总数={len(all_codes)} -> 过滤非法/北证后={len(target_scope)}")
         return target_scope
 
     async def check_dependency(self, target_scope: set) -> bool:
@@ -125,16 +126,20 @@ class AuditJob:
         """Step 3: 高速内存对账"""
         logger.info("🚀 开始高速内存对账...")
         
+        today_str = datetime.now(CST).strftime("%Y-%m-%d")
+        target_table = "tick_data_intraday" if self.target_date == today_str else "tick_data"
+        
         # 1. Load Ticks (Batch)
         # Map: code -> (count, vol, last_price)
         tick_map = {}
         async with self.service.clickhouse_pool.acquire() as conn:
             async with conn.cursor() as cursor:
-                logger.info("   -> Loading Tick Data...")
+                logger.info(f"   -> Loading Tick Data from {target_table}...")
                 await cursor.execute(f"""
                     SELECT stock_code, count(), sum(volume), sum(amount), argMax(price, tick_time)
-                    FROM tick_data_intraday
+                    FROM {target_table} FINAL
                     WHERE trade_date = '{self.target_date}'
+                      AND tick_time <= '15:00:00'
                     GROUP BY stock_code
                 """)
                 # Use asynch iteration to handle large result set
@@ -393,9 +398,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="盘后分笔数据审计")
     parser.add_argument("--date", type=str, help="审计日期 (YYYY-MM-DD)")
     parser.add_argument("--threshold", type=float, default=1000, help="故障阈值")
+    parser.add_argument("--stock-codes", type=str, help="手动指定审计列表 (逗号分隔)")
     args = parser.parse_args()
     
-    job = AuditJob()
+    codes = args.stock_codes.split(",") if args.stock_codes else None
+    job = AuditJob(stock_codes=codes)
     if args.date:
         job.target_date = args.date
     

@@ -88,7 +88,8 @@ class TickWriter:
                 # Handle direction string/int mapping
                 direction = self._map_direction(item.get('type', item.get('buyorsell', 2)))
                 # [FIXED] Extract 'num' (trade index) to prevent deduplication
-                num = int(item.get('num', 0))
+                # Co-aligned with intraday_tick_collector and fetcher aliases
+                num = int(item.get('num', item.get('no', item.get('index', 0))))
                 
                 rows.append((
                     clean_code,

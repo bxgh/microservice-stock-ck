@@ -60,17 +60,29 @@ async def test_fetcher_historical_param():
     assert call_args[1]["params"]["date"] == 20230101
 
 def test_deduplicator():
-    """Test Deduplicator logic"""
+    """Test Deduplicator logic (V2 Occurrence-shared)"""
     dedup = TickDeduplicator(cache_size=10)
     
     item1 = {"time": "10:00", "price": 10.0, "vol": 100}
     item2 = {"time": "10:00", "price": 10.0, "volume": 100} # Alias check
     item3 = {"time": "10:01", "price": 10.0, "vol": 100}
     
+    # Batch 1
+    dedup.reset_batch_counters()
     assert dedup.is_duplicate("600000", item1) == False
-    assert dedup.is_duplicate("600000", item1) == True # Second time
-    assert dedup.is_duplicate("600000", item2) == True # Alias volume
-    assert dedup.is_duplicate("600000", item3) == False
+    
+    # Same item in SAME batch should be treated as a SECOND distinct trade (if using different objects)
+    # But for the EXACT same object, my code has idempotency logic
+    assert dedup.is_duplicate("600000", item1) == True # Idempotency on same object
+    
+    # Different object with same content in SAME batch -> Distinct trade!
+    assert dedup.is_duplicate("600000", item2) == False 
+    
+    # Batch 2 (Next polling round)
+    dedup.reset_batch_counters()
+    assert dedup.is_duplicate("600000", item1) == True # Duplicate across batches
+    assert dedup.is_duplicate("600000", item2) == True # Duplicate across batches
+    assert dedup.is_duplicate("600000", item3) == False # New content
 
 @pytest.mark.asyncio
 async def test_writer_routing_and_mapping():

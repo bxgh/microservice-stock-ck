@@ -891,7 +891,9 @@ class KLineSyncService:
                     continue
                 
                 # L5: 跨字段关联 (指数代码跳过由于成交量计算差异导致的校验失败)
-                if not code.startswith(('sh.000', 'sz.399')):
+                # 兼容多种格式: sh.000001, 000001.SH, 399001.SZ
+                is_index = code.startswith(('sh.000', 'sz.399', '000', '399')) or code.endswith(('.SH', '.SZ')) and (code.startswith('000') or code.startswith('399'))
+                if not is_index:
                     is_valid, error = self._validate_cross_field_correlation(row)
                     if not is_valid:
                         validation_stats["L5_failed"] += 1

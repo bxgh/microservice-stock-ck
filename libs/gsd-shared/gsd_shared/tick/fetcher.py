@@ -8,6 +8,7 @@ import pytz
 
 from .constants import MOOTDX_TICK_ENDPOINT
 from .utils import clean_stock_code
+from .deduplicator import TickDeduplicator
 
 logger = logging.getLogger(__name__)
 CST = pytz.timezone('Asia/Shanghai')
@@ -25,135 +26,135 @@ class TickFetcher:
         REALTIME = "realtime"
         HISTORICAL = "historical"
         
-    # Search Matrix: (start, offset, description)
-    # Used for ensuring data integrity during backfill
-    SEARCH_MATRIX = [
-        (0, 5000, "Full Base"),
-        (3500, 800, "Mid-Morning Gap"),
-        (4000, 500, "Late-Morning Gap"),
-        (4500, 800, "Early-Afternoon Gap"),
-        (3000, 1000, "Deep Probe 1"),
-        (5000, 1000, "Deep Probe 2"),
-        (6000, 1200, "Deep Probe 3"),
-        (2000, 1500, "Wide Scan 1"),
-        (7000, 1500, "Wide Scan 2"),
-    ]
-
-    TARGET_TIME = "09:25"
-    
     def __init__(self, http_session: aiohttp.ClientSession, api_url: str, mode: Mode = Mode.REALTIME):
-        """
-        Args:
-            http_session: aiohttp ClientSession
-            api_url: Base URL of mootdx-api (e.g., http://localhost:8003)
-            mode: Fetch mode
-        """
         self.http = http_session
         self.api_url = api_url.rstrip('/')
         self.mode = mode
+        self.deduplicator = TickDeduplicator()
+
+    TARGET_TIME = "09:25"
 
     async def fetch(
-        self, 
-        stock_code: str, 
+        self,
+        stock_code: str,
         trade_date: Optional[str] = None,
         start: int = 0
     ) -> List[Dict[str, Any]]:
-        """
-        Fetch tick data based on configured mode.
+        # Clean code
+        clean_code = clean_stock_code(stock_code)
         
-        Args:
-            stock_code: Stock code (e.g. "600519")
-            trade_date: Optional date string "YYYYMMDD". 
-                        If None, fetches TODAY's data.
-        """
-        # 1. Use raw code for API calls to preserve market prefix (sh/sz)
-        # 2. Determine strategy
+        # Reset deduplicator counters for this stock
+        self.deduplicator.reset_batch_counters()
+        # Also clear cache for this specific code to ensure absolute fresh fetch if needed
+        # (Actually, reset_batch_counters is usually enough for occurrence based)
+        
+        # Determine strategy
         if self.mode == self.Mode.REALTIME:
-            return await self._fetch_realtime(stock_code, start)
+            return await self._fetch_realtime(clean_code, start)
         else:
-            # Always use Linear Scan to enforce integrity and avoid duplication
-            # The Matrix strategy relied on aggressive deduplication which caused data loss
-            return await self._fetch_linear_scan(stock_code, trade_date)
+            return await self._fetch_linear_scan(clean_code, trade_date)
 
     async def _fetch_realtime(self, code: str, start: int = 0) -> List[Dict]:
         """Single request for realtime update"""
         url = self.api_url + MOOTDX_TICK_ENDPOINT.format(code=code)
         try:
-            # Short timeout for realtime
             params = {"start": start}
             async with self.http.get(url, params=params, timeout=aiohttp.ClientTimeout(total=4)) as resp:
                 if resp.status == 200:
-                    return await resp.json()
-                # 404 is expected for market open/not-started stocks
-                if resp.status != 404:
-                    logger.warning(f"Tick API error {code}: {resp.status}")
+                    data = await resp.json()
+                    # Apply deduplication
+                    return [i for i in data if not self.deduplicator.is_duplicate(code, i)]
         except Exception as e:
             logger.debug(f"Tick fetch failed {code}: {e}")
         return []
 
-    async def _fetch_historical_matrix(self, code: str) -> List[Dict]:
-        """Obsolete: Matrix search (Deprecated due to deduplication issues)"""
-        return await self._fetch_linear_scan(code, None)
-
     async def _fetch_linear_scan(self, code: str, date: Optional[str]) -> List[Dict]:
-        """Linear scan for full day data (History or Today)"""
+        """
+        Matrix-Stitching Scan for full day data.
+        Uses overlapping slices to ensure no data is missed due to API cursor instability.
+        """
         url = self.api_url + MOOTDX_TICK_ENDPOINT.format(code=code)
-        all_frames = []
-        
+        all_raw_items = []
         max_depth = 50000
-        step = 2000 # TDX standard step
+        
+        # Stability settings: Overlapping slices (25% overlap)
+        chunk_offset = 800 
+        chunk_step = 600
         current_start = 0
         
-        # Prepare params base
-        params_base = {"start": 0, "offset": step}
+        params_base = {"offset": chunk_offset}
         if date:
             params_base["date"] = int(date)
-        
+
+        logger.debug(f"🔍 Starting Matrix-Stitching for {code} (date={date})")
+
         while current_start < max_depth:
-            try:
-                params = params_base.copy()
-                params["start"] = current_start
-                
-                async with self.http.get(url, params=params, timeout=15) as resp:
-                    if resp.status != 200: break
-                    data = await resp.json()
-                    if not data: break
-                    
-                    # Add batch
-                    all_frames.append(data)
-                    
-                    # Check if we reached opening time (09:25)
-                    # Note: We continue fetching until 09:25 is found to ensure coverage
-                    times = [x.get('time', '') for x in data]
-                    earliest = min(times) if times else "23:59"
-                    
-                    if earliest <= self.TARGET_TIME:
-                        break
-                    
-                    current_start += step
-            except Exception as e:
-                logger.error(f"Linear fetch error {code} date={date}: {e}")
+            retries = 3
+            success = False
+            while retries > 0:
+                try:
+                    params = params_base.copy()
+                    params["start"] = current_start
+                    async with self.http.get(url, params=params, timeout=15) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            if data:
+                                # Overlap-aware deduplication: 
+                                # Reset slice-local occurrence counters but keep the global fingerprint cache.
+                                for item in data:
+                                    if not self.deduplicator.is_duplicate(code, item):
+                                        all_raw_items.append(item)
+                                
+                                self.deduplicator.reset_batch_counters()
+                                
+                                # Termination conditions
+                                times = [x.get('time', '') for x in data]
+                                earliest = min(times) if times else "23:59"
+                                if earliest <= self.TARGET_TIME:
+                                    return self._final_sort_and_index(all_raw_items)
+                                
+                                if len(data) < chunk_offset:
+                                    return self._final_sort_and_index(all_raw_items)
+                                    
+                                current_start += chunk_step
+                                success = True
+                                break
+                            else:
+                                retries -= 1
+                                if retries > 0: await asyncio.sleep(1)
+                        else:
+                            retries -= 1
+                except Exception as e:
+                    logger.warning(f"Slice fetch retry {code} @ {current_start}: {e}")
+                    retries -= 1
+            
+            if not success:
+                earliest_known = min([x.get('time','') for x in all_raw_items]) if all_raw_items else "??:??"
+                if earliest_known > self.TARGET_TIME:
+                    logger.error(f"⚠️ Linear fetch truncated for {code} at start={current_start} (Earliest={earliest_known}). Market start not reached.")
                 break
                 
-        return self._merge_and_sort(all_frames)
+        return self._final_sort_and_index(all_raw_items)
 
-    def _merge_and_sort(self, frames: List[List[Dict]]) -> List[Dict]:
-        """Merge frames and sort. Assign unique sequence keys."""
-        if not frames: return []
+    def _final_sort_and_index(self, items: List[Dict]) -> List[Dict]:
+        """
+        Final stable sorting and re-indexing to ensure ClickHouse data integrity.
+        """
+        if not items: return []
         
-        merged = []
-        for f in frames: merged.extend(f)
-        
-        # 1. Sort by time normally
-        merged.sort(key=lambda x: x.get('time', ''))
-
-        # 2. [CRITICAL FIX] Generate unique 'num' for each row to prevent ClickHouse deduplication
-        # This ensures that even if time/price/vol are identical, each record is preserved.
-        for i, item in enumerate(merged):
-            item['num'] = i + 1  # 1-based monotonic index for the day
+        # Sort keys: Time -> Price -> Volume -> Side (for absolute stability)
+        def sort_key(x):
+            return (
+                x.get('time', '00:00'),
+                float(x.get('price', 0)),
+                float(x.get('volume', x.get('vol', 0))),
+                str(x.get('type', x.get('buyorsell', '')))
+            )
             
-        return merged
-
-    def _clean_code(self, code: str) -> str:
-        """Sanitize stock code: remove sh/sz prefixes and dots"""
-        return clean_stock_code(code)
+        items.sort(key=sort_key)
+        
+        # Sequential num assignment (1..N)
+        for i, item in enumerate(items):
+            item['num'] = i + 1
+            
+        return items

@@ -99,6 +99,9 @@ class TickWorker:
 
         async with self.sem:
             try:
+                # 0. Reset local counters for this batch
+                self.deduplicator.reset_batch_counters()
+                
                 clean_code = clean_stock_code(code)
                 checkpoint = self.checkpoints.get(clean_code, {"offset": 0, "last_fp": ""})
                 last_fp = checkpoint.get("last_fp", "")
@@ -117,8 +120,14 @@ class TickWorker:
                         if not batch:
                             break
                         
-                        for item in batch:
-                            fp = self.deduplicator._make_key(item)
+                        # 必须从旧到新处理以便正确计算 occurrence 序号
+                        # 且每次 fetch 的 batch 都需要独立的 occurrence counter？
+                        # 不，是在逻辑上模拟从开盘到现在的过程。
+                        # 但由于我们是 Backward 回溯，我们其实不知道前面的 occurrence 数量。
+                        # [TRICK] 在引导模式下，如果 API 没给 num，我们就依赖 MD5 匹配基础字段。
+                        # 或者我们强制在这个 batch 内使用 oldest-first 顺序。
+                        for item in reversed(batch):
+                            fp = self.deduplicator._make_key(item, increment=False)
                             if fp == last_fp:
                                 found_anchor = True
                                 break
@@ -142,9 +151,15 @@ class TickWorker:
                 today = datetime.now(CST).date()
                 
                 # 处理新数据（从旧到新反转处理，确保指纹入队顺序更符合时间演进）
+                batch_latest_fp = last_fp
                 for item in reversed(all_raw_ticks):
-                    if self.deduplicator.is_duplicate(clean_code, item):
+                    # 获取该条目的唯一指纹 (内含 num 分配逻辑)
+                    fp = self.deduplicator._make_key(item)
+                    
+                    if self.deduplicator.is_duplicate_by_key(clean_code, fp):
                         continue
+                    
+                    batch_latest_fp = fp # 记录最新一条成功处理的指纹
                         
                     # 解析数据
                     time_str = item.get('time', '')
@@ -163,14 +178,10 @@ class TickWorker:
                 if new_rows:
                     await self.writer.add_ticks(new_rows)
                     
-                    # 更新 Checkpoint (取全量返回中最顶端的一条作为新的 Last Fingerprint)
-                    latest_tick = all_raw_ticks[0]
-                    new_fp = self.deduplicator._make_key(latest_tick)
-                    
                     # 记录并持久化到 Redis
                     today_str = today.strftime('%Y%m%d')
-                    await self.tracker.save_checkpoint(clean_code, today_str, 0, new_fp)
-                    self.checkpoints[clean_code] = {"offset": 0, "last_fp": new_fp}
+                    await self.tracker.save_checkpoint(clean_code, today_str, 0, batch_latest_fp)
+                    self.checkpoints[clean_code] = {"offset": 0, "last_fp": batch_latest_fp}
                     
             except Exception:
                 if self.circuit_breaker:

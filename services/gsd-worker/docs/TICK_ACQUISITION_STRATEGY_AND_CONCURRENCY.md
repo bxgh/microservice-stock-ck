@@ -62,29 +62,20 @@
 
 ---
 
-## 4. 采集策略：智能搜索矩阵 (Smart Matrix Search)
+## 4. 采集算法：矩阵拼缝 (Matrix-Stitching Algorithm)
 
-由于通达信 (TDX) 协议单次请求限制为 2000-5000 条，无法一次性获取全天分笔，系统采用矩阵搜索策略。
+由于通达信 (TDX) 协议单次请求限制及游标不稳定，系统采用矩阵拼缝算法（V3）确保高频股票的数据完整性。
 
-### 4.1 搜索原理
-`TickFetcher` 会按照预定义的 `SEARCH_MATRIX`（起始位置 `start` + 长度 `offset`）串行发起请求。
-
-```python
-SEARCH_MATRIX = [
-    (0, 5000, "全量基础"),
-    (3500, 800, "万科A前区域"),
-    (4000, 500, "万科A原成功"),
-    ... # 共 9 个候选区间
-]
-```
+### 4.1 拼缝原理 (V3 Matrix)
+`TickFetcher` 不再使用固定区间跳转，而是采用 **重叠分片 (Overlapping Slices)** 采集：
+1. **分片采集**: 每次采集 800 条记录（offset=800），但步进仅为 600 条（step=600），确保每页之间有 200 条重叠。
+2. **序列匹配 (Stitching)**: 利用 V2 版去重器的 **Occurrence-based Fingerprinting**（时间+价格+量+出现序号），在内存中将重叠的快照点精确对齐。
+3. **全局排序**: 拉取完成后，对全天所有非重复成交笔进行全量升序排序，并重新分配全局唯一的 `num` 序号。
 
 ### 4.2 早停机制 (Early Stopping)
 - **目标**: 捕获 `09:25`（集合竞价）数据。
-- **逻辑**: 
-    1. 发起步骤 N 的请求。
-    2. 检查返回数据中最早的时间戳。
-    3. 如果 `earliest_time <= 09:25`，则认为已采集全天数据，立即终止当前股票的后续搜索。
-- **优势**: 显著减少小成交量股票的 API 调用次数，大幅提升全市场同步速度。
+- **逻辑**: 当任意一页分片中最早的时间戳 `earliest_time <= 09:25`，则立即终止拉取，进入排序拼缝阶段。
+- **优势**: 完美解决了权重股（如 600036, 603993）由于成交密集导致的 API 游标跳跃/丢包问题。
 
 ---
 
@@ -250,3 +241,45 @@ WHERE trade_date = '2026-01-15';
 ```bash
 docker exec -i microservice-stock-clickhouse clickhouse-client -u admin --password admin123 -q "SELECT count(), uniq(stock_code) FROM stock_data.tick_data WHERE trade_date = '2026-01-15'"
 ```
+
+---
+
+### 9.1 审计原理 (V3)
+- **多维比对**：从 ClickHouse 提取分笔统计值（笔数、总量、成交额、收盘价），并与 MySQL/ClickHouse 中的 K 线数据进行比对。
+- **三级深度审计**：
+    - **L1 (Existence)**: 检查股票是否完全缺失。
+    - **L2 (Price)**: 检查分笔最后一条价格与 K 线收盘价是否偏差超过 0.01。
+    - **L3 (Volume/Amount)**: 检查分笔累计成交量/额与 K 线偏差是否超过 2%。
+- **时序对齐边界**: 审计对比量能时，代码自动过滤 `tick_time <= '15:00:00'`。
+
+### 9.2 审计任务执行
+
+- **推荐方式 (基于 Compose)**:
+  ```bash
+  docker-compose -f docker-compose.node-41.yml run --rm gsd-worker jobs.audit_tick_resilience --date 2026-01-30
+  ```
+
+- **原生 Docker 方式 (需手动注入关键环境)**:
+  ```bash
+  docker run --rm --network host \
+    -e MYSQL_HOST=127.0.0.1 \
+    -e MYSQL_PORT=36301 \
+    -e MYSQL_USER=root \
+    -e MYSQL_PASSWORD=alwaysup@888 \
+    -e MYSQL_DATABASE=alwaysup \
+    -e CLICKHOUSE_HOST=127.0.0.1 \
+    -e CLICKHOUSE_PORT=9000 \
+    -e CLICKHOUSE_USER=admin \
+    -e CLICKHOUSE_PASSWORD=admin123 \
+    -e CLICKHOUSE_DB=stock_data \
+    -e REDIS_HOST=127.0.0.1 \
+    -e REDIS_PORT=6379 \
+    -e REDIS_PASSWORD=redis123 \
+    -v $(pwd)/services/gsd-worker/src:/app/src \
+    -v $(pwd)/libs/gsd-shared:/app/libs/gsd-shared:ro \
+    -e PYTHONPATH=/app/src:/app/libs/gsd-shared \
+    --entrypoint python gsd-worker:latest -m jobs.audit_tick_resilience --date 2026-01-30
+  ```
+
+### 9.3 审计输出
+任务执行完成后会打印结构化 JSON (`GSD_OUTPUT_JSON`)，该 JSON 包含 `missing_list`（缺失及重影名单）和 `abnormal_list`（异常名单），可直接作为流水线中 `execute_repair` 步骤的输入，驱动系统实现闭环自愈。

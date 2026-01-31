@@ -41,7 +41,7 @@ REDIS_KEY_CODES = "metadata:stock_codes"
 REDIS_KEY_INFO = "metadata:stock_info"
 REDIS_KEY_SHARD_PREFIX = "metadata:stock_codes:shard"
 TOTAL_SHARDS = 3
-REDIS_TTL = 3600 * 25  # 25小时，确保覆盖一天
+REDIS_TTL = 3600 * 24 * 14  # 14天，覆盖长假
 
 async def fetch_stock_data():
     """从云端 API 获取全量股票数据"""
@@ -117,8 +117,8 @@ async def update_redis_cache(redis, items):
             }, ensure_ascii=False)
             stock_info_map[formatted_code] = info_json
         
-        if not stock_codes:
-            logger.error("❌ 数据解析后为空，中止更新")
+        if not stock_codes or len(stock_codes) < 20:
+            logger.error(f"❌ 数据解析后数量不足 (Count={len(stock_codes)} < 20)，可能有异常，中止更新")
             # 如果有旧数据，延长 TTL 避免过期
             if old_count > 0:
                 await redis.expire(REDIS_KEY_CODES, REDIS_TTL)

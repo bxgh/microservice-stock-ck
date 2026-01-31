@@ -21,6 +21,7 @@
 
 ### 采集层 (Collector Layer)
 每个节点的 `intraday-tick-collector` 容器通过环境变量 `SHARD_INDEX` 确定自己的身份，启动时连接中心 Redis 领取任务清单。详情见 [Mootdx-API 集成 (06_MOOTDX_API_INTEGRATION.md)](06_MOOTDX_API_INTEGRATION.md)。
+*   **采集算法 (V3)**: 历史补采与深度修复采用 **矩阵拼缝 (Matrix-Stitching)** 技术，通过重叠分片和序列匹配消除 API 游标抖动导致的丢包。
 
 ### 传输层 (Transport Layer)
 *   **本地写入**: 使用 `asynch` 异步池连接本地/主 ClickHouse。

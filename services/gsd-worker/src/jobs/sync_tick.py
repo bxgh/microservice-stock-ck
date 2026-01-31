@@ -177,7 +177,8 @@ async def main(
             results = await service.sync_stocks(
                 stock_codes=stock_codes,
                 trade_date=target_date,
-                concurrency=concurrency
+                concurrency=concurrency,
+                force=(mode == "full")
             )
         
         duration = (datetime.now() - start_time).total_seconds()
