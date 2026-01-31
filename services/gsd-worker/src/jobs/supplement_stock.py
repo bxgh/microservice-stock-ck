@@ -35,7 +35,10 @@ async def main():
     parser.add_argument("--sys-missing", type=str, help="缺失列表 (JSON/Str)")
     parser.add_argument("--sys-confirmed-bad", type=str, help="AI确认列表 (JSON/Str)")
     parser.add_argument("--force-concurrency", type=int, help="强制并发数")
+    parser.add_argument("--concurrency-override", type=int, help="并发数覆盖 (同 force-concurrency)")
     parser.add_argument("--force-local", type=str, help="是否强制本地模式 (true/false)")
+    parser.add_argument("--idempotent", type=str, default="true", help="是否执行幂等清理 (true/false)")
+    parser.add_argument("--force", action="store_true", help="强制覆盖已有的高质量数据")
 
     args, unknown = parser.parse_known_args()
     if unknown:
@@ -100,6 +103,7 @@ async def main():
         "stocks": stocks_list,
         "data_types": args.data_types,
         "priority": args.priority,
+        "force": args.force, # [NEW] Pass force flag
         "extra_config": engine_extra_config
     }
     
@@ -112,6 +116,13 @@ async def main():
     if args.date_range and "-" in args.date_range:
         start, end = args.date_range.split("-")
         params["date_range"] = {"start": start, "end": end}
+    
+    # 幂等控制
+    params["idempotent"] = str(args.idempotent).lower() == "true"
+    
+    # 兼容 concurrency-override
+    if args.concurrency_override:
+        params["concurrency_override"] = args.concurrency_override
         
     logger.info(f"Target Count: {len(stocks_list)} stocks")
     # logger.info(f"Sample: {stocks_list[:5]}")

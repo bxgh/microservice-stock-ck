@@ -161,6 +161,7 @@ class TickSyncService:
         """
         [NEW] 物理清理异常分笔数据
         用于修复策略前置动作: 发现质量不合格即刻删除已有脏数据，确保重新拉取后不产生重复/混杂。
+        修复版本: 增加分批处理以避免 ClickHouse Mutation 堆积
         """
         if not stock_codes or not self.clickhouse_pool:
             return False
@@ -170,23 +171,26 @@ class TickSyncService:
             trade_date_dt = trade_date.replace('-', '')
             formatted_date = f"{trade_date_dt[:4]}-{trade_date_dt[4:6]}-{trade_date_dt[6:8]}"
             
-            codes_str = ",".join([f"'{c}'" for c in stock_codes])
+            # 分批执行清理 (每 500 只股票一组)，防止 SQL 过长或 Mutation 过于复杂
+            batch_size = 500
+            for i in range(0, len(stock_codes), batch_size):
+                batch = stock_codes[i:i+batch_size]
+                codes_str = ",".join([f"'{c}'" for c in batch])
+                
+                # 使用分布式全量清理 (需操作 _local 表 + ON CLUSTER)
+                sql = f"""
+                ALTER TABLE stock_data.tick_data_intraday_local ON CLUSTER stock_cluster
+                DELETE WHERE trade_date = '{formatted_date}' 
+                  AND stock_code IN ({codes_str})
+                """
+                
+                logger.warning(f"🗑️ [Hard Purge] 正在清理 {len(batch)} 只个股的数据批次: {formatted_date}")
+                
+                async with self.clickhouse_pool.acquire() as conn:
+                    async with conn.cursor() as cursor:
+                        await cursor.execute(sql)
             
-            # 使用分布式全量清理
-            # 注意: ClickHouse 的 DELETE 是异步 Mutation，但我们会在此处阻塞等待一个基本的提交确认
-            sql = f"""
-            ALTER TABLE stock_data.tick_data_intraday 
-            DELETE WHERE trade_date = '{formatted_date}' 
-              AND stock_code IN ({codes_str})
-            """
-            
-            logger.warning(f"🗑️ [Hard Purge] 正在清理 {len(stock_codes)} 只个股的脏数据: {formatted_date}")
-            
-            async with self.clickhouse_pool.acquire() as conn:
-                async with conn.cursor() as cursor:
-                    await cursor.execute(sql)
-            
-            logger.info(f"✅ 清理指令已同步至 ClickHouse, 准备执行补采...")
+            logger.info(f"✅ 所有清理指令 ({len(stock_codes)} 只) 已同步至 ClickHouse.")
             return True
 
         except Exception as e:
@@ -247,7 +251,7 @@ class TickSyncService:
     async def filter_stocks_need_repair(self, stock_codes: list, trade_date: str) -> list:
         return await self.validator.filter_need_repair(stock_codes, trade_date)
 
-    async def sync_stock(self, stock_code: str, trade_date: str, force: bool = False) -> int:
+    async def sync_stock(self, stock_code: str, trade_date: str, force: bool = False, idempotent: bool = True) -> int:
         """同步单只股票 (Orchestration Logic)"""
         # 0. init status
         await self.tracker.update(stock_code, trade_date, "processing")
@@ -272,7 +276,7 @@ class TickSyncService:
             self.validator.validate_canary(stock_code, tick_data, trade_date)
             
             # 4. Write
-            count = await self.writer.write(stock_code, trade_date, tick_data)
+            count = await self.writer.write(stock_code, trade_date, tick_data, idempotent=idempotent)
             
             # 5. Update Status
             times = [x.get('time', '') for x in tick_data]
@@ -292,13 +296,14 @@ class TickSyncService:
         stock_codes: List[str], 
         trade_date: Optional[str] = None,
         concurrency: int = 3,
-        force: bool = False
+        force: bool = False,
+        idempotent: bool = True
     ) -> Dict[str, Any]:
         """批量同步"""
         if trade_date is None:
             trade_date = datetime.now(CST).strftime("%Y%m%d")
             
-        logger.info(f"开始批量同步: {len(stock_codes)} 只, 日期 {trade_date}, 并发 {concurrency}, 强制={force}")
+        logger.info(f"开始批量同步: {len(stock_codes)} 只, 日期 {trade_date}, 并发 {concurrency}, 强制={force}, 幂等清理={idempotent}")
         
         semaphore = asyncio.Semaphore(concurrency)
         results_lock = asyncio.Lock()
@@ -308,7 +313,7 @@ class TickSyncService:
             async with semaphore:
                 start_t = asyncio.get_running_loop().time()
                 try:
-                    count = await self.sync_stock(code, trade_date, force=force)
+                    count = await self.sync_stock(code, trade_date, force=force, idempotent=idempotent)
                     async with results_lock:
                         if count > 0:
                             results["success"] += 1

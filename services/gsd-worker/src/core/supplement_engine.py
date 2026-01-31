@@ -157,13 +157,27 @@ class DataSupplementEngine:
 
         # 执行并发处理
         concurrency = params.get("concurrency_override", 5)
+        force = params.get("force", False)  # [NEW] Extract force flag
         semaphore = asyncio.Semaphore(concurrency)
         
+        # 修复版本: 如果是较大批量的补采，先执行一次性 Bulk Purge
+        idempotent_per_stock = True
+        if len(stocks) > 50 and "tick" in data_types:
+            logger.info(f"🧹 检测到较大批量补采 ({len(stocks)}), 执行前置 Bulk Purge...")
+            try:
+                # 尝试对所有涉及日期执行批量清理
+                for d in date_list:
+                   await self.tick_service.purge_tick_data(d, stocks)
+                idempotent_per_stock = False # 后续单只写入时无需再次清理
+            except Exception as e:
+                logger.error(f"Bulk purge failed: {e}")
+
         async def _worker(code):
             async with semaphore:
-                return await self._process_stock(code, date_list, data_types)
+                # [FIXED] Pass force flag to _process_stock
+                return await self._process_stock(code, date_list, data_types, idempotent=idempotent_per_stock, force=force)
 
-        logger.info(f"🚀 并发执行补充任务: 总数={len(stocks)}, 并发={concurrency}")
+        logger.info(f"🚀 并发执行补充任务: 总数={len(stocks)}, 并发={concurrency}, 强制={force}")
         
         tasks = [_worker(code) for code in stocks]
         total = len(stocks)
@@ -185,7 +199,7 @@ class DataSupplementEngine:
         logger.info(f"✨ Supplement task completed. Success: {results['success']}, Failed: {results['failed']}")
         return results
 
-    async def _process_stock(self, code: str, dates: List[str], data_types: List[str]) -> Dict[str, Any]:
+    async def _process_stock(self, code: str, dates: List[str], data_types: List[str], idempotent: bool = True, force: bool = False) -> Dict[str, Any]:
         """处理单只股票"""
         result = {
             "code": code,
@@ -201,7 +215,8 @@ class DataSupplementEngine:
                 if dtype == "tick":
                     count = 0
                     for date_str in dates:
-                        c = await self.tick_service.sync_stock(code, date_str)
+                        # 修复版本: 透传 idempotent 和 force 参数
+                        c = await self.tick_service.sync_stock(code, date_str, idempotent=idempotent, force=force)
                         if c >= 0:
                             count += c
                         else: 
