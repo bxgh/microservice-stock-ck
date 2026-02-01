@@ -67,29 +67,31 @@ async def main(
     
     # 1. 获取待处理股票列表 (统一由 TickSyncService 编排，支持分片与自动过滤)
     try:
-        if stock_codes:
-            logger.info(f"手动指定模式: 使用提供的股票列表 ({len(stock_codes)} 只)")
-        elif distributed_source == "redis" and distributed_role == "consumer":
-            logger.info("Consumer 模式: 跳过本地名单获取，由集群分发任务")
-            stock_codes = []
-        else:
-            # 统一获取名单：自动处理 scope、shard_id 以及从 K 线/全市场源的分发逻辑
-            stock_codes = await service.fetch_sync_list(
-                scope=scope, 
-                shard_index=shard_index, 
-                shard_total=shard_total, 
-                trade_date=target_date
-            )
+        if mode == "full":
+            logger.info(f"🚀 全量重建模式: 正在清理 {target_date} 全天数据...")
+            # 获取全市场名单
+            stock_codes = await service.fetch_sync_list(scope="all", trade_date=target_date)
+            # 执行全天物理清理
+            await service.purge_tick_data(target_date, stock_codes=None)
+            idempotent_next = False # 已经提前清场
             
-            # 2. 质量筛选优化 (Incremental 模式下排除已采集达标的)
-            if stock_codes and mode == "incremental":
-                original_count = len(stock_codes)
-                stock_codes = await service.filter_stocks_need_repair(stock_codes, target_date)
-                if len(stock_codes) < original_count:
-                    logger.info(f"📊 质量筛选(Loose): {original_count} -> 需补采 {len(stock_codes)}")
-
-        if distributed_role != "consumer":
-            logger.info(f"待同步股票总数: {len(stock_codes)} 只")
+        elif mode == "repair":
+            if not stock_codes:
+                logger.error("❌ Repair 模式必须通过 --stock-codes 指定代码")
+                return 1
+            
+            if len(stock_codes) > 500:
+                logger.warning(f"⚠️ 修复数量({len(stock_codes)}) > 500，自动升级为全天全量重建")
+                stock_codes = await service.fetch_sync_list(scope="all", trade_date=target_date)
+                await service.purge_tick_data(target_date, stock_codes=None)
+                idempotent_next = False
+            else:
+                logger.info(f"🛠️ 定向修复模式: 正在清理并重抓 {len(stock_codes)} 只个股...")
+                # 仅清理指定股票
+                await service.purge_tick_data(target_date, stock_codes=stock_codes)
+                idempotent_next = False
+        
+        logger.info(f"待同步股票总数: {len(stock_codes)} 只")
         
         if distributed_source == "redis":
             if distributed_role == "producer":
@@ -174,12 +176,13 @@ async def main(
                 results = {"success": processed_count, "failed": failed_count, "total_records": processed_count}
                 
         else:
+            # 模式: 直接并发列表
             results = await service.sync_stocks(
                 stock_codes=stock_codes,
                 trade_date=target_date,
                 concurrency=concurrency,
-                force=(mode == "full"),
-                idempotent=idempotent
+                force=True,
+                idempotent=idempotent_next
             )
         
         duration = (datetime.now() - start_time).total_seconds()
@@ -215,9 +218,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--mode", 
         type=str, 
-        default="incremental",
-        choices=["incremental", "full"],
-        help="同步模式: incremental(增量/今日) 或 full(全量)"
+        default="full",
+        choices=["full", "repair"],
+        help="同步模式: full(全量重建) 或 repair(定向修复)"
     )
     parser.add_argument(
         "--date",

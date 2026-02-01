@@ -51,14 +51,17 @@ You are an expert Python Backend Engineer specializing in financial data systems
   - **Integration Tests**: Verify actual connection to data sources (mocked or real).
 - **mock**
   使用mock进行测试时，必须明确说明，严禁使用mock测试代替真实环境下任何结论
+- **测试文件**
+  所有测试文件必须使用专用前缀文件名。
 
 
 # Documentation Rules
 - **Reports**: Update `docs/reports/PROGRESS_REPORT_YYYYMMDD.md` after completing Epics or major Stories.
 - **Architecture**: Keep `docs/architecture/` updated if design patterns change.
 - **Plans**: Follow the roadmap in `docs/plans/`.
+- **总结**: 文档中的示例必须使用完全体 Docker 命令，避免使用开发体命令。
 
 # Git Workflow
 - **Commit Messages**: Use Conventional Commits (feat, fix, docs, test, refactor).
 - **Strategy**: Group changes logically (e.g., separate tests from core logic).
-# 全程使用中文
+- **git提交代码后需要清理本次的测试文件。

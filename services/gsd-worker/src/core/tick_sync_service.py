@@ -159,13 +159,12 @@ class TickSyncService:
                 self.redis_client = None
             logger.info("✓ Resources Closed")
 
-    async def purge_tick_data(self, trade_date: str, stock_codes: List[str]) -> bool:
+    async def purge_tick_data(self, trade_date: str, stock_codes: Optional[List[str]] = None) -> bool:
         """
         [NEW] 物理清理异常分笔数据
-        用于修复策略前置动作: 发现质量不合格即刻删除已有脏数据，确保重新拉取后不产生重复/混杂。
-        修复版本: 增加分批处理以避免 ClickHouse Mutation 堆积，并动态选择表。
+        :param stock_codes: 如果为 None，则清理该日期全天全市场数据
         """
-        if not stock_codes or not self.clickhouse_pool:
+        if not self.clickhouse_pool:
             return False
 
         try:
@@ -177,28 +176,32 @@ class TickSyncService:
             today_str = datetime.now(CST).strftime("%Y%m%d")
             target_table = TABLE_INTRADAY_LOCAL if trade_date_dt == today_str else TABLE_HISTORY_LOCAL
 
-            # 分批执行清理 (每 500 只股票一组)，防止 SQL 过长或 Mutation 过于复杂
-            batch_size = 500
-            for i in range(0, len(stock_codes), batch_size):
-                batch = stock_codes[i:i+batch_size]
-                # 必须清理代码前缀以匹配 ClickHouse 存储格式
-                cleaned_batch = [clean_stock_code(c) for c in batch]
-                codes_str = ",".join([f"'{c}'" for c in cleaned_batch])
-                
-                # 使用分布式全量清理 (需操作 _local 表 + ON CLUSTER)
-                sql = f"""
-                ALTER TABLE stock_data.{target_table} ON CLUSTER stock_cluster
-                DELETE WHERE trade_date = '{formatted_date}' 
-                  AND stock_code IN ({codes_str})
-                """
-                
-                logger.warning(f"🗑️ [Batch Purge] 正在从 {target_table} 清理 {len(batch)} 只个股的数据批次: {formatted_date}")
-                
+            if stock_codes is None:
+                # 全天全量清理模式 (单次 Mutation，最高效)
+                sql = f"ALTER TABLE stock_data.{target_table} ON CLUSTER stock_cluster DELETE WHERE trade_date = '{formatted_date}'"
+                logger.warning(f"🚨 [Full Day Purge] 正在清空 {target_table} 的全天记录: {formatted_date}")
                 async with self.clickhouse_pool.acquire() as conn:
                     async with conn.cursor() as cursor:
                         await cursor.execute(sql)
+            else:
+                # 分批执行定向清理
+                batch_size = 500
+                for i in range(0, len(stock_codes), batch_size):
+                    batch = stock_codes[i:i+batch_size]
+                    cleaned_batch = [clean_stock_code(c) for c in batch]
+                    codes_str = ",".join([f"'{c}'" for c in cleaned_batch])
+                    
+                    sql = f"""
+                    ALTER TABLE stock_data.{target_table} ON CLUSTER stock_cluster
+                    DELETE WHERE trade_date = '{formatted_date}' 
+                      AND stock_code IN ({codes_str})
+                    """
+                    logger.warning(f"🗑️ [Batch Purge] 正在从 {target_table} 清理 {len(batch)} 只个股: {formatted_date}")
+                    async with self.clickhouse_pool.acquire() as conn:
+                        async with conn.cursor() as cursor:
+                            await cursor.execute(sql)
             
-            logger.info(f"✅ 所有清理指令 ({len(stock_codes)} 只) 已同步至 ClickHouse.")
+            logger.info(f"✅ 清理指令已同步至 ClickHouse.")
             return True
 
         except Exception as e:
