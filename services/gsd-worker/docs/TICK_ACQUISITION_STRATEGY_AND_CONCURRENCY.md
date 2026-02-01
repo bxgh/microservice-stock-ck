@@ -120,17 +120,30 @@
   docker run --rm gsd-worker jobs.retry_tick --concurrency 10
   ```
 
-### 6.2 数据库保护：批量清洗 (Batch Purge)
-为防止全市场修复时产生数千个 `DELETE` Mutation 导致 ClickHouse 死锁，Orchestrator 采用**批量清洗策略**：
-- **逻辑**：在启动并发采集循环前，先对目标股票列表按 **500只/批** 执行批量删除。
-- **优势**：将 5000 次数据库交互压缩为 10 次，彻底消除 Mutation Storm 风险。
+### 6.2 治理模式：全量重建 (Full Build) 与 分级修复 (Tiered Repair)
+系统不再支持 `Incremental` (增量模式) 进行历史数据治理，以确保数据的绝对原子性和一致性。
+- **全量重建 (Full Build)**：
+  - **触发**：手动执行 `--mode full`。
+  - **逻辑**：执行一次性全天物理清理 (`DELETE WHERE trade_date='...'`)，然后全量拉取全市场数据。
+  - **适用**：首次初始化或算法重大升级时。
+- **分级修复 (Tiered Repair)**：
+  - **触发**：手动执行 `--mode repair --stock-codes ...`。
+  - **阈值分水岭**：
+    - **N ≤ 500**：执行**精准清理**。仅删除指定代码的数据，然后重抓。
+    - **N > 500**：自动升级为**全量重构**逻辑。先清空全表，再拉取全市场。
+  - **优势**：在故障面扩大时，物理清理更高效，彻底杜绝数据混杂。
 
-### 6.3 安全模式：默认只增不删 (Safe Mode)
-为防止误操作导致数据丢失，系统默认开启安全模式：
-- **默认为 False**：`idempotent=False`。即默认**只追加写入，不执行删除**。
-- **强制清洗开关**：只有显式传入 `--force-clean` 参数时，才会触发“先清后下”逻辑。
-  - 示例：`python -m jobs.sync_tick --date 20260130 --stock-codes 600036 --force-clean`
-- **严禁**：在无明确名单的 `mode=full` 全量模式下使用 `--force-clean`。
+### 6.3 数据库保护：物理清理逻辑 (Purge Policy)
+为防止 Mutation Storm 导致 ClickHouse 死锁：
+- **全天清理**：使用单条 `DELETE` 语句清除 `trade_date` 记录，Mutation 数 = 1。
+- **批量清理**：使用 `IN (...)` 语法按 **500 只/批** 处理指定名单，确保 Mutation 数 < 10。
+
+### 6.4 参数说明
+- `--mode {full, repair}`：同步模式选择。
+- `--scope {all, config}`：
+  - `all`：动态获取全天活跃股票代码。
+  - `config`：仅处理配置文件中的核心票。
+- `--force-clean`：[危险] 显式授权删除动作。在 `full` 模式下为默认隐含行为。
 
 ---
 
