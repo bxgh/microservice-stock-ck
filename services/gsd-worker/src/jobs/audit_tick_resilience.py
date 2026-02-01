@@ -67,7 +67,8 @@ class AuditJob:
         target_scope = set()
         for code in all_codes:
             normalized = self._normalize_code(code)
-            if normalized.startswith(('8', '4', '92')):
+            # 统一北证过滤规则: 4/8/9 前缀
+            if normalized.startswith(('4', '8', '9')):
                 continue
             target_scope.add(normalized)
             
@@ -359,18 +360,21 @@ class AuditJob:
             invalid_count = len(invalid)
             total_faults = missing_count + invalid_count
             
-            # Tiered Logic:
-            # - Missing + Heavy Faults -> Direct Repair
-            # - Light Faults -> AI Review (unless > 50 stocks)
+            # Tiered Logic (V4.0 - Node 41 Centralized):
+            # 第一次采集后，若异常总数(缺失+故障) > 200，说明存在系统性问题，跳过 AI 直接全量重洗
+            # 若 <= 200，说明是局部抖动，交由 AI 研判以精简重试目标
             
             if total_faults == 0:
                 action = "NONE"
-            elif len(light_faults) > 50:
-                action = "FAILOVER" # In Workflow, this can trigger direct repair or different routing
-                logger.warning(f"🔴 Light Faults ({len(light_faults)}) > 50. Eskalating to direct repair workflow.")
+            elif total_faults > 200:
+                action = "FAILOVER" # 触发全量同步模式 (repair_tick)
+                logger.warning(f"🔴 异常总数 ({total_faults}) > 200. 升级为 FAILOVER 并清空列表以防上下文溢出。")
+                missing = []
+                heavy_faults = []
+                light_faults = []
             else:
                 action = "AI_AUDIT"
-                logger.info(f"🟡 Tiered Triage: Missing={missing_count}, Heavy={len(heavy_faults)}, Light={len(light_faults)}. Action={action}")
+                logger.info(f"🟡 分级诊断: 缺失={missing_count}, 重度故障={len(heavy_faults)}, 轻度故障={len(light_faults)}. 执行策略={action}")
 
             # Structured output for Orchestrator (Workflow 4.0)
             output = {

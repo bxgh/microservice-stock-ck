@@ -89,10 +89,10 @@ tasks:
     workflow:
       - id: collect
         name: 全量采集
-        command: ["jobs.sync_tick", "--scope", "all", "--concurrency", "128"]
+        command: ["jobs.sync_tick", "--scope", "all", "--concurrency", "60"]
       - id: retry
         name: 自动补采
-        command: ["jobs.retry_tick", "--concurrency", "128"]
+        command: ["jobs.retry_tick", "--concurrency", "60"]
         depends_on: [collect]
     retry:
       max_attempts: 2
@@ -418,5 +418,21 @@ tasks:
       workflow_id: "post_market_audit"
       initial_context:
         target_date: "{{today_nodash}}"
+    retry:
+      max_attempts: 1
+
+  # ==========================================
+  # 历史治理专项触发器
+  # ==========================================
+
+  # 历史分笔治理管线触发器 (专供手动/前端调用)
+  - id: trigger_historical_recovery
+    name: 触发历史分笔专项治理管线
+    type: workflow_trigger
+    enabled: true
+    target:
+      workflow_id: "historical_tick_recovery"
+      initial_context:
+        trigger_source: "manual_adhoc"
     retry:
       max_attempts: 1

@@ -363,27 +363,21 @@ async def register_jobs() -> None:
         
         # 注册所有任务
         for task_def in task_config.tasks:
-            # 0. Skip workflow-managed tasks (no schedule)
-            if not task_def.schedule:
-                logger.info(f"  ✓ Loaded Definition: {task_def.name} (Workflow Managed)")
-                continue
-
-            # 1. 创建触发器
+            # 0. Allow tasks without schedules to be registered for ad-hoc triggering
             trigger = None
-            if task_def.schedule.type == ScheduleType.TRADING_CRON:
-                base_trigger = CronTrigger.from_crontab(
-                    task_def.schedule.expression,
-                    timezone=settings.TIMEZONE
-                )
-                trigger = TradingDayTrigger(base_trigger, cal_service)
-            elif task_def.schedule.type == ScheduleType.CRON:
-                trigger = CronTrigger.from_crontab(
-                    task_def.schedule.expression,
-                    timezone=settings.TIMEZONE
-                )
-            else:
-                logger.warning(f"Skipping task {task_def.id}: unsupported schedule type {task_def.schedule.type}")
-                continue
+            if task_def.schedule:
+                # 1. 创建触发器
+                if task_def.schedule.type == ScheduleType.TRADING_CRON:
+                    base_trigger = CronTrigger.from_crontab(
+                        task_def.schedule.expression,
+                        timezone=settings.TIMEZONE
+                    )
+                    trigger = TradingDayTrigger(base_trigger, cal_service)
+                elif task_def.schedule.type == ScheduleType.CRON:
+                    trigger = CronTrigger.from_crontab(
+                        task_def.schedule.expression,
+                        timezone=settings.TIMEZONE
+                    )
             
             # 2. 确定执行函数
             job_func = None
@@ -421,21 +415,21 @@ async def register_jobs() -> None:
                     logger.info(f"  • {task_def.id}: Using Generic Command Emitter")
 
                 elif task_def.type == TaskType.WORKFLOW_TRIGGER:
-                    async def trigger_wrapper(t=task_def):
+                    async def trigger_wrapper(t=task_def, params=None):
                         if not flow_controller:
                             logger.error("❌ FlowController not initialized")
                             return
                         
                         workflow_id = t.target.get('workflow_id')
-                        logger.info(f"⚡ Triggering Workflow: {workflow_id} (Task: {t.name})")
-                        
-                        # Load definition from DB or file? 
-                        # Ideally FlowController should have loaded them. 
-                        # For now provided workflow_id assumes it's registered in DB.
+                        logger.info(f"⚡ Triggering Workflow: {workflow_id} (Task: {t.name}, Dynamic Params: {params})")
                         
                         # Context preparation
                         from datetime import datetime
-                        ctx = t.target.get('initial_context', {})
+                        # 重要：合并 params 到 context
+                        ctx = t.target.get('initial_context', {}).copy()
+                        if params:
+                            ctx.update(params)
+                        
                         ctx['trigger_time'] = datetime.now().isoformat()
                         
                         # If date placeholder exists
@@ -499,7 +493,8 @@ async def register_jobs() -> None:
                 scheduler.pause_job(task_def.id)
                 logger.info(f"  ✓ Registered (Paused): {task_def.name}")
             else:
-                logger.info(f"  ✓ Registered: {task_def.name} ({task_def.schedule.expression})")
+                sched_desc = task_def.schedule.expression if task_def.schedule else "Ad-hoc/Manual"
+                logger.info(f"  ✓ Registered: {task_def.name} ({sched_desc})")
         
         logger.info(f"✓ Registered all jobs from YAML")
     except Exception as e:
@@ -595,17 +590,6 @@ async def lifespan(app: FastAPI):
     )
     logger.info("✓ Internal maintenance jobs registered")
     
-    # 6. Start Command Poller (Cloud -> Local)
-    # 只有当配置了云端 MySQL 时才启动，或者默认启动因为 alwaysup 库在云端
-    try:
-        from core.command_poller import CommandPoller
-        command_poller = CommandPoller(mysql_pool, scheduler, docker_client, task_config)
-        await command_poller.start()
-        logger.info("✓ CommandPoller started")
-    except Exception as e:
-        logger.error(f"⚠️ Failed to start CommandPoller: {e}")
-        logger.warning("Orchestrator will continue without remote command polling")
-
     # 7. Start FlowController (Workflow 4.0 Engine)
     try:
         flow_controller = FlowController(mysql_pool, docker_client, agent_engine)
@@ -613,6 +597,17 @@ async def lifespan(app: FastAPI):
         logger.info("✓ FlowController started")
     except Exception as e:
         logger.error(f"❌ Failed to start FlowController: {e}")
+
+    # 6. Start Command Poller (Cloud -> Local)
+    # 只有当配置了云端 MySQL 时才启动，或者默认启动因为 alwaysup 库在云端
+    try:
+        from core.command_poller import CommandPoller
+        command_poller = CommandPoller(mysql_pool, scheduler, docker_client, task_config, flow_controller=flow_controller)
+        await command_poller.start()
+        logger.info("✓ CommandPoller started")
+    except Exception as e:
+        logger.error(f"⚠️ Failed to start CommandPoller: {e}")
+        logger.warning("Orchestrator will continue without remote command polling")
     
     yield
     

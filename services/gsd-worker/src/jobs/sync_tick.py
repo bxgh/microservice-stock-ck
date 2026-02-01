@@ -35,7 +35,7 @@ async def main(
     shard_total: int = None,
     distributed_source: str = "none",
     distributed_role: str = "consumer",
-    concurrency: int = 6,
+    concurrency: int = 60,
     stock_codes: list = None,
     idempotent: bool = False  # Changed default to False for safety
 ) -> int:
@@ -64,15 +64,22 @@ async def main(
     await service.initialize()
     
     start_time = datetime.now()
+    idempotent_next = idempotent  # 默认使用命令行传入的参数
     
     # 1. 获取待处理股票列表 (统一由 TickSyncService 编排，支持分片与自动过滤)
     try:
         if mode == "full":
             logger.info(f"🚀 全量重建模式: 正在清理 {target_date} 全天数据...")
-            # 获取全市场名单
-            stock_codes = await service.fetch_sync_list(scope="all", trade_date=target_date)
-            # 执行全天物理清理
-            await service.purge_tick_data(target_date, stock_codes=None)
+            # 获取全市场名单 (带分片)
+            stock_codes = await service.fetch_sync_list(
+                scope="all", 
+                trade_date=target_date,
+                shard_index=shard_index,
+                shard_total=shard_total
+            )
+            # 只有在非分片模式或分片0时，才执行全表物理清理 (避免重复操作导致 ClickHouse Mutation 堆积)
+            if shard_index is None or shard_index == 0:
+                await service.purge_tick_data(target_date, stock_codes=None)
             idempotent_next = False # 已经提前清场
             
         elif mode == "repair":
@@ -80,10 +87,16 @@ async def main(
                 logger.error("❌ Repair 模式必须通过 --stock-codes 指定代码")
                 return 1
             
-            if len(stock_codes) > 500:
-                logger.warning(f"⚠️ 修复数量({len(stock_codes)}) > 500，自动升级为全天全量重建")
-                stock_codes = await service.fetch_sync_list(scope="all", trade_date=target_date)
-                await service.purge_tick_data(target_date, stock_codes=None)
+            if len(stock_codes) > 200:
+                logger.warning(f"⚠️ 修复数量({len(stock_codes)}) > 200，自动升级为全天全量重建")
+                stock_codes = await service.fetch_sync_list(
+                    scope="all", 
+                    trade_date=target_date,
+                    shard_index=shard_index,
+                    shard_total=shard_total
+                )
+                if shard_index is None or shard_index == 0:
+                    await service.purge_tick_data(target_date, stock_codes=None)
                 idempotent_next = False
             else:
                 logger.info(f"🛠️ 定向修复模式: 正在清理并重抓 {len(stock_codes)} 只个股...")
@@ -91,7 +104,20 @@ async def main(
                 await service.purge_tick_data(target_date, stock_codes=stock_codes)
                 idempotent_next = False
         
+        # 兜底：如果 stock_codes 仍为空且非生产者模式，则根据 scope 获取默认名单
+        if not stock_codes and not (distributed_source == "redis" and distributed_role == "consumer"):
+             stock_codes = await service.fetch_sync_list(
+                scope=scope, 
+                trade_date=target_date,
+                shard_index=shard_index,
+                shard_total=shard_total
+            )
+
         logger.info(f"待同步股票总数: {len(stock_codes)} 只")
+        
+        if distributed_source == "redis":
+            # ... (distributed logic remains same)
+            pass
         
         if distributed_source == "redis":
             if distributed_role == "producer":
@@ -122,6 +148,7 @@ async def main(
                         code = await queue.get()
                         async with semaphore:
                             try:
+                                # Consumer 模式不执行 force/idempotent，假设 Producer 已处理
                                 res = await service.sync_stock(code, target_date)
                                 async with stats_lock:
                                     if res > 0: processed_count += 1
@@ -258,8 +285,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--concurrency",
         type=int,
-        default=50,
-        help="并发任务数 (默认为 50，优化后)"
+        default=60,
+        help="并发任务数 (默认为 60)"
     )
     parser.add_argument(
         "--stock-code", "--stock-codes",

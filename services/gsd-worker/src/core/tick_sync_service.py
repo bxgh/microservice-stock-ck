@@ -222,17 +222,22 @@ class TickSyncService:
         统一从 StockUniverseService 获取，确保名单标准化（去 BJ/去重/排序）
         """
         if scope == "all":
-            # Simplify: Always fetch full market list from Universe (Redis/MySQL source)
-            # This ensures we don't depend on K-Line data availability
-            stocks = await self.stock_universe.get_all_a_stocks()
+            if trade_date:
+                # 优先级：如果是历史日期，尝试从 K 线数据获取当日实际有成交的名单
+                # 这比直接拿全市场名单更精准，且能过滤掉未上市或停牌股票
+                stocks = await self.stock_universe.get_today_traded_stocks(trade_date)
+            else:
+                # 默认获取全市场名单 (Redis/MySQL source)
+                stocks = await self.stock_universe.get_all_a_stocks()
             
-            # Shard filtering
+            # 分片过滤
             if shard_index is not None and shard_total:
                 return self.stock_universe._shard_filter(stocks, shard_index, shard_total)
             return stocks
             
         else:
-            # 获取范围名单 (通常是配置好的 stock_list)
+            # 获取范围名单 (通常是配置好的 stock_list 或 passed_codes)
+            # 如果是 passed_codes，它在 main 中已经处理过，这里只是兜底
             return await self.stock_universe.get_all_a_stocks()
 
     async def get_sharded_stocks(self, shard_index: int) -> List[str]:

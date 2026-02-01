@@ -96,6 +96,24 @@ class FlowController:
                 commands = await cursor.fetchall()
                 cmd_map = {c['step_id']: c for c in commands}
                 
+                # [Fix] 动态上下文注入：将已完成步骤的输出注入 Context，供后续步骤引用
+                for step_id, cmd in cmd_map.items():
+                    if cmd['status'] == 'DONE' and cmd.get('output_context'):
+                        try:
+                            # 统一解析 output_context 为字典对象
+                            out = cmd['output_context']
+                            if isinstance(out, str):
+                                out = json.loads(out)
+                                
+                            # 注入格式: {{ step_id.output.key }}
+                            context[f"{step_id}.output"] = out
+                            # 简写引用: {{ step_id.key }} (如果 output 内部是平铺的)
+                            # 为保持稳健，我们也注入顶级属性兼容以往逻辑
+                            if isinstance(out, dict):
+                                context.update({f"{step_id}.{k}": v for k, v in out.items()})
+                        except Exception as e:
+                            logger.warning(f"Failed to inject context for {step_id}: {e}")
+
                 # 2. Check for overall completion or terminal failure
                 all_done = True
                 any_failed_permanently = False

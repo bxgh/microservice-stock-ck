@@ -113,18 +113,22 @@ class StockUniverseService:
         获取当日实际交易的股票列表 (基于 K 线或 Tick 数据)
         优先级: ClickHouse (KLine) -> MySQL (KLine) -> Get All (Fallback)
         """
-        db_date = trade_date.replace("-", "") # YYYYMMDD
+        # 统一日期格式为 YYYY-MM-DD 以兼容 ClickHouse Date 类型
+        if '-' not in trade_date and len(trade_date) == 8:
+            db_date = f"{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:]}"
+        else:
+            db_date = trade_date.replace("/", "-")
         
         # 1. ClickHouse Source
         if self.ch_client:
             try:
-                # 排除 BJ 代码
+                # 修正：过滤前缀 '4%', '8%', '9%' 代表北交所股票
                 query = f"""
                     SELECT DISTINCT stock_code FROM stock_data.stock_kline_daily 
                     WHERE trade_date = '{db_date}'
-                    AND stock_code NOT LIKE '%4%' 
-                    AND stock_code NOT LIKE '%8%' 
-                    AND stock_code NOT LIKE '%9%'
+                    AND stock_code NOT LIKE '4%' 
+                    AND stock_code NOT LIKE '8%' 
+                    AND stock_code NOT LIKE '9%'
                     AND stock_code NOT LIKE 'bj.%'
                 """
                 # Client might be async or sync depending on impl, wrap carefully
@@ -150,12 +154,13 @@ class StockUniverseService:
                     async with pool.acquire() as conn:
                         async with conn.cursor() as cur:
                             # 格式化 %% 来转义 %
+                            # 修正：使用前缀匹配排除北交所
                             sql = """
                                 SELECT code FROM stock_kline_daily 
                                 WHERE trade_date = %s
-                                AND code NOT LIKE '%%4%%'
-                                AND code NOT LIKE '%%8%%'
-                                AND code NOT LIKE '%%9%%'
+                                AND code NOT LIKE '4%%'
+                                AND code NOT LIKE '8%%'
+                                AND code NOT LIKE '9%%'
                                 AND code NOT LIKE 'bj.%%'
                             """
                             await cur.execute(sql, (trade_date,))

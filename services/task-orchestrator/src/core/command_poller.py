@@ -16,13 +16,14 @@ class CommandPoller:
     仅当 status='PENDING' 时提取并执行。
     """
     
-    def __init__(self, mysql_pool, scheduler, docker_client=None, task_config=None, poll_interval: int = 15, shard_id: Optional[int] = None):
+    def __init__(self, mysql_pool, scheduler, docker_client=None, task_config=None, poll_interval: int = 15, shard_id: Optional[int] = None, flow_controller=None):
         self.mysql_pool = mysql_pool
         self.scheduler = scheduler
         self.docker_client = docker_client
         self.task_config = task_config
         self.poll_interval = poll_interval
         self.shard_id = shard_id
+        self.flow_controller = flow_controller
         self._running = False
         self._task: Optional[asyncio.Task] = None
     
@@ -99,11 +100,17 @@ class CommandPoller:
                 cmd = await cursor.fetchone()
                 
                 if not cmd:
+                    # [Debug] 如果没捡到任务，查一下表里到底有没有 PENDING
+                    await cursor.execute("SELECT count(*) FROM alwaysup.task_commands WHERE status='PENDING'")
+                    total_pending = (await cursor.fetchone())['count(*)']
+                    if total_pending > 0:
+                         logger.debug(f"ℹ️ Found {total_pending} PENDING tasks, but none match shard filter (shard={self.shard_id})")
                     return
                 
                 cmd_id = cmd['id']
                 run_id = cmd.get('run_id')
                 task_id = cmd['task_id']
+                logger.info(f"✅ Picked Command #{cmd_id}: {task_id} (Run: {run_id})")
                 params_json = cmd['params']
                 input_ctx_json = cmd.get('input_context')
                 
@@ -136,58 +143,10 @@ class CommandPoller:
                     "UPDATE alwaysup.task_commands SET status='RUNNING', executed_at=NOW() WHERE id=%s",
                     (cmd_id,)
                 )
+                await conn.commit()
                 
-                # 2.5. 智能拆分逻辑：repair_tick 无 shard_id 的全量/大批量请求拆分为 3 个分片
-                if task_id == "repair_tick" and params and params.get("shard_id") is None:
-                    stock_codes = params.get("stock_codes") or params.get("stocks")
-                    
-                    # 判断是否需要分片执行
-                    should_split = False
-                    if not stock_codes:
-                        # 无指定股票 = 全量补采
-                        should_split = True
-                        reason = "全量补采"
-                    else:
-                        # 有指定股票，计算数量
-                        if isinstance(stock_codes, str):
-                            stock_list = [s.strip() for s in stock_codes.split(',') if s.strip()]
-                        else:
-                            stock_list = stock_codes
-                        
-                        stock_count = len(stock_list)
-                        SPLIT_THRESHOLD = 1666  # 约为全市场5000只的1/3
-                        
-                        if stock_count > SPLIT_THRESHOLD:
-                            should_split = True
-                            reason = f"大批量补采 ({stock_count} 只 > {SPLIT_THRESHOLD})"
-                        else:
-                            logger.info(f"📌 少量补采 ({stock_count} 只)，单节点执行")
-                    
-                    if should_split:
-                        logger.info(f"🔀 检测到 {reason}，自动拆分为 3 个分片任务")
-                        date_str = params.get("date")
-                        
-                        # 插入 3 个分片任务
-                        for shard_id in range(3):
-                            shard_params = {"date": date_str, "shard_id": shard_id}
-                            # 如果有指定股票列表，也传递下去（各分片会自动过滤属于自己的）
-                            if stock_codes:
-                                shard_params["stock_codes"] = stock_codes
-                            
-                            await cursor.execute(
-                                "INSERT INTO alwaysup.task_commands (task_id, params, status) VALUES (%s, %s, %s)",
-                                (task_id, json.dumps(shard_params), "PENDING")
-                            )
-                        await conn.commit()
-                        
-                        # 标记原任务为完成
-                        await cursor.execute(
-                            "UPDATE alwaysup.task_commands SET status='DONE', result=%s WHERE id=%s",
-                            (f"Auto-split to 3 shard tasks ({reason})", cmd_id)
-                        )
-                        await conn.commit()
-                        logger.info(f"✅ 已拆分并插入 3 个分片任务 (Shard 0, 1, 2)")
-                        return  # 跳过当前任务执行，由新任务接管
+                # [Refactored V4.0] 移除 repair_tick 自动分片逻辑
+                # 历史采集现由 Node 41 集中执行，不再拆分为 shard_id 任务。
                 
                 # 3. 执行任务
                 status = "DONE"
@@ -205,135 +164,215 @@ class CommandPoller:
 
                     # 如果是 Docker 任务且有参数，使用 DockerExecutor 动态执行
                     if params and self.docker_client and task_def.type == "docker":
-                        from executor.docker_executor import DockerExecutor
-                        executor = DockerExecutor(self.docker_client)
-                        
-                        # 构建命令
-                        original_cmd = task_def.target.get('command', [])
-                        # 确保是 list
-                        if isinstance(original_cmd, str):
-                            cmd_list = original_cmd.split()
+                        # [Optimization] Silent Skip check
+                        # If a diagnostic step (like AI Review) decides we should SKIP, 
+                        # the subsequent repair step can check this 'mode' or 'repair_mode'.
+                        if params.get('mode') == 'skip' or params.get('repair_mode') == 'skip':
+                            logger.info(f"⏭️ Task {task_id} SILENT SKIP requested via params (mode=skip)")
+                            status = "DONE"
+                            result = "SKIPPED_BY_DESIGN"
+                            output_context = {"skipped": True}
+                        elif task_id == "repair_tick" and not (params.get('stocks') or params.get('stock_codes') or params.get('stock-codes')) and params.get('mode') == 'repair':
+                            # Even if mode is not skip, empty stocks in repair mode is effectively a skip
+                            logger.info(f"⏭️ Task {task_id} SILENT SKIP: Mode is 'repair' but 'stocks' list is empty.")
+                            status = "DONE"
+                            result = "SKIPPED_NO_STOCKS"
+                            output_context = {"skipped": True}
                         else:
-                            cmd_list = list(original_cmd)
-                            
-                        # 追加参数: --key value (支持列表参数)
-                        for k, v in params.items():
-                            # 将下划线转换为破折号 (argparse 兼容: shard_index -> shard-index)
-                            cli_key = k.replace('_', '-')
-                            cmd_list.append(f"--{cli_key}")
-                            if v is not None and str(v) != "":
-                                # 处理列表参数：转换为逗号分隔字符串或多个值
-                                if isinstance(v, list):
-                                    # 对于 stocks/stock-codes 等参数，使用逗号分隔
-                                    if k in ['stocks', 'stock_codes', 'stock-codes']:
-                                        cmd_list.append(','.join(str(item) for item in v))
-                                    # 对于 data-types 等参数，展开为多个值
-                                    elif k in ['data_types', 'data-types']:
-                                        cmd_list.extend(str(item) for item in v)
-                                    else:
-                                        # 其他列表默认转 JSON
-                                        cmd_list.append(json.dumps(v))
-                                elif isinstance(v, dict):
-                                    # 字典统一转 JSON
-                                    cmd_list.append(json.dumps(v))
+                            from executor.docker_executor import DockerExecutor
+                            executor = DockerExecutor(self.docker_client)
+                        
+                            # 构建命令
+                            original_cmd = task_def.target.get('command', [])
+                            # 确保是 list
+                            if isinstance(original_cmd, str):
+                                cmd_list = original_cmd.split()
+                            else:
+                                cmd_list = list(original_cmd)
+                                
+                            # 追加参数: --key value (支持列表参数)
+                            for k, v in params.items():
+                                # 将下划线转换为破折号 (argparse 兼容: shard_index -> shard-index)
+                                # [Fix] 强制映射 stocks -> stock-codes 以适配 repair_tick
+                                if k == 'stocks':
+                                    cli_key = 'stock-codes'
                                 else:
-                                    cmd_list.append(str(v))
+                                    cli_key = k.replace('_', '-')
+                                
+                                cmd_list.append(f"--{cli_key}")
+                                
+                                if v is not None and str(v) != "":
+                                    # [Refactored] 增强对字符串形式列表的支持 (针对 Workflow 传参场景)
+                                    val_to_process = v
+                                    is_list_processed = False
+                                    
+                                    # 尝试将 JSON 字符串解析为列表
+                                    if isinstance(v, str) and (v.startswith('[') and v.endswith(']')):
+                                        try:
+                                            parsed = json.loads(v)
+                                            if isinstance(parsed, list):
+                                                val_to_process = parsed
+                                        except:
+                                            # 如果 JSON 解析失败，尝试手动去除非法字符 (针对 '["code"]' 这种可能带单引号的非标准 JSON)
+                                            clean_str = v.strip("[]").replace("'", "").replace('"', "").replace(" ", "")
+                                            val_to_process = clean_str.split(',')
+                                            
+                                    # 统一处理列表
+                                    if isinstance(val_to_process, list):
+                                        if k in ['stocks', 'stock_codes', 'stock-codes']:
+                                            cmd_list.append(','.join(str(item) for item in val_to_process))
+                                        elif k in ['data_types', 'data-types']:
+                                            cmd_list.pop() # 移除刚才加的 key，因为 extend 会加多个
+                                            for item in val_to_process:
+                                                cmd_list.append(f"--{cli_key}")
+                                                cmd_list.append(str(item))
+                                        else:
+                                            cmd_list.append(json.dumps(val_to_process))
+                                        is_list_processed = True
+                                    
+                                    # 处理字典
+                                    elif isinstance(val_to_process, dict):
+                                        cmd_list.append(json.dumps(val_to_process))
+                                        
+                                    # 处理普通值
+                                    else:
+                                        if not is_list_processed:
+                                            cmd_list.append(str(val_to_process))
+                            
+                            logger.info(f"🚀 动态执行任务 {task_id}: {cmd_list}")
                         
-                        logger.info(f"🚀 动态执行任务 {task_id}: {cmd_list}")
-                        
-                        # 执行容器
-                        
-                        # 准备挂载 (从 task_def 获取)
-                        volumes_config = {}
-                        if self.task_config and self.task_config.global_ and self.task_config.global_.docker:
-                            default_vols = self.task_config.global_.docker.get('default_volumes', [])
-                            for v in default_vols:
+                            # 执行容器
+                            
+                            # 准备挂载 (从 task_def 获取)
+                            volumes_config = {}
+                            if self.task_config and self.task_config.global_ and self.task_config.global_.docker:
+                                default_vols = self.task_config.global_.docker.get('default_volumes', [])
+                                for v in default_vols:
+                                    parts = v.split(':')
+                                    if len(parts) >= 2:
+                                        host_path = parts[0]
+                                        if host_path.startswith('.'):
+                                            host_path = os.path.join(settings.HOST_BASE_DIR, host_path.lstrip('./'))
+                                        volumes_config[host_path] = {'bind': parts[1], 'mode': parts[2] if len(parts) > 2 else 'rw'}
+    
+                            task_vols = task_def.target.get('volumes', [])
+                            for v in task_vols:
                                 parts = v.split(':')
                                 if len(parts) >= 2:
                                     host_path = parts[0]
                                     if host_path.startswith('.'):
                                         host_path = os.path.join(settings.HOST_BASE_DIR, host_path.lstrip('./'))
                                     volumes_config[host_path] = {'bind': parts[1], 'mode': parts[2] if len(parts) > 2 else 'rw'}
-
-                        task_vols = task_def.target.get('volumes', [])
-                        for v in task_vols:
-                            parts = v.split(':')
-                            if len(parts) >= 2:
-                                host_path = parts[0]
-                                if host_path.startswith('.'):
-                                    host_path = os.path.join(settings.HOST_BASE_DIR, host_path.lstrip('./'))
-                                volumes_config[host_path] = {'bind': parts[1], 'mode': parts[2] if len(parts) > 2 else 'rw'}
-
-                        output_context = {}
-                        cid = None
-                        try:
-                            cid = executor.run_worker(
-                                command=cmd_list,
-                                environment=task_def.target.get('environment'),
-                                volumes=volumes_config,
-                                input_context=input_ctx,
-                                name_suffix=f"adhoc-{cmd_id}"
-                            )
-                            
-                            # 等待执行完成
-                            wait_res = executor.wait_for_container(cid)
-                            exit_code = wait_res.get('StatusCode', 1)
-                            
-                            # 获取日志
+    
                             output_context = {}
-                            logs = "" # [Fix] 确保 logs 变量始终被定义
+                            cid = None
                             try:
-                                container = self.docker_client.containers.get(cid)
-                                full_logs = container.logs().decode('utf-8')
-                                logs = full_logs[-2000:] 
-
-                                # 尝试从日志中提取结构化输出 (n8n 风格)
-                                # 寻找格式为: GSD_OUTPUT_JSON: {...}
-                                marker = "GSD_OUTPUT_JSON:"
-                                if marker in full_logs:
-                                    try:
-                                        start_idx = full_logs.find(marker) + len(marker)
-                                        content = full_logs[start_idx:].strip()
-                                        # 寻找第一个 { 和最后一个 }
-                                        first_brace = content.find('{')
-                                        last_brace = content.rfind('}')
-                                        if first_brace != -1 and last_brace != -1:
-                                            json_str = content[first_brace:last_brace+1]
-                                            # 清理不可见字符 (如 \r, \n 或 Docker 混合流头部)
-                                            # 只保留打印字符和必要的空白
-                                            import re
-                                            json_str = re.sub(r'[\x00-\x1F\x7F-\x9F]', '', json_str)
-                                            output_context = json.loads(json_str)
-                                            logger.info(f"✨ 捕获到结构化输出 (长度: {len(json_str)})")
-                                    except Exception as e:
-                                        logger.warning(f"解析结构化输出失败: {e}. JSON 长度: {len(json_str) if 'json_str' in locals() else 0}")
-                            except Exception as e:
-                                logs = f"系统捕获日志异常: {e}"
+                                cid = executor.run_worker(
+                                    command=cmd_list,
+                                    environment=task_def.target.get('environment'),
+                                    volumes=volumes_config,
+                                    input_context=input_ctx,
+                                    name_suffix=f"adhoc-{cmd_id}"
+                                )
+                            
+                                # 等待执行完成
+                                wait_res = executor.wait_for_container(cid)
+                                exit_code = wait_res.get('StatusCode', 1)
                                 
-                            if exit_code != 0:
-                                # Prepare error context for AI diagnosis
-                                output_context["error_logs"] = logs
-                                raise Exception(f"容器退出码 {exit_code}")
-                                
-                            result = f"Success (Ad-hoc). Logs tail:\n{logs[-500:]}"
-                        finally:
-                            if cid:
+                                # 获取日志
+                                output_context = {}
+                                logs = "" # [Fix] 确保 logs 变量始终被定义
                                 try:
                                     container = self.docker_client.containers.get(cid)
-                                    container.remove(force=True)
-                                    logger.info(f"🗑️ 已清理临时容器: {cid[:12]}")
-                                except:
-                                    pass
+                                    full_logs = container.logs().decode('utf-8')
+                                    logs = full_logs[-2000:] 
+    
+                                    # 尝试从日志中提取结构化输出 (n8n 风格)
+                                    # 寻找格式为: GSD_OUTPUT_JSON: {...}
+                                    marker = "GSD_OUTPUT_JSON:"
+                                    if marker in full_logs:
+                                        try:
+                                            start_idx = full_logs.find(marker) + len(marker)
+                                            content = full_logs[start_idx:].strip()
+                                            # 寻找第一个 { 和最后一个 }
+                                            first_brace = content.find('{')
+                                            last_brace = content.rfind('}')
+                                            if first_brace != -1 and last_brace != -1:
+                                                json_str = content[first_brace:last_brace+1]
+                                                # 清理不可见字符 (如 \r, \n 或 Docker 混合流头部)
+                                                import re
+                                                json_str = re.sub(r'[\x00-\x1F\x7F-\x9F]', '', json_str)
+                                                output_context = json.loads(json_str)
+                                                logger.info(f"✨ 捕获到结构化输出 (长度: {len(json_str)})")
+                                        except Exception as e:
+                                            logger.warning(f"解析结构化输出失败: {e}")
+                                except Exception as e:
+                                    logs = f"系统捕获日志异常: {e}"
+                                    
+                                if exit_code != 0:
+                                    # Prepare error context for AI diagnosis
+                                    output_context["error_logs"] = logs
+                                    raise Exception(f"容器退出码 {exit_code}")
+                                    
+                                result = f"Success (Ad-hoc). Logs tail:\n{logs[-500:]}"
+                            finally:
+                                if cid:
+                                    try:
+                                        container = self.docker_client.containers.get(cid)
+                                        container.remove(force=True)
+                                        logger.info(f"🗑️ 已清理临时容器: {cid[:12]}")
+                                    except:
+                                        pass
+                        
+                        
+                    elif task_def.type == "workflow_trigger" and self.flow_controller:
+                        # 核心优化：直接调用 FlowController 触发工作流，绕过定时调度
+                        workflow_id = task_def.target.get('workflow_id')
+                        logger.info(f"⚡ [Direct] Triggering Workflow: {workflow_id} (Params: {params})")
+                        
+                        # 1. 准备上下文 (合并 yml 配置与 SQL 传入参数)
+                        # [DENSE DEBUG] 详细追踪上下文构建
+                        base_ctx = task_def.target.get('initial_context', {})
+                        ctx = dict(base_ctx)
+                        if params:
+                            for pk, pv in params.items():
+                                logger.info(f"DEBUG_FLOW: Applying override {pk} = {pv}")
+                                ctx[pk] = pv
+                        
+                        ctx['trigger_time'] = datetime.now().isoformat()
+                        
+                        # Handle specific placeholders
+                        if ctx.get('target_date') == '{{today_nodash}}':
+                             ctx['target_date'] = datetime.now().strftime("%Y%m%d")
+                        
+                        logger.info(f"DEBUG_FLOW: Final Merged Context: {ctx}")
+
+                        # 2. 从数据库加载定义
+                        async with self.mysql_pool.acquire() as inner_conn:
+                            async with inner_conn.cursor(aiomysql.DictCursor) as inner_cursor:
+                                await inner_cursor.execute(
+                                    "SELECT definition FROM alwaysup.workflow_definitions WHERE id = %s",
+                                    (workflow_id,)
+                                )
+                                row = await inner_cursor.fetchone()
+                                if row:
+                                    from core.workflow_parser import WorkflowDefinition
+                                    def_json = json.loads(row['definition']) if isinstance(row['definition'], str) else row['definition']
+                                    wf_def = WorkflowDefinition.model_validate(def_json)
+                                    
+                                    # 3. 创建运行实例
+                                    run_id = await self.flow_controller.create_run(workflow_id, wf_def, ctx)
+                                    result = f"Directly triggered Workflow Run: {run_id}"
+                                    output_context = {"run_id": run_id}
+                                else:
+                                    raise ValueError(f"Workflow ID '{workflow_id}' not found in DB")
                         
                     else:
                         # 默认回退到 Scheduler 触发 (不支持参数或非 Docker 任务)
-                        if params:
-                            logger.warning(f"任务 {task_id} 不支持动态参数 (Type={task_def.type}), 参数将被忽略")
-                            
-                        self.scheduler.modify_job(task_id, next_run_time=datetime.now())
-                        result = "Triggered via Scheduler (Params ignored)"
+                        self.scheduler.modify_job(task_id, next_run_time=datetime.now(), kwargs={'params': params})
+                        result = f"Triggered via Scheduler (Dynamic Params: {list(params.keys()) if params else 'None'})"
                         output_context = {}
-                        
+                            
                 except Exception as e:
                     status = "FAILED"
                     result = str(e)

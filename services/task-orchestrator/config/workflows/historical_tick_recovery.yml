@@ -1,0 +1,62 @@
+
+id: historical_tick_recovery
+name: historical_tick_recovery
+description: 历史分笔数据智能治理管线 (Audit-First Process)
+version: "4.0"
+steps:
+  # 步骤 1: 现状审计
+  - id: check_status
+    task_id: calculate_data_quality
+    type: docker
+    params:
+      date: "{{target_date}}"
+      threshold: 200
+
+  # 步骤 2: AI 研判
+  - id: ai_review
+    task_id: ai_quality_gatekeeper
+    type: docker
+    depends_on: [check_status]
+    params:
+      input_data: "{{ check_status.output }}" 
+      trigger_condition: "{{ check_status.output.diagnosis.action }}"
+
+  # 步骤 3: 智能决策修复
+  - id: smart_repair
+    task_id: repair_tick
+    type: docker
+    depends_on: [ai_review]
+    params:
+      date: "{{target_date}}"
+      mode: "{{ ai_review.output.repair_mode }}"
+      stock_codes: "{{ ai_review.output.confirmed_bad_codes }}"
+      concurrency: "{{ ai_review.output.repair_concurrency }}"
+
+  # 步骤 4: 修复后终审
+  - id: final_verification
+    task_id: calculate_data_quality
+    type: docker
+    depends_on: [smart_repair]
+    params:
+      date: "{{target_date}}"
+      threshold: 100
+
+  # 步骤 5: 终审后的二次研判 (Tier 2 Triage)
+  - id: final_ai_review
+    task_id: ai_quality_gatekeeper
+    type: docker
+    depends_on: [final_verification]
+    params:
+      input_data: "{{ final_verification.output }}"
+      trigger_condition: "REPAIR"
+
+  # 步骤 6: 二次针对性修复 (Final Strike)
+  - id: final_smart_repair
+    task_id: repair_tick
+    type: docker
+    depends_on: [final_ai_review]
+    params:
+      date: "{{target_date}}"
+      mode: "{{ final_ai_review.output.repair_mode }}"
+      stock_codes: "{{ final_ai_review.output.confirmed_bad_codes }}"
+      concurrency: 20
