@@ -120,11 +120,17 @@
   docker run --rm gsd-worker jobs.retry_tick --concurrency 10
   ```
 
-### 6.2 调整并发
-如需提升速度，必须**成对修改**:
-1. 修改 `docker-compose` 中的 `TDX_POOL_SIZE`。
-2. 修改 `tasks.yml` 中的 `--concurrency` (针对 Retry) 和环境变量 `MOOTDX_CONCURRENCY` (针对 Main)。
-3. 重启相关容器。
+### 6.2 数据库保护：批量清洗 (Batch Purge)
+为防止全市场修复时产生数千个 `DELETE` Mutation 导致 ClickHouse 死锁，Orchestrator 采用**批量清洗策略**：
+- **逻辑**：在启动并发采集循环前，先对目标股票列表按 **500只/批** 执行批量删除。
+- **优势**：将 5000 次数据库交互压缩为 10 次，彻底消除 Mutation Storm 风险。
+
+### 6.3 安全模式：默认只增不删 (Safe Mode)
+为防止误操作导致数据丢失，系统默认开启安全模式：
+- **默认为 False**：`idempotent=False`。即默认**只追加写入，不执行删除**。
+- **强制清洗开关**：只有显式传入 `--force-clean` 参数时，才会触发“先清后下”逻辑。
+  - 示例：`python -m jobs.sync_tick --date 20260130 --stock-codes 600036 --force-clean`
+- **严禁**：在无明确名单的 `mode=full` 全量模式下使用 `--force-clean`。
 
 ---
 
