@@ -10,10 +10,9 @@ import logging
 import sys
 import os
 import argparse
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import List, Optional
 import pytz
-import asynch
 import json
 
 # Add src to path
@@ -102,7 +101,7 @@ class AuditJob:
         logger.info(f"🏗️  K线就绪检查: 实际={actual_count}/预期={expected_count} (覆盖率={coverage:.2%})")
 
         if coverage < 0.99:
-            logger.error(f"❌ K线数据未就绪! (Threshold 99%)")
+            logger.error("❌ K线数据未就绪! (Threshold 99%)")
             # For strict mode, we might want to return False, but let's see actual counts first.
             if coverage == 0:
                  return False
@@ -344,7 +343,7 @@ class AuditJob:
             
             # Combine unique codes for reporting
             invalid_codes = [item['code'] for item in invalid]
-            repair_set = set(missing + invalid_codes)
+            set(missing + invalid_codes)
             
             # [Workflow 4.0] Internal repair is disabled. Orchestrator handles repair via stock_data_supplement step.
             # if repair_set:

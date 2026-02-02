@@ -1,14 +1,12 @@
 import logging
 import asyncio
-from datetime import datetime, time, timedelta
-from typing import Tuple, Dict, Any, List, Optional
+from datetime import datetime, timedelta
+from typing import Dict, Any, List, Optional
 import httpx
 import os
 import pytz
 import json
 import aiomysql
-import redis.asyncio as redis
-from redis.asyncio.cluster import RedisCluster, ClusterNode
 import redis.asyncio as redis
 from redis.asyncio.cluster import RedisCluster, ClusterNode
 from gsd_shared.stock_universe import StockUniverseService
@@ -255,7 +253,7 @@ class PostMarketGateService:
         # 1. 获取有效 A 股总数
         total_stocks = await self._get_effective_stock_count()
         if total_stocks == 0:
-            logger.warning(f"⚠️ 无法获取有效 A 股数量，无法计算 K线覆盖率")
+            logger.warning("⚠️ 无法获取有效 A 股数量，无法计算 K线覆盖率")
             return 0.0
         
         # 2. 获取实际交易的股票数 (关闭 fallback 以确保真实反映 CH 状态)
@@ -318,7 +316,7 @@ class PostMarketGateService:
         logger.info(f"🔍 发现异常股票 {failed_count} 只，启动 Node 41 集中化自愈程序")
         
         if failed_count <= 200:
-            logger.info(f"✅ 触发集中定向补充 (stock_data_supplement)")
+            logger.info("✅ 触发集中定向补充 (stock_data_supplement)")
             await self._trigger_targeted_supplement(date_str, failed_codes)
             actions.append(f"集中定向补充 ({failed_count}只)")
         else:
@@ -387,7 +385,7 @@ class PostMarketGateService:
             
             # 2. 降级逻辑：如果K线数据不可用，使用 stock_list
             if not all_stocks:
-                logger.warning(f"⚠️ 无法从K线获取股票列表，降级到 stock_list")
+                logger.warning("⚠️ 无法从K线获取股票列表，降级到 stock_list")
                 all_stocks = await self._get_all_stock_codes()
             
             # 3. 应用分片过滤
@@ -403,7 +401,7 @@ class PostMarketGateService:
             # 动态选择表名 (Intraday vs History)
             is_today = date_str == datetime.now(CST).strftime('%Y-%m-%d')
             tick_table = "stock_data.tick_data_intraday" if is_today else "stock_data.tick_data"
-            ds = date_str.replace('-', '') # ClickHouse Date usually accepts YYYY-MM-DD but string compare needs match if str. 
+            date_str.replace('-', '') # ClickHouse Date usually accepts YYYY-MM-DD but string compare needs match if str. 
                                          # But here we pass '{trade_date}' in query. 
                                          # Using YYYY-MM-DD string with Date column works.
             
@@ -482,7 +480,7 @@ class PostMarketGateService:
             conn = await aiomysql.connect(**self.mysql_config)
             async with conn.cursor() as cur:
                 # 去重检查
-                stock_list = ",".join(sorted(codes))
+                ",".join(sorted(codes))
                 check_sql = """
                     SELECT id, status FROM alwaysup.task_commands 
                     WHERE task_id = 'stock_data_supplement' 
@@ -629,7 +627,8 @@ class PostMarketGateService:
         try:
             async with httpx.AsyncClient(timeout=HTTP_CLIENT_TIMEOUT_SECONDS) as client:
                 await client.post(url, json=payload)
-        except: pass
+        except Exception:
+            pass
 
     async def _send_audit_report(self, report: Dict):
         """发送企微审计报告"""
@@ -649,7 +648,7 @@ class PostMarketGateService:
         ]
         
         if report['actions_taken']:
-            content.append(f"\n⚡ 响应动作: " + ", ".join(report['actions_taken']))
+            content.append("\n⚡ 响应动作: " + ", ".join(report['actions_taken']))
         else:
             content.append("\n✨ 今日数据质量完美，审计通过。")
             
