@@ -306,6 +306,7 @@ tasks:
       expression: "0 0 1 1 *" # Dummy schedule
     target:
       command: ["jobs.sync_tick", "--scope", "all", "--distributed-source", "none"]
+      network_mode: "host"
       environment:
         TICK_THRESHOLD: "95"
     retry:
@@ -321,6 +322,7 @@ tasks:
       expression: "0 0 1 1 *"
     target:
       command: ["jobs.sync_tick", "--scope", "all"]
+      network_mode: "host"
       environment:
         TICK_THRESHOLD: "95"
     retry:
@@ -367,6 +369,7 @@ tasks:
     enabled: false
     target:
       command: ["jobs.ai_quality_gatekeeper"]
+      network_mode: host
       environment:
         PYTHONPATH: "/app/src:/app/libs/gsd-shared:/app/libs/gsd-agent"
         SILICONFLOW_API_KEY: "${SILICONFLOW_API_KEY}" # 需确保 Worker 能获取到

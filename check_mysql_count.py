@@ -1,32 +1,46 @@
 
+import asyncio
+import aiomysql
 import os
-import pymysql
-import sys
 
-def check_count():
-    host = os.getenv("GSD_DB_HOST")
-    user = os.getenv("GSD_DB_USER", "root")
-    password = os.getenv("GSD_DB_PASS", "root")
-    db = os.getenv("GSD_DB_NAME", "stock_data")
+async def main():
+    config = {
+        "host": "127.0.0.1",
+        "port": 36301,
+        "user": "root",
+        "password": "alwaysup@888",
+        "db": "alwaysup",
+        "autocommit": True
+    }
     
+    print(f"Connecting to MySQL at {config['host']}:{config['port']}...")
     try:
-        conn = pymysql.connect(
-            host=host,
-            user=user,
-            password=password,
-            database=db,
-            port=3306
-        )
-        with conn.cursor() as cursor:
-            sql = "SELECT count(*) FROM kline_daily WHERE trade_date = '2025-12-31'"
-            cursor.execute(sql)
-            count = cursor.fetchone()[0]
-            print(f"MySQL count for 2025-12-31: {count}")
+        pool = await aiomysql.create_pool(**config)
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                print("Checking stock_basic_info table...")
+                
+                # Total count
+                await cur.execute("SELECT count(*) FROM stock_basic_info")
+                total = await cur.fetchone()
+                print(f"Total rows in stock_basic_info: {total[0]}")
+                
+                # Active count (L)
+                await cur.execute("SELECT count(*) FROM stock_basic_info WHERE list_status = 'L'")
+                active_l = await cur.fetchone()
+                print(f"Active (list_status='L'): {active_l[0]}")
+                
+               # Active count (L) and Market
+                await cur.execute("""
+                    SELECT count(*) FROM stock_basic_info 
+                    WHERE list_status = 'L' 
+                    AND market IN ('主板', '中小板', '创业板', '科创板')
+                """)
+                market_filtered = await cur.fetchone()
+                print(f"Active + Market Filter: {market_filtered[0]}")
+
     except Exception as e:
-        print(f"Error: {e}")
-    finally:
-        if 'conn' in locals():
-            conn.close()
+        print(f"ERROR: {e}")
 
 if __name__ == "__main__":
-    check_count()
+    asyncio.run(main())

@@ -108,10 +108,11 @@ class StockUniverseService:
         all_stocks = await self.get_all_a_stocks()
         return self._shard_filter(all_stocks, shard_index, total_shards)
 
-    async def get_today_traded_stocks(self, trade_date: str) -> List[str]:
+    async def get_today_traded_stocks(self, trade_date: str, fallback_to_all: bool = True) -> List[str]:
         """
         获取当日实际交易的股票列表 (基于 K 线或 Tick 数据)
-        优先级: ClickHouse (KLine) -> MySQL (KLine) -> Get All (Fallback)
+        :param fallback_to_all: 如果为 True，当找不到 K 线记录时返回全量 A 股名单 (用于采集场景)；
+                               如果为 False，则返回空列表 (用于审计场景)
         """
         # 统一日期格式为 YYYY-MM-DD 以兼容 ClickHouse Date 类型
         if '-' not in trade_date and len(trade_date) == 8:
@@ -163,7 +164,7 @@ class StockUniverseService:
                                 AND code NOT LIKE '9%%'
                                 AND code NOT LIKE 'bj.%%'
                             """
-                            await cur.execute(sql, (trade_date,))
+                            await cur.execute(sql, (db_date,))
                             rows = await cur.fetchall()
                             if rows:
                                 return [r[0] for r in rows] # Already normalized in DB usually
@@ -171,8 +172,40 @@ class StockUniverseService:
                 logger.warning(f"⚠️ [StockUniverse] MySQL fetch failed: {e}")
 
         # 3. Fallback to All
-        logger.warning(f"⚠️ [StockUniverse] No K-Line data found for {trade_date}, falling back to ALL")
-        return await self.get_all_a_stocks()
+        if fallback_to_all:
+            logger.warning(f"⚠️ [StockUniverse] No K-Line data found for {trade_date}, falling back to ALL")
+            return await self.get_all_a_stocks()
+        
+        return []
+
+    async def get_suspended_stocks(self, trade_date: str) -> List[str]:
+        """
+        获取指定日期停牌的股票列表 (标准化代码)
+        """
+        if not self.mysql_config:
+            return []
+            
+        # 统一日期格式 YYYY-MM-DD
+        if '-' not in trade_date and len(trade_date) == 8:
+            db_date = f"{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:]}"
+        else:
+            db_date = trade_date.replace("/", "-")
+            
+        try:
+            async with aiomysql.create_pool(**self.mysql_config) as pool:
+                async with pool.acquire() as conn:
+                    async with conn.cursor() as cur:
+                        sql = "SELECT ts_code FROM alwaysup.stock_suspensions WHERE trade_date = %s"
+                        await cur.execute(sql, (db_date,))
+                        rows = await cur.fetchall()
+                        # 归一化: '000670.SZ' -> '000670'
+                        codes = [r[0].split('.')[0] for r in rows]
+                        if codes:
+                            logger.info(f"📊 [StockUniverse] 从停牌表获取到 {len(codes)} 只股票 ({db_date})")
+                        return codes
+        except Exception as e:
+            logger.warning(f"⚠️ [StockUniverse] Failed to fetch suspensions from MySQL: {e}")
+            return []
 
     # --- Helper Methods ---
 

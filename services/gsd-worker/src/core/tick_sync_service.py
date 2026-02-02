@@ -58,6 +58,16 @@ class TickSyncService:
         self.redis_port: int = int(os.getenv("REDIS_PORT", "6379"))
         self.redis_password: str = os.getenv("REDIS_PASSWORD", "redis123")
         
+        # MySQL Config for StockUniverse
+        self.mysql_config = {
+            "host": os.getenv("MYSQL_HOST", "127.0.0.1"),
+            "port": int(os.getenv("MYSQL_PORT", "36301")),
+            "user": os.getenv("MYSQL_USER", "root"),
+            "password": os.getenv("MYSQL_PASSWORD", "alwaysup@888"),
+            "db": os.getenv("MYSQL_DB", "alwaysup"),
+            "autocommit": True
+        }
+        
         # Components (Initialized in initialize())
         self.task_queue: Optional[TickTaskQueue] = None
         self.stock_universe: Optional[StockUniverseService] = None
@@ -135,6 +145,7 @@ class TickSyncService:
 
             self.stock_universe = StockUniverseService(
                 redis_client=self.redis_client,
+                mysql_config=self.mysql_config,
                 clickhouse_client=CHPoolAdapter(self.clickhouse_pool)
             )
             self.validator = TickValidator(self.clickhouse_pool)
@@ -230,6 +241,23 @@ class TickSyncService:
                 # 默认获取全市场名单 (Redis/MySQL source)
                 stocks = await self.stock_universe.get_all_a_stocks()
             
+            # [New V4.0] 自动从待处理名单中剔除停牌股，从源头减少无效补采
+            if trade_date:
+                try:
+                    suspended = await self.stock_universe.get_suspended_stocks(trade_date)
+                    before_count = len(stocks)
+                    if suspended:
+                        suspended_set = set(suspended)
+                        stocks = [s for s in stocks if s not in suspended_set]
+                        if before_count > len(stocks):
+                            logger.info(f"🛡️ 从待执行名单中剔除 {before_count - len(stocks)} 只停牌股票 ({trade_date})，剩余 {len(stocks)} 只")
+                        else:
+                            logger.info(f"📍 名单中未包含停牌股票，无需剔除 (原始总数: {before_count})")
+                    else:
+                        logger.info(f"📍 未发现当日停牌股票数据 ({trade_date})，原始总数: {before_count}")
+                except Exception as e:
+                    logger.warning(f"⚠️ 过滤停牌股失败 (跳过): {e}")
+
             # 分片过滤
             if shard_index is not None and shard_total:
                 return self.stock_universe._shard_filter(stocks, shard_index, shard_total)

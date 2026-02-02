@@ -19,6 +19,7 @@ import xxhash
 from core.clickhouse_client import ClickHouseClient
 from core.notifier import Notifier
 from core.sync_status import SyncStatusTracker
+from jobs.audit_tick_resilience import AuditJob
 
 logger = logging.getLogger(__name__)
 CST = pytz.timezone('Asia/Shanghai')
@@ -148,50 +149,67 @@ class PostMarketGateService:
             return date_str
 
     async def run_gate_check(self, date_str: Optional[str] = None) -> Dict[str, Any]:
-        """执行 Gate-3 审计流程"""
+        """执行 Gate-3 审计流程 (大一统模式: 调用 AuditJob)"""
         today = self._normalize_date(date_str)
-        logger.info(f"🛡️ 开始盘后深度审计, 目标日期: {today}")
+        logger.info(f"🛡️ 开始盘后大一统审计, 目标日期: {today}")
         
-        # 1. 基础覆盖率检查
-        kline_rate = await self._check_kline_coverage(today)
-        tick_rate = await self._check_tick_coverage(today)
+        # 1. 初始化并运行 AuditJob
+        job = AuditJob()
+        job.target_date = today
+        await job.initialize()
         
-        # 2. 深度质量检查 (全量时段完整性)
-        continuity_summary = await self._check_all_ticks_continuity(today)
-        
-        # 3. 数据一致性检查 (抽样对账: 价格 + 成交量)
-        consistency_report = await self._check_consistency(today)
-        
-        # 4. 判断是否需要补采
+        try:
+            # 1.1 获取目标范围
+            target_scope = await job.get_target_scope()
+            if not target_scope:
+                logger.error("❌ 无法获取审计目标范围")
+                return {"status": "ERROR", "reason": "Empty target scope"}
+            
+            # 1.2 运行核心对账 (L1-L3)
+            missing, invalid = await job.execute_validation(target_scope)
+            
+            # 1.3 提取诊断结论
+            # 映射 AuditJob 的逻辑来决定状态
+            total_faults = len(missing) + len(invalid)
+            failed_codes = missing + [item['code'] for item in invalid]
+            
+            # 1.4 计算覆盖率指标 (对齐原报告结构)
+            kline_count = len(target_scope) # 审计范围即为 K 线范围 (Exclude BJ)
+            valid_count = len(target_scope) - total_faults
+            tick_rate = round(valid_count / kline_count * 100, 2) if kline_count > 0 else 0
+            
+            # 1.5 运行 K 线质量审计 (OHLC 校验)
+            kline_audit = await self._perform_kline_quality_audit(today)
+            
+            # 假设 K 线本身也有一个就绪检查逻辑（保持原样或简化）
+            kline_rate = await self._check_kline_coverage(today)
+            
+        finally:
+            await job.close()
+
+        # 2. 判断是否需要补采
         actions = []
         if kline_rate < self.kline_threshold:
             logger.warning(f"⚠️ 当日 K线覆盖率 {kline_rate}% 不足")
             await self._trigger_recovery("repair_kline", today)
             actions.append("当日K线补采")
             
-        # 4.2 分级补采逻辑
-        # 只有在分片级别异常时才触发对应的修复策略
-        # continuity_summary['failed_codes'] 包含了所有异常股票
-        failed_codes = continuity_summary.get('failed_codes', [])
-        
-        # [SAFETY BRAKE] 极低覆盖率熔断机制
-        # 如果覆盖率极低 (e.g. < 80%)，通常意味着系统性故障或当日休市，
-        # 此时触发海量补采极易导致资源耗尽或误判。因此只记录审计失败，不自动触发修复。
+        # 3. 分级补采逻辑 (Tiered Triage)
         SAFETY_THRESHOLD = 80.0
-        
         if tick_rate < SAFETY_THRESHOLD:
              logger.critical(f"⛔️ 覆盖率过低 ({tick_rate}% < {SAFETY_THRESHOLD}%)，触发安全熔断！")
-             logger.critical("跳过自动补采，请人工介入排查是否为休市或全系统崩溃。")
-             actions.append(f"安全熔断: 分笔覆盖率({tick_rate}%)过低，已跳过海量补采。请排查是否休市。")
-        elif tick_rate < self.tick_threshold or len(failed_codes) > 0:
-            logger.warning(f"⚠️ 当日分笔异常: 覆盖率={tick_rate}%, 异常股票数={len(failed_codes)}")
-            # 按分片分组处理
-            grouped_results = await self._process_tiered_repair(today, failed_codes)
-            actions.extend(grouped_results)
+             actions.append(f"安全熔断: 分笔质量覆盖率({tick_rate}%)过低，已跳过补采。")
+        elif total_faults > 0:
+            logger.info(f"🟡 审计发现异常: 总数={total_faults} (缺失={len(missing)}, 质量问题={len(invalid)})")
+            # 触发分级修复
+            repair_results = await self._process_tiered_repair(today, failed_codes)
+            actions.extend(repair_results)
 
-        # 5. 生成报告并持久化
+        # 4. 生成报告并持久化
         status = "SUCCESS"
-        if kline_rate < 90 or tick_rate < 90 or continuity_summary['failed_count'] > 500:
+        kline_error_count = kline_audit.get('error_count', 0)
+        
+        if kline_rate < 95 or tick_rate < 90 or total_faults > 200 or kline_error_count > 0:
             status = "ERROR"
         elif actions:
             status = "WARNING"
@@ -203,16 +221,19 @@ class PostMarketGateService:
             "kline_rate": kline_rate,
             "tick_rate": tick_rate,
             "metrics": {
-                "continuity": continuity_summary,
-                "consistency": consistency_report
+                "kline": kline_audit,
+                "continuity": {
+                    "total_checked": kline_count,
+                    "failed_count": total_faults,
+                    "missing_count": len(missing),
+                    "invalid_count": len(invalid)
+                },
+                "consistency": {"matched": valid_count, "sample_size": kline_count}
             },
             "actions_taken": actions
         }
         
-        # 持久化到云端
         await self._persist_to_cloud(report)
-        
-        # 发送企微报告
         await self._send_audit_report(report)
         return report
 
@@ -237,9 +258,9 @@ class PostMarketGateService:
             logger.warning(f"⚠️ 无法获取有效 A 股数量，无法计算 K线覆盖率")
             return 0.0
         
-        # 2. 获取实际交易的股票数 (通过 StockUniverse)
+        # 2. 获取实际交易的股票数 (关闭 fallback 以确保真实反映 CH 状态)
         try:
-            kline_stocks = await self.stock_universe.get_today_traded_stocks(date_str)
+            kline_stocks = await self.stock_universe.get_today_traded_stocks(date_str, fallback_to_all=False)
             clickhouse_count = len(kline_stocks)
             
             rate = round(clickhouse_count / total_stocks * 100, 2)
@@ -249,142 +270,35 @@ class PostMarketGateService:
             logger.error(f"❌ K线覆盖率检查失败: {e}")
             return 0.0
 
-    # _get_mysql_kline_count removed as it is no longer used directly
-    # logic moved to StockUniverseService if needed, or replaced by get_today_traded_stocks (source agnostic)
-
-    async def _check_tick_coverage(self, date_str: str) -> float:
-        """
-        分笔覆盖率
-        分子: 有 Tick 数据的股票数
-        分母: 优先使用 K线数据股票数，但若 K线数据明显不足则降级使用全量股票数
-        """
-        # 确定表名: 如果是今天，使用 intraday 表
-        is_today = date_str == datetime.now(CST).strftime('%Y-%m-%d')
-        tick_table = "stock_data.tick_data_intraday" if is_today else "stock_data.tick_data"
+    async def _perform_kline_quality_audit(self, date_str: str) -> Dict[str, Any]:
+        """[Refactored V4.0] K线质量审计: OHLC 逻辑校验"""
         ds = date_str.replace('-', '')
-        
-        try:
-            # 1. 获取实际交易的股票数 (作为 K线基准)
-            # StockUniverse.get_today_traded_stocks 会优先查 CH Distributed，如果 CH 挂了会查 MySQL
-            kline_stocks = await self.stock_universe.get_today_traded_stocks(date_str)
-            total_kline = len(kline_stocks)
-            
-            # 2. 获取全市场有效 A 股总数 (作为备选分母)
-            total_stocks = await self._get_effective_stock_count()
-            
-            # 3. 决定分母
-            denominator = total_kline
-            denominator_source = "K-Line (Ref)"
-            
-            if total_kline == 0:
-                logger.warning(f"⚠️ 在 {date_str} 无 K线数据，降级使用股票总数")
-                denominator = total_stocks
-                denominator_source = "Stock List (Fallback)"
-            elif total_kline < (total_stocks * 0.5):
-                logger.warning(
-                    f"⚠️ K线数据不足 ({total_kline} < {total_stocks * 0.5:.0f})，"
-                    f"降级使用股票总数作为分母"
-                )
-                denominator = total_stocks
-                denominator_source = "Stock List (Fallback)"
-            
-            if denominator == 0:
-                logger.error("❌ 无法获取有效分母，无法计算分笔覆盖率")
-                return 0.0
-            
-            # 4. 分子: 有 Tick 数据的股票数 (排除北证)
-            tick_query = f"""
-                SELECT countDistinct(stock_code) 
-                FROM {tick_table} 
-                WHERE trade_date = '{ds}'
-                AND stock_code NOT LIKE '4%' 
-                AND stock_code NOT LIKE '8%' 
-                AND stock_code NOT LIKE '9%'
-                AND stock_code NOT LIKE 'bj.%'
-            """
-            tick_result = self.clickhouse_client.client.execute(tick_query)
-            total_tick = tick_result[0][0] if tick_result else 0
-            
-            # 5. 计算覆盖率
-            rate = round(total_tick / denominator * 100, 2)
-            logger.info(
-                f"📊 分笔覆盖率: Tick={total_tick}, "
-                f"Denominator={denominator} ({denominator_source}), Rate={rate}%"
-            )
-            return rate
-        except Exception as e:
-            logger.error(f"分笔覆盖率检查失败: {e}")
-            return 0.0
-
-
-    async def _check_all_ticks_continuity(self, date_str: str) -> Dict[str, Any]:
-        """全量检查分笔时段完整性 (ClickHouse 分片聚合)"""
-        is_today = date_str == datetime.now(CST).strftime('%Y-%m-%d')
-        tick_table = "stock_data.tick_data_intraday" if is_today else "stock_data.tick_data"
-        
-        # 动态选择校验标准
-        std = TickStandards.IntradayPostMarket if is_today else TickStandards.History
-        
-        min_active = std.MIN_ACTIVE_MINUTES
-        min_time = std.MIN_TIME
-        max_time = std.MAX_TIME
-
-        # 1. 聚合查询统计每个股票的情况并返回异常代码
         query = f"""
-        SELECT 
-            stock_code,
-            first_tick,
-            last_tick,
-            active_minutes
-        FROM (
-            SELECT 
-                stock_code,
-                min(tick_time) as first_tick,
-                max(tick_time) as last_tick,
-                countDistinct(toStartOfMinute(toDateTime(concat('2000-01-01 ', tick_time)))) as active_minutes
-            FROM {tick_table} 
-            WHERE trade_date = '{date_str.replace('-', '')}'
-              AND stock_code NOT LIKE '4%'
-              AND stock_code NOT LIKE '8%'
-              AND stock_code NOT LIKE '9%'
-              AND stock_code NOT LIKE 'bj.%'
-            GROUP BY stock_code
-        )
-        WHERE active_minutes < {min_active} 
-           OR first_tick > '{min_time}' 
-           OR last_tick < '{max_time}'
+            SELECT count() 
+            FROM stock_data.stock_kline_daily 
+            WHERE trade_date = '{ds}'
+              AND (
+                  open_price <= 0 OR high_price <= 0 OR low_price <= 0 OR close_price <= 0
+                  OR high_price < low_price 
+                  OR high_price < open_price 
+                  OR high_price < close_price
+                  OR low_price > open_price
+                  OR low_price > close_price
+              )
         """
         try:
             res = self.clickhouse_client.client.execute(query)
-            failed_codes = [row[0] for row in res]
-            
-            # 为了保持向前兼容，也统计计数
-            insufficient = sum(1 for row in res if row[3] < min_active)
-            late = sum(1 for row in res if row[1] > min_time)
-            early = sum(1 for row in res if row[2] < max_time)
-            
-            # 获取当前节点覆盖到的有效 A 股总数 (排除北证)
-            total_query = f"""
-                SELECT countDistinct(stock_code) FROM {tick_table} 
-                WHERE trade_date = '{date_str.replace('-', '')}'
-                  AND stock_code NOT LIKE '4%'
-                  AND stock_code NOT LIKE '8%'
-                  AND stock_code NOT LIKE '9%'
-                  AND stock_code NOT LIKE 'bj.%'
-            """
-            total_checked = self.clickhouse_client.client.execute(total_query)[0][0]
-
-            return {
-                "total_checked": total_checked,
-                "insufficient_minutes_count": insufficient,
-                "late_starts_count": late,
-                "early_ends_count": early,
-                "failed_count": len(failed_codes),
-                "failed_codes": failed_codes
-            }
+            error_count = res[0][0] if res else 0
+            if error_count > 0:
+                logger.error(f"🚨 K线质量异常: 发现 {error_count} 只股票 OHLC 逻辑冲突！")
+            return {"error_count": error_count}
         except Exception as e:
-            logger.error(f"全量分笔连续性审计失败: {e}")
-            return {"error": str(e), "failed_count": 0, "failed_codes": []}
+            logger.error(f"❌ K线合规性检查失败: {e}")
+            return {"error_count": 0}
+
+    # _get_mysql_kline_count removed as it is no longer used directly
+    # logic moved to StockUniverseService if needed, or replaced by get_today_traded_stocks (source agnostic)
+
 
     async def _process_tiered_repair(self, date_str: str, failed_codes: List[str]) -> List[str]:
         """
@@ -595,49 +509,6 @@ class PostMarketGateService:
             if conn:
                 conn.close()
 
-    async def _check_consistency(self, date_str: str) -> Dict:
-        """抽样对账 (价格 + 成交量)"""
-        try:
-            ds = date_str.replace('-', '')
-            # 抽样 10 只
-            stocks = ['600519', '000001', '601318', '000333', '600036', '000858', '600276', '601998', '000002', '300750']
-            matches = 0
-            is_today = date_str == datetime.now(CST).strftime('%Y-%m-%d')
-            tick_table = "stock_data.tick_data_intraday" if is_today else "stock_data.tick_data"
-            
-            # 动态选择标准
-            std = TickStandards.IntradayPostMarket if is_today else TickStandards.History
-            price_tol = std.PRICE_TOLERANCE
-            vol_tol = std.VOLUME_TOLERANCE
-            
-            for code in stocks:
-                k_query = f"SELECT close_price, volume FROM stock_data.stock_kline_daily WHERE stock_code='{code}' AND trade_date='{ds}' LIMIT 1"
-                t_query = f"SELECT argMax(price, tick_time), sum(volume) FROM {tick_table} WHERE stock_code='{code}' AND trade_date='{ds}'"
-                
-                k_res = self.clickhouse_client.client.execute(k_query)
-                t_res = self.clickhouse_client.client.execute(t_query)
-                
-                if k_res and t_res:
-                    # 1. 价格检查
-                    price_ok = abs(float(k_res[0][0]) - float(t_res[0][0])) < price_tol
-                    
-                    # 2. 成交量检查
-                    k_vol = float(k_res[0][1])
-                    t_vol = float(t_res[0][1])
-                    
-                    if k_vol > 0:
-                        vol_diff_ratio = abs(k_vol - t_vol) / k_vol
-                        vol_ok = vol_diff_ratio < vol_tol
-                    else:
-                        vol_ok = (t_vol == 0)
-
-                    if price_ok and vol_ok:
-                        matches += 1
-                        
-            return {"sample_size": len(stocks), "matched": matches}
-        except Exception as e:
-            logger.error(f"一致性检查异常: {e}")
-            return {"error": str(e)}
 
     async def _persist_to_cloud(self, report: Dict):
         """

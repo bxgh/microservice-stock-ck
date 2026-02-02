@@ -59,4 +59,4 @@ steps:
       date: "{{target_date}}"
       mode: "{{ final_ai_review.output.repair_mode }}"
       stock_codes: "{{ final_ai_review.output.confirmed_bad_codes }}"
-      concurrency: 20
+      concurrency: 5

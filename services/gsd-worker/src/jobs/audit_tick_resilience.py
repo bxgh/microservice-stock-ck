@@ -48,8 +48,8 @@ class AuditJob:
         if self.stock_codes:
             all_codes = self.stock_codes
         else:
-            # Priority 2: From Redis sync_list
-            all_codes = await self.service.fetch_sync_list(scope="all")
+            # Priority 2: From Redis sync_list (V4.0 - Auto filter suspended)
+            all_codes = await self.service.fetch_sync_list(scope="all", trade_date=self.target_date)
             
         if not all_codes:
             logger.warning("fetch_sync_list returned empty. (Redis empty?) Attempting Fallback to ClickHouse Kline...")

@@ -20,8 +20,8 @@ services:
     environment:
       - PORT=8003
       - HOST=0.0.0.0
-      - TDX_POOL_SIZE=100
-      - MOOTDX_CONCURRENCY=100
+      - TDX_POOL_SIZE=50
+      - MOOTDX_CONCURRENCY=50
       - MOOTDX_FETCH_COUNT=5
       
       # [Standardized Direct Connection Config]
@@ -197,7 +197,7 @@ services:
       - REDIS_PORT=6379
       - REDIS_PASSWORD=redis123
       - REDIS_CLUSTER=false
-      - REDIS_DB=${REDIS_DB:-1}
+      - REDIS_DB=${REDIS_DB:-0}
     volumes:
       - ./libs/gsd-shared:/app/libs/gsd-shared:ro
       - ./logs/gsd-worker:/app/logs

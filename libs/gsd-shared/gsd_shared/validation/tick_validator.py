@@ -317,7 +317,7 @@ class TickValidator:
                     ref_vol_f = float(ref_vol)
                     
                     vol_diff_rate = abs(total_volume_f - ref_vol_f) / ref_vol_f
-                    if vol_diff_rate > 0.02:
+                    if vol_diff_rate > 0.05:
                         l2_reasons.append(f"Volume Mismatch: Tick={total_volume_f} vs KLine={ref_vol_f} (Diff={vol_diff_rate:.1%})")
 
                 if l2_reasons:

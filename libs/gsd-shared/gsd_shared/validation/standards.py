@@ -41,8 +41,8 @@ class TickStandards:
         MIN_TIME = "09:25:00"           
         MAX_TIME = "15:00:00"
         MIN_ACTIVE_MINUTES = 230        # 稍宽松
-        PRICE_TOLERANCE = 0.02          # 2%
-        VOLUME_TOLERANCE = 0.10         # 10%
+        PRICE_TOLERANCE = 0.01          # 对齐最新 0.01
+        VOLUME_TOLERANCE = 0.02         # 对齐最新 2%
         
     class History:
         """
@@ -53,8 +53,8 @@ class TickStandards:
         MIN_TIME = "09:25:05"
         MAX_TIME = "14:59:55"
         MIN_ACTIVE_MINUTES = 230        # 严格 (考虑集合竞价自然停顿，调优从 237 到 230)
-        PRICE_TOLERANCE = 0.011         # 1.1%
-        VOLUME_TOLERANCE = 0.05         # 5%
+        PRICE_TOLERANCE = 0.01          # 对齐最新 0.01
+        VOLUME_TOLERANCE = 0.02         # 对齐最新 2%
 
         
     # 交易时段常量
