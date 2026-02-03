@@ -6,10 +6,19 @@ workflow:
     target_date: "FAIL_TEST_LLM"
   
   steps:
+    - id: data_migration
+      task_id: tick_data_migrate
+      name: "昨日分笔数据归档清理"
+      type: docker
+      command: ["jobs.tick_data_migration"]
+      retry_policy: agentic
+      max_attempts: 2
+
     - id: fetch_stock_list
       task_id: daily_stock_collection
       name: "盘前股票清单采集"
       type: docker
+      depends_on: ["data_migration"]
       command: ["jobs.daily_stock_collection"]
       params:
         date: "{{target_date}}"
