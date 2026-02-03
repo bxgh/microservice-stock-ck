@@ -187,6 +187,8 @@ class MootdxHandler:
                 if data is not None:
                     data = standardize_mootdx_fields(data, data_type='tick')
                     # 修复 NaN 导致 JSON 序列化失败的问题
+                    # 关键：必须先转换为 object 类型，否则 float 列中的 None 会被自动转回 NaN
+                    data = data.astype(object)
                     data = data.where(pd.notnull(data), None)
                 return data if data is not None else pd.DataFrame()
             except Exception as e:
