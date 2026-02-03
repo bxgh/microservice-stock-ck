@@ -42,6 +42,7 @@ You are an expert Python Backend Engineer specializing in financial data systems
 - **Timezone**: **ALWAYS** use `Asia/Shanghai` (CST) for all business logic and scheduling.
 - **Trading Hours**: Respect A-Share trading hours (09:30-11:30, 13:00-15:00) plus buffer times.
 - **Scheduler**: Use `AcquisitionScheduler` for controlling data collection timing.
+- **日期格式**: 各类数据的日期格式可能不同，在对比日期大小时候，需要注意统一格式.
 
 # Testing Guidelines
 - **Framework**: Pytest

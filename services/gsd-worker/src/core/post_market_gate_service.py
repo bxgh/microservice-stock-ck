@@ -23,9 +23,9 @@ logger = logging.getLogger(__name__)
 CST = pytz.timezone('Asia/Shanghai')
 
 # 常量定义
-DEFAULT_KLINE_THRESHOLD = 98.0
-DEFAULT_TICK_THRESHOLD = 95.0
-DEFAULT_STOCK_COUNT_FALLBACK = 5360  # 沪深 A 股大约数量 (排除北交所)
+DEFAULT_KLINE_THRESHOLD = 100.0
+DEFAULT_TICK_THRESHOLD = 99.1
+DEFAULT_STOCK_COUNT_FALLBACK = 5170  # 沪深 A 股大约数量 (排除北交所)
 STANDARD_TRADING_MINUTES = TickStandards.STANDARD_TRADING_MINUTES  # 241 分钟 (09:25-15:00)
 HTTP_CLIENT_TIMEOUT_SECONDS = 10.0
 DEFAULT_SHARD_REPAIR_THRESHOLD = 50.0
@@ -204,12 +204,12 @@ class PostMarketGateService:
             actions.extend(repair_results)
 
         # 4. 生成报告并持久化
-        status = "SUCCESS"
-        kline_error_count = kline_audit.get('error_count', 0)
-        
-        if kline_rate < 95 or tick_rate < 90 or total_faults > 200 or kline_error_count > 0:
+        # 只要 K 线和分笔覆盖率达标，就算 PASS (SUCCESS)
+        if kline_rate >= self.kline_threshold and tick_rate >= self.tick_threshold:
+            status = "SUCCESS"
+        elif kline_rate < 95 or tick_rate < 90:
             status = "ERROR"
-        elif actions:
+        else:
             status = "WARNING"
 
         report = {

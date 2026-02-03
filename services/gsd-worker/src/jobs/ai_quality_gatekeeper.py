@@ -125,7 +125,7 @@ async def main():
                     port=port,
                     user=os.getenv("MYSQL_USER"),
                     password=os.getenv("MYSQL_PASSWORD"),
-                    database=os.getenv("MYSQL_DB")
+                    database=os.getenv("MYSQL_DATABASE") or os.getenv("MYSQL_DB")
                 )
                 try:
                     with conn.cursor() as cursor:
@@ -156,6 +156,7 @@ async def main():
                 logger.info(f"🛡️ 自动过滤 {filtered_count} 只因停牌导致的异常申报")
 
         if not effective_abnormal:
+            # [Fix] 如果没有待研判列表，但有确定性缺失，或者触发了 FAILOVER (即异常数很多)
             if mandatory_bad:
                 logger.info(f"📍 发现 {len(mandatory_bad)} 只缺失股票，无需 AI 审核直接进入补采。")
                 output = {
@@ -164,14 +165,36 @@ async def main():
                     "repair_concurrency": 20,
                     "decision": "MANDATORY_REPAIR"
                 }
-            else:
-                logger.info("✅ 没有发现异常记录，审核通过。")
+            elif args.trigger_condition == "FAILOVER":
+                # 防御性逻辑：如果是监控到 FAILOVER 信号但列表为空 (可能被审计程序清空)
+                # 依然维持 FULL 模式决策
+                logger.warning(f"⚠️ 处于 FAILOVER 状态但收到空列表，维持全量修复决策。")
                 output = {
-                    "confirmed_bad_codes": [],
-                    "repair_mode": "skip",
-                    "repair_concurrency": 0,
-                    "decision": "ALL_CLEAR"
+                    "confirmed_bad_codes": [], 
+                    "repair_mode": "full", 
+                    "repair_concurrency": 60,
+                    "decision": "FAILOVER_ACCELERATION"
                 }
+            else:
+                # 检查统计数据，如果统计显示有大量缺失但列表为空 (审计程序的熔断保护)
+                stats = report.get("stats", {})
+                missing_stat = stats.get("missing", 0)
+                if missing_stat > 200:
+                    logger.warning(f"⚠️ 统计显示有 {missing_stat} 只缺失，但列表为空。触发紧急全量修复。")
+                    output = {
+                        "confirmed_bad_codes": [],
+                        "repair_mode": "full",
+                        "repair_concurrency": 60,
+                        "decision": "FAILOVER_ACCELERATION"
+                    }
+                else:
+                    logger.info("✅ 没有发现异常记录，审核通过。")
+                    output = {
+                        "confirmed_bad_codes": [],
+                        "repair_mode": "skip",
+                        "repair_concurrency": 0,
+                        "decision": "ALL_CLEAR"
+                    }
             print(f"GSD_OUTPUT_JSON: {json.dumps(output)}")
             return
 

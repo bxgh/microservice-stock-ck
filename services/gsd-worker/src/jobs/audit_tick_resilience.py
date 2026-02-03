@@ -100,10 +100,10 @@ class AuditJob:
         coverage = actual_count / expected_count
         logger.info(f"🏗️  K线就绪检查: 实际={actual_count}/预期={expected_count} (覆盖率={coverage:.2%})")
 
-        if coverage < 0.99:
-            logger.error("❌ K线数据未就绪! (Threshold 99%)")
+        if coverage < 1.0:
+            logger.error("❌ K线数据未就绪! (Threshold 100%)")
             # For strict mode, we might want to return False, but let's see actual counts first.
-            if coverage == 0:
+            if coverage < 1.0:
                  return False
             # Check if we have SOME data to proceed for demonstration?
             # User said: NO DEGRADE. So return False.
@@ -316,6 +316,11 @@ class AuditJob:
     async def run(self):
         try:
             await self.initialize()
+            
+            # 归一化日期 YYYYMMDD -> YYYY-MM-DD
+            if self.target_date and "-" not in self.target_date and len(self.target_date) == 8:
+                self.target_date = f"{self.target_date[:4]}-{self.target_date[4:6]}-{self.target_date[6:]}"
+                logger.info(f"📅 日期归一化: {self.target_date}")
             
             # Step 1
             target_scope = await self.get_target_scope()
