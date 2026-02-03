@@ -1,0 +1,59 @@
+tasks:
+  # 盘中分笔午休门禁 (Gate-Noon) (NEW)
+  # 12:00 执行，基于快照真值进行高精度审计与自愈
+  - id: noon_market_gate
+    name: 午间数据质量门禁 (Gate-Noon)
+    type: workflow_trigger
+    enabled: true
+    schedule:
+      type: trading_cron
+      expression: "0 12 * * 1-5"
+    target:
+      workflow_id: "noon_market_gate"
+      initial_context:
+        target_date: "{{today_nodash}}"
+    retry:
+      max_attempts: 1
+
+  # 盘前准备管线触发器 (08:45)
+  - id: trigger_pre_market_workflow
+    name: 触发盘前 4.0 准备管线
+    type: workflow_trigger
+    enabled: true
+    schedule:
+      type: trading_cron
+      expression: "45 8 * * 1-5"
+    target:
+      workflow_id: "pre_market_prep_4.0"
+      initial_context:
+        target_date: "{{today_nodash}}"
+    retry:
+      max_attempts: 1
+
+  # 盘后同步管线触发器 (15:10)
+  - id: trigger_post_market_workflow
+    name: 触发盘后 4.0 自愈管线
+    type: workflow_trigger
+    enabled: true
+    schedule:
+      type: trading_cron
+      expression: "33 18 * * 1-5"
+    target:
+      # 替换为新的 Workflow
+      workflow_id: "post_market_audit"
+      initial_context:
+        target_date: "{{today_nodash}}"
+    retry:
+      max_attempts: 1
+
+  # 历史分笔治理管线触发器 (专供手动/前端调用)
+  - id: trigger_historical_recovery
+    name: 触发历史分笔专项治理管线
+    type: workflow_trigger
+    enabled: true
+    target:
+      workflow_id: "historical_tick_recovery"
+      initial_context:
+        trigger_source: "manual_adhoc"
+    retry:
+      max_attempts: 1

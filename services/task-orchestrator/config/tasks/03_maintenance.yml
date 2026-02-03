@@ -1,0 +1,143 @@
+tasks:
+  # 盘后数据质量大检查 (P0) - 深度审计与收盘对账
+  # 19:00 执行，在数据同步完成后立即进行质量核查与修复
+  # 已被新架构取代，改为从属于 workflow，禁用独立调度
+  - id: post_market_gate
+    name: 盘后数据质量门禁 (Gate-3)
+    type: docker
+    enabled: true
+    schedule:
+      type: cron
+      expression: "0 0 1 1 *" # 被工作流取代，设为 Dummy Schedule
+    target:
+      command: ["jobs.post_market_gate"]
+      environment:
+        KLINE_THRESHOLD: "98"
+        TICK_THRESHOLD: "95"
+    dependencies:
+      - daily_kline_sync
+    retry:
+      max_attempts: 1
+
+  # 每周深度审计 (P0) - 全量聚合校验 & 自动修复
+  - id: weekly_deep_audit
+    name: 每周深度审计
+    type: docker
+    enabled: false
+    schedule:
+      type: cron
+      expression: "0 2 * * 0"  # 周日 02:00
+    target:
+      command: ["jobs.weekly_audit"]
+    retry:
+      max_attempts: 1
+
+  # 月度数据审计 (P2)
+  - id: monthly_audit
+    name: 月度数据审计
+    type: docker
+    enabled: false  # 待实现
+    schedule:
+      type: cron
+      expression: "0 3 5 * *"  # 每月5号 03:00
+    target:
+      command: ["jobs.data_audit"]
+    retry:
+      max_attempts: 1
+
+  # K线按日补采
+  - id: repair_kline
+    name: K线数据补采
+    type: docker
+    enabled: false # 不自动调度，仅手动/API触发
+    schedule:
+      type: cron
+      expression: "0 0 1 1 *" # Dummy schedule
+    target:
+      command: ["jobs.sync_kline"]
+      environment:
+        KLINE_THRESHOLD: "98"
+    retry:
+      max_attempts: 1
+
+  # 分笔按日补采
+  - id: repair_tick
+    name: 分笔数据补采
+    type: docker
+    enabled: false # 不自动调度，仅手动/API触发
+    schedule:
+      type: cron
+      expression: "0 0 1 1 *" # Dummy schedule
+    target:
+      command: ["jobs.sync_tick", "--scope", "all", "--distributed-source", "none"]
+      network_mode: "host"
+      environment:
+        TICK_THRESHOLD: "95"
+    retry:
+      max_attempts: 1
+
+  # 分笔指定日期分片采集 (用于分布式精准调度)
+  - id: collect_tick_sharded
+    name: 分笔数据指定日期分片采集
+    type: docker
+    enabled: false
+    schedule: 
+      type: cron
+      expression: "0 0 1 1 *"
+    target:
+      command: ["jobs.sync_tick", "--scope", "all"]
+      network_mode: "host"
+      environment:
+        TICK_THRESHOLD: "95"
+    retry:
+      max_attempts: 1
+
+      
+      
+  # [NEW] 2. 计算数据质量 (Audit & Purge)
+  - id: calculate_data_quality
+    name: 计算数据质量 (L1-L3 Audit)
+    type: docker
+    enabled: true
+    target:
+      command: ["jobs.audit_tick_resilience"]
+      environment:
+        PYTHONPATH: "/app/src:/app/libs/gsd-shared"
+        MYSQL_HOST: "127.0.0.1"
+        MYSQL_PORT: "36301"
+        MYSQL_USER: "root"
+        MYSQL_PASSWORD: "alwaysup@888"
+        MYSQL_DATABASE: "alwaysup"
+        CLICKHOUSE_HOST: "127.0.0.1"
+        CLICKHOUSE_PORT: "9000"
+        REDIS_HOST: "127.0.0.1"
+        REDIS_PORT: "6379"
+        REDIS_PASSWORD: "redis123"
+        MOOTDX_API_URL: "http://127.0.0.1:8003"
+
+  # [NEW] 2. AI 质量门禁
+  - id: ai_quality_gatekeeper
+    name: AI 质量门禁
+    type: docker
+    enabled: false
+    target:
+      command: ["jobs.ai_quality_gatekeeper"]
+      network_mode: host
+      environment:
+        PYTHONPATH: "/app/src:/app/libs/gsd-shared:/app/libs/gsd-agent"
+        SILICONFLOW_API_KEY: "${SILICONFLOW_API_KEY}" # 需确保 Worker 能获取到
+
+  # 远程校验触发器 (Validation Trigger)
+  - id: trigger_validation
+    name: 远程触发数据校验
+    type: docker
+    enabled: false # 不自动调度，仅手动/API触发
+    schedule:
+      type: cron
+      expression: "0 0 1 1 *" # Dummy schedule
+    target:
+      command: ["jobs.trigger_validation"]
+      environment:
+        PYTHONPATH: "/app/src"
+        STRICT_MODE: "true"
+      max_attempts: 1

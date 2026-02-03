@@ -1,0 +1,26 @@
+
+id: noon_market_gate
+name: 午间数据质量门禁 (Gate-Noon)
+description: 盘中分笔午休高精度审计与修复管线 (Snapshot Audit Mode)
+version: "4.0"
+steps:
+  # 步骤 1: 基于 11:30 快照的高精度审计
+  - id: noon_audit
+    task_id: calculate_data_quality
+    type: docker
+    params:
+      session: "noon"
+      date: "{{target_date}}"
+
+  # 步骤 2: 定向补采与修复 (无 AI 环节，午间直接修复)
+  - id: execute_repair
+    task_id: stock_data_supplement
+    type: docker
+    depends_on: [noon_audit]
+    params:
+      sys_action: "{{ noon_audit.diagnosis.action }}"
+      sys_missing: "{{ noon_audit.missing_list }}"
+      force_concurrency: "64"
+      date: "{{target_date}}"
+
+  # 步骤 3: 最终状态报告 (由 Job 完成发送)
