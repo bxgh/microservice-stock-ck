@@ -59,15 +59,18 @@ class TickWriter:
         if not self.ch_pool or not data:
             return 0
             
-        # 1. Determine Target Table
+        # 0. Normalize date
+        clean_date_str = trade_date.replace("-", "")
         today_str = datetime.now(CST).strftime("%Y%m%d")
-        if trade_date == today_str:
+
+        # 1. Determine Target Table
+        if clean_date_str == today_str:
             target_table = TABLE_INTRADAY_DIST if self.use_distributed else TABLE_INTRADAY_LOCAL
         else:
             target_table = TABLE_HISTORY_DIST if self.use_distributed else TABLE_HISTORY_LOCAL
             
         try:
-            trade_date_obj = datetime.strptime(trade_date, "%Y%m%d").date()
+            trade_date_obj = datetime.strptime(clean_date_str, "%Y%m%d").date()
             clean_code = self._clean_code(stock_code)
 
             # 2. Strong Idempotency: Clear existing data

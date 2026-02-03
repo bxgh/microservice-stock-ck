@@ -123,3 +123,30 @@ class CalendarService:
             next_day = next_day + timedelta(days=1)
             if self.is_trading_day(next_day):
                 return next_day
+
+    def get_last_trading_day(self, day: Optional[date] = None) -> date:
+        """
+        获取上一个交易日 (含起始日)
+        如果起始日本身是交易日，则返回起始日本身。
+        """
+        try:
+            if day is None:
+                day = date.today()
+            elif isinstance(day, str):
+                day = datetime.strptime(day, "%Y-%m-%d").date()
+            elif isinstance(day, datetime):
+                day = day.date()
+            elif not isinstance(day, date):
+                raise ValueError(f"Invalid date type: {type(day)}. Expected date, datetime or str.")
+        except ValueError as e:
+            raise e
+        except Exception as e:
+            raise ValueError(f"Error processing date: {e}")
+            
+        check_day = day
+        from datetime import timedelta
+        
+        while True:
+            if self.is_trading_day(check_day):
+                return check_day
+            check_day = check_day - timedelta(days=1)

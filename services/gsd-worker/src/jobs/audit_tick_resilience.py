@@ -52,9 +52,13 @@ class AuditJob:
             
         if not all_codes:
             logger.warning("fetch_sync_list returned empty. (Redis empty?) Attempting Fallback to ClickHouse Kline...")
+            sql_date = self.target_date
+            if "-" not in sql_date and len(sql_date) == 8:
+                sql_date = f"{sql_date[:4]}-{sql_date[4:6]}-{sql_date[6:]}"
+                
             async with self.service.clickhouse_pool.acquire() as conn:
                 async with conn.cursor() as cursor:
-                    await cursor.execute(f"SELECT DISTINCT stock_code FROM stock_data.stock_kline_daily WHERE trade_date = '{self.target_date}'")
+                    await cursor.execute(f"SELECT DISTINCT stock_code FROM stock_data.stock_kline_daily WHERE trade_date = '{sql_date}'")
                     rows = await cursor.fetchall()
                     all_codes = list(set([self._normalize_code(r[0]) for r in rows]))
             
@@ -85,10 +89,14 @@ class AuditJob:
                 # Query KLine count for target date
                 # We only count codes that appear in our target_scope
                 # But for performance we just count total excluding BJ
+                sql_date = self.target_date
+                if "-" not in sql_date and len(sql_date) == 8:
+                    sql_date = f"{sql_date[:4]}-{sql_date[4:6]}-{sql_date[6:]}"
+                    
                 await cursor.execute(f"""
                     SELECT count() 
                     FROM stock_data.stock_kline_daily 
-                    WHERE trade_date = '{self.target_date}'
+                    WHERE trade_date = '{sql_date}'
                     AND stock_code NOT LIKE 'bj.%' 
                     AND stock_code NOT LIKE '%.BJ'
                     AND stock_code NOT LIKE 'sh.8%%'
@@ -136,10 +144,14 @@ class AuditJob:
         async with self.service.clickhouse_pool.acquire() as conn:
             async with conn.cursor() as cursor:
                 logger.info(f"   -> Loading Tick Data from {target_table}...")
+                sql_date = self.target_date
+                if "-" not in sql_date and len(sql_date) == 8:
+                    sql_date = f"{sql_date[:4]}-{sql_date[4:6]}-{sql_date[6:]}"
+                    
                 await cursor.execute(f"""
                     SELECT stock_code, count(), sum(volume), sum(amount), argMax(price, tick_time)
                     FROM {target_table} FINAL
-                    WHERE trade_date = '{self.target_date}'
+                    WHERE trade_date = '{sql_date}'
                       AND tick_time <= '15:00:00'
                     GROUP BY stock_code
                 """)
@@ -161,11 +173,15 @@ class AuditJob:
         async with self.service.clickhouse_pool.acquire() as conn:
             async with conn.cursor() as cursor:
                 logger.info("   -> Loading KLine Data...")
+                sql_date = self.target_date
+                if "-" not in sql_date and len(sql_date) == 8:
+                    sql_date = f"{sql_date[:4]}-{sql_date[4:6]}-{sql_date[6:]}"
+                    
                 # Note: KLine codes have 'sh.'/ 'sz.' prefix usually
                 await cursor.execute(f"""
                     SELECT stock_code, volume, amount, close_price
                     FROM stock_data.stock_kline_daily
-                    WHERE trade_date = '{self.target_date}'
+                    WHERE trade_date = '{sql_date}'
                 """)
                 rows = await cursor.fetchall()
                 for r in rows:
@@ -266,12 +282,16 @@ class AuditJob:
             batch = codes[i:i+batch_size]
             code_str = ",".join([f"'{c}'" for c in batch])
             
+            sql_date = self.target_date
+            if "-" not in sql_date and len(sql_date) == 8:
+                sql_date = f"{sql_date[:4]}-{sql_date[4:6]}-{sql_date[6:]}"
+
             # Must delete from LOCAL table. Assuming simple Distributed->Local mapping.
             # In production, we should find the local table name dynamically or from config.
             # Here we hardcode to tick_data_intraday_local based on introspection.
             sql = f"""
                 ALTER TABLE tick_data_intraday_local ON CLUSTER stock_cluster
-                DELETE WHERE trade_date = '{self.target_date}' 
+                DELETE WHERE trade_date = '{sql_date}' 
                 AND stock_code IN ({code_str})
             """
             
@@ -317,10 +337,10 @@ class AuditJob:
         try:
             await self.initialize()
             
-            # 归一化日期 YYYYMMDD -> YYYY-MM-DD
-            if self.target_date and "-" not in self.target_date and len(self.target_date) == 8:
-                self.target_date = f"{self.target_date[:4]}-{self.target_date[4:6]}-{self.target_date[6:]}"
-                logger.info(f"📅 日期归一化: {self.target_date}")
+            # 归一化日期: 强制保持 YYYYMMDD 格式 (用于内部 logic 和 JSON 输出)
+            if self.target_date and "-" in self.target_date:
+                self.target_date = self.target_date.replace("-", "")
+                logger.info(f"📅 日期归一化 (保持 YYYYMMDD): {self.target_date}")
             
             # Step 1
             target_scope = await self.get_target_scope()

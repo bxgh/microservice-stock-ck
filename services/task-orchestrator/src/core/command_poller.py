@@ -272,7 +272,8 @@ class CommandPoller:
                                     environment=task_def.target.get('environment'),
                                     volumes=volumes_config,
                                     input_context=input_ctx,
-                                    name_suffix=f"adhoc-{cmd_id}"
+                                    name_suffix=f"adhoc-{cmd_id}",
+                                    network_mode=task_def.target.get('network_mode')
                                 )
                             
                                 # 等待执行完成

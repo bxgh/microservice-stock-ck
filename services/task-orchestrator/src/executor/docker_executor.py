@@ -16,7 +16,8 @@ class DockerExecutor:
                    environment: Optional[Dict[str, str]] = None,
                    volumes: Optional[Dict[str, Any]] = None,
                    input_context: Optional[str] = None,
-                   name_suffix: str = "") -> str:
+                   name_suffix: str = "",
+                   network_mode: Optional[str] = None) -> str:
         """
         Run gsd-worker container
         
@@ -88,13 +89,18 @@ class DockerExecutor:
                     f'{settings.HOST_BASE_DIR}/services/gsd-worker/src': {'bind': '/app/src', 'mode': 'ro'}
                 }
 
+            # Determine Network Mode: Task Specific > Global Setting
+            final_network_mode = network_mode or (
+                "host" if settings.WORKER_NETWORK == "host" else None
+            )
+
             container = self.client.containers.run(
                 image=image,
                 command=command,
                 detach=True,
                 environment=env,
-                network_mode="host" if settings.WORKER_NETWORK == "host" else None,
-                network=settings.WORKER_NETWORK if settings.WORKER_NETWORK != "host" else None,
+                network_mode=final_network_mode,
+                network=settings.WORKER_NETWORK if final_network_mode != "host" else None,
                 name=container_name,
                 volumes=vols,
                 auto_remove=False,  # Keep container for log inspection

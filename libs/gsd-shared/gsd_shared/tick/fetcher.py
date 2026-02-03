@@ -84,7 +84,9 @@ class TickFetcher:
         
         params_base = {"offset": chunk_offset}
         if date:
-            params_base["date"] = int(date)
+            # 兼容 2026-02-03 和 20260203 两种格式
+            clean_date = date.replace("-", "")
+            params_base["date"] = int(clean_date)
 
         logger.debug(f"🔍 Starting Matrix-Stitching for {code} (date={date})")
 

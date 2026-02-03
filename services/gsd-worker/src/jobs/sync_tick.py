@@ -112,7 +112,7 @@ async def main(
                     logger.warning(f"⚠️ 定向修复过滤停牌失败: {e}")
 
                 if not stock_codes:
-                    logger.info("✅ 过滤停牌后无待修复股票，任务完结。")
+                    logger.info("✅ 任务上下文中无待修复股票 (AI/Audit 过滤后为空)，优雅跳过。")
                     return 0
 
                 logger.info(f"🛠️ 定向修复模式: 正在清理并重抓 {len(stock_codes)} 只个股...")
@@ -308,6 +308,7 @@ if __name__ == "__main__":
         "--stock-code", "--stock-codes",
         type=str,
         default=None,
+        dest="stock_codes",
         help="手动指定股票代码，逗号分隔"
     )
     parser.add_argument(
@@ -332,8 +333,8 @@ if __name__ == "__main__":
     
     # 解析股票代码
     passed_codes = None
-    if args.stock_code:
-        passed_codes = [c.strip() for c in args.stock_code.split(',') if c.strip()]
+    if args.stock_codes:
+        passed_codes = [c.strip() for c in args.stock_codes.split(',') if c.strip()]
 
     exit_code = asyncio.run(main(
         args.mode, 
