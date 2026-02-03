@@ -148,6 +148,94 @@ class TaskLoader:
             self.logger.error(f"❌ Failed to parse task configuration: {e}")
             raise
     
+    def load_from_directory(self, directory: str) -> TaskConfig:
+        """
+        从目录加载多个任务配置文件并合并
+        
+        目录结构:
+        - config/
+          - main.yml (包含 version, timezone, global 配置)
+          - tasks/
+            - 01_data_sync.yml
+            - 02_strategies.yml
+            - 03_maintenance.yml
+            - 04_workflow_triggers.yml
+        
+        Args:
+            directory: 配置目录路径
+            
+        Returns:
+            TaskConfig: 合并后的任务配置
+        """
+        import os
+        from pathlib import Path
+        
+        dir_path = Path(directory)
+        self.logger.info(f"Loading task configurations from directory: {directory}")
+        
+        # 1. 加载主配置文件 (main.yml)
+        main_config_path = dir_path / "main.yml"
+        if not main_config_path.exists():
+            raise FileNotFoundError(f"Main config file not found: {main_config_path}")
+        
+        with open(main_config_path, 'r', encoding='utf-8') as f:
+            main_raw = yaml.safe_load(f)
+        
+        # 解析环境变量
+        main_config = self._resolve_env_vars(main_raw)
+        
+        # 提取全局配置
+        version = main_config.get('version', '1.0')
+        timezone = main_config.get('timezone', 'Asia/Shanghai')
+        global_config = main_config.get('global')
+        
+        # 2. 从 tasks/ 子目录加载所有任务配置
+        tasks_dir = dir_path / "tasks"
+        if not tasks_dir.exists():
+            raise FileNotFoundError(f"Tasks directory not found: {tasks_dir}")
+        
+        all_tasks = []
+        task_files = sorted(tasks_dir.glob("*.yml"))
+        
+        for task_file in task_files:
+            self.logger.info(f"  Loading {task_file.name}...")
+            with open(task_file, 'r', encoding='utf-8') as f:
+                task_raw = yaml.safe_load(f)
+            
+            # 解析环境变量
+            task_config = self._resolve_env_vars(task_raw)
+            
+            # 提取任务列表
+            tasks = task_config.get('tasks', [])
+            all_tasks.extend(tasks)
+            self.logger.info(f"    ✓ Loaded {len(tasks)} tasks from {task_file.name}")
+        
+        # 3. 组装完整配置
+        merged_config = {
+            'version': version,
+            'timezone': timezone,
+            'tasks': all_tasks
+        }
+        
+        if global_config:
+            merged_config['global'] = global_config
+        
+        # 4. 验证并解析配置
+        try:
+            config = TaskConfig(**merged_config)
+            self.logger.info(f"✓ Total loaded: {len(config.tasks)} tasks from {len(task_files)} files")
+            
+            # 验证任务依赖
+            self._validate_dependencies(config.tasks)
+            
+            # 验证任务ID唯一性
+            self._validate_unique_ids(config.tasks)
+            
+            return config
+        except Exception as e:
+            self.logger.error(f"❌ Failed to parse merged task configuration: {e}")
+            raise
+    
     def _resolve_env_vars(self, config: Dict[str, Any]) -> Dict[str, Any]:
         """
         递归解析环境变量

@@ -30,14 +30,14 @@ tasks:
     retry:
       max_attempts: 1
 
-  # 盘后同步管线触发器 (15:10)
+  # 盘后同步管线触发器 (15:30)
   - id: trigger_post_market_workflow
     name: 触发盘后 4.0 自愈管线
     type: workflow_trigger
     enabled: true
     schedule:
       type: trading_cron
-      expression: "33 18 * * 1-5"
+      expression: "30 15 * * 1-5"
     target:
       # 替换为新的 Workflow
       workflow_id: "post_market_audit"

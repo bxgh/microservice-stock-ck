@@ -92,8 +92,23 @@ tasks:
     retry:
       max_attempts: 1
 
+  # 定向个股数据补充 (NEW)
+  - id: stock_data_supplement
+    name: 定向个股数据补充
+    type: docker
+    enabled: false # 不自动调度，仅手动/API/Gate-3触发
+    schedule:
+      type: cron
+      expression: "0 0 1 1 *" # Dummy schedule
+    target:
+      command: ["jobs.supplement_stock"]
+      environment:
+        PYTHONPATH: "/app/src:/app/libs/gsd-shared:/app/libs/gsd-agent"
+    retry:
+      max_attempts: 2
+      backoff_seconds: 300
       
-      
+
   # [NEW] 2. 计算数据质量 (Audit & Purge)
   - id: calculate_data_quality
     name: 计算数据质量 (L1-L3 Audit)

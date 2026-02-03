@@ -564,10 +564,23 @@ async def lifespan(app: FastAPI):
     
     # 3. Load Task Configuration from YAML
     try:
-        config_path = Path(__file__).parent.parent / "config" / "tasks.yml"
+        config_dir = Path(__file__).parent.parent / "config"
         loader = TaskLoader()
-        task_config = loader.load_from_yaml(str(config_path))
-        logger.info(f"✓ Loaded {len(task_config.tasks)} tasks from YAML")
+        
+        # 优先使用模块化配置（如果存在 main.yml 和 tasks/ 目录）
+        main_config_path = config_dir / "main.yml"
+        tasks_dir = config_dir / "tasks"
+        
+        if main_config_path.exists() and tasks_dir.exists():
+            logger.info("🔧 Using modular configuration structure...")
+            task_config = loader.load_from_directory(str(config_dir))
+        else:
+            # 回退到单文件模式（向后兼容）
+            legacy_config_path = config_dir / "tasks.yml"
+            logger.info("🔧 Using legacy single-file configuration...")
+            task_config = loader.load_from_yaml(str(legacy_config_path))
+        
+        logger.info(f"✓ Loaded {len(task_config.tasks)} tasks from configuration")
     except Exception as e:
         logger.error(f"❌ Failed to load task configuration: {e}")
         raise
