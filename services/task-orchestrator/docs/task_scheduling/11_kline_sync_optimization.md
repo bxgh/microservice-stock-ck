@@ -166,3 +166,9 @@ graph TD
     Error --> End[结束]
     Success --> End
 ```
+
+## 手动命令
+
+```bash    
+ docker run --rm --network host --env-file .env gsd-worker jobs.sync_kline --mode direct
+```

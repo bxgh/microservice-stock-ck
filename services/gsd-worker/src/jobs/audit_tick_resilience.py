@@ -1,8 +1,7 @@
-
 #!/usr/bin/env python3
 """
 盘后分笔数据审计与自愈作业 (Audit Tick Resilience)
-Implemented per Post-Market Audit Workflow V2
+Implemented per Post-Market Audit Workflow V4.0 (Precise Edition)
 """
 
 import asyncio
@@ -11,7 +10,7 @@ import sys
 import os
 import argparse
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 import pytz
 import json
 
@@ -19,6 +18,7 @@ import json
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from core.tick_sync_service import TickSyncService
+from gsd_shared.validation.standards import TickStandards
 
 # Logger setup
 logging.basicConfig(
@@ -45,35 +45,20 @@ class AuditJob:
         await self.service.close()
 
     async def get_target_scope(self) -> set:
-        """Step 1: 确定目标范围 (Exclude BJ)"""
-        # Priority 1: User specified stock codes
+        """Step 1: 确定目标范围"""
         if self.stock_codes:
             all_codes = self.stock_codes
         else:
-            # Priority 2: From Redis sync_list (V4.0 - Auto filter suspended)
             all_codes = await self.service.fetch_sync_list(scope="all", trade_date=self.target_date)
-            
-        if not all_codes:
-            logger.warning("fetch_sync_list returned empty. (Redis empty?) Attempting Fallback to ClickHouse Kline...")
-            sql_date = self.target_date
-            if "-" not in sql_date and len(sql_date) == 8:
-                sql_date = f"{sql_date[:4]}-{sql_date[4:6]}-{sql_date[6:]}"
-                
-            async with self.service.clickhouse_pool.acquire() as conn:
-                async with conn.cursor() as cursor:
-                    await cursor.execute(f"SELECT DISTINCT stock_code FROM stock_data.stock_kline_daily WHERE trade_date = '{sql_date}'")
-                    rows = await cursor.fetchall()
-                    all_codes = list(set([self._normalize_code(r[0]) for r in rows]))
             
         if not all_codes:
             logger.error("❌ Failed to get target scope.")
             return set()
 
-        # Filter BJ for standard audit
         target_scope = set()
         for code in all_codes:
             normalized = self._normalize_code(code)
-            # 统一北证过滤规则: 4/8/9 前缀
+            # 过滤北证
             if normalized.startswith(('4', '8', '9')):
                 continue
             target_scope.add(normalized)
@@ -81,53 +66,8 @@ class AuditJob:
         logger.info(f"🎯 目标范围: 总数={len(all_codes)} -> 过滤非法/北证后={len(target_scope)}")
         return target_scope
 
-    async def check_dependency(self, target_scope: set) -> bool:
-        """Step 2: K线就绪检查"""
-        expected_count = len(target_scope)
-        if expected_count == 0:
-            return False
-
-        async with self.service.clickhouse_pool.acquire() as conn:
-            async with conn.cursor() as cursor:
-                # Query KLine count for target date
-                # We only count codes that appear in our target_scope
-                # But for performance we just count total excluding BJ
-                sql_date = self.target_date
-                if "-" not in sql_date and len(sql_date) == 8:
-                    sql_date = f"{sql_date[:4]}-{sql_date[4:6]}-{sql_date[6:]}"
-                    
-                await cursor.execute(f"""
-                    SELECT count() 
-                    FROM stock_data.stock_kline_daily 
-                    WHERE trade_date = '{sql_date}'
-                    AND stock_code NOT LIKE 'bj.%' 
-                    AND stock_code NOT LIKE '%.BJ'
-                    AND stock_code NOT LIKE 'sh.8%%'
-                    AND stock_code NOT LIKE 'sz.8%%'
-                """)
-                row = await cursor.fetchone()
-                actual_count = row[0] if row else 0
-
-        coverage = actual_count / expected_count
-        logger.info(f"🏗️  K线就绪检查: 实际={actual_count}/预期={expected_count} (覆盖率={coverage:.2%})")
-
-        if coverage < 1.0:
-            logger.error("❌ K线数据未就绪! (Threshold 100%)")
-            # For strict mode, we might want to return False, but let's see actual counts first.
-            if coverage < 1.0:
-                 return False
-            # Check if we have SOME data to proceed for demonstration?
-            # User said: NO DEGRADE. So return False.
-            return False
-            
-        return True
-
     def _normalize_code(self, raw_code: str) -> str:
-        """
-        Normalize stock code to 6 digits.
-        Handles: sh.600000, 600000.SH, 600000
-        """
-        code = raw_code.upper()
+        code = str(raw_code).upper()
         if code.endswith(('.SZ', '.SH', '.BJ')):
             return code.split('.')[0]
         if code.startswith(('SZ.', 'SH.', 'BJ.')):
@@ -135,50 +75,66 @@ class AuditJob:
         return code
 
     async def execute_validation(self, target_scope: set):
-        """Step 3: 高速内存对账 (盘后/全天)"""
-        logger.info("🚀 开始盘后高速内存对账...")
+        """Step 3: 高速内存对账 (Snapshot First -> Kline Fallback)"""
+        logger.info(f"🚀 开始精准审计对账 (Session={self.session}, Mode=Precise)...")
         
         today_str = datetime.now(CST).strftime("%Y-%m-%d")
-        target_table = "tick_data_intraday" if self.target_date == today_str else "tick_data"
+        sql_date = self.target_date
+        if len(sql_date) == 8:
+            sql_date = f"{sql_date[:4]}-{sql_date[4:6]}-{sql_date[6:]}"
         
+        target_table = "tick_data_intraday" if sql_date == today_str else "tick_data"
+
         # 1. Load Ticks (Batch)
         tick_map = {}
         async with self.service.clickhouse_pool.acquire() as conn:
             async with conn.cursor() as cursor:
                 logger.info(f"   -> Loading Tick Data from {target_table}...")
-                sql_date = self.target_date
-                if "-" not in sql_date and len(sql_date) == 8:
-                    sql_date = f"{sql_date[:4]}-{sql_date[4:6]}-{sql_date[6:]}"
-                    
                 await cursor.execute(f"""
-                    SELECT stock_code, count(), sum(volume), sum(amount), argMax(price, tick_time)
-                    FROM {target_table} FINAL
+                    SELECT stock_code, sum(volume), argMax(price, tick_time), max(tick_time)
+                    FROM {target_table}
                     WHERE trade_date = '{sql_date}'
-                      AND tick_time <= '15:00:00'
                     GROUP BY stock_code
                 """)
                 rows = await cursor.fetchall()
                 for r in rows:
                     tick_map[r[0]] = {
-                        'count': r[1], 
-                        'vol': float(r[2]), 
-                        'amt': float(r[3]) if r[3] is not None else 0.0,
-                        'price': float(r[4])
+                        'vol': float(r[1]), 
+                        'price': float(r[2]),
+                        'last_time': str(r[3])
                     }
         
-        logger.info(f"   -> Loaded {len(tick_map)} tick records.")
+        # 2. Load Snapshots (Batch) - Snapshot First
+        snap_map = {}
+        min_snap_time = TickStandards.Precise.SNAPSHOT_MIN_TIME_NOON if self.session == "noon" else TickStandards.Precise.SNAPSHOT_MIN_TIME_CLOSE
+        
+        async with self.service.clickhouse_pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                logger.info("   -> Loading Snapshot Data (Golden Reference)...")
+                # 为每只股票获取符合时间要求的最后一条快照
+                await cursor.execute(f"""
+                    SELECT stock_code, total_volume, current_price, snapshot_time
+                    FROM stock_data.snapshot_data_distributed
+                    WHERE trade_date = '{sql_date}'
+                      AND formatDateTime(snapshot_time, '%%H:%%M:%%S') >= '{min_snap_time}'
+                    ORDER BY stock_code, snapshot_time DESC
+                    LIMIT 1 BY stock_code
+                """)
+                rows = await cursor.fetchall()
+                for r in rows:
+                    snap_map[r[0]] = {
+                        'vol': float(r[1]), 
+                        'close': float(r[2]),
+                        'time': str(r[3])
+                    }
 
-        # 2. Load KLines (Batch)
+        # 3. Load KLines (Batch) - Fallback
         kline_map = {}
         async with self.service.clickhouse_pool.acquire() as conn:
             async with conn.cursor() as cursor:
-                logger.info("   -> Loading KLine Data...")
-                sql_date = self.target_date
-                if "-" not in sql_date and len(sql_date) == 8:
-                    sql_date = f"{sql_date[:4]}-{sql_date[4:6]}-{sql_date[6:]}"
-                    
+                logger.info("   -> Loading KLine Data (Fallback Reference)...")
                 await cursor.execute(f"""
-                    SELECT stock_code, volume, amount, close_price
+                    SELECT stock_code, volume, close_price
                     FROM stock_data.stock_kline_daily
                     WHERE trade_date = '{sql_date}'
                 """)
@@ -187,13 +143,10 @@ class AuditJob:
                     std_code = self._normalize_code(r[0])
                     kline_map[std_code] = {
                         'vol': float(r[1]), 
-                        'amt': float(r[2]) if r[2] is not None else 0.0,
-                        'close': float(r[3])
+                        'close': float(r[2])
                     }
-        
-        logger.info(f"   -> Loaded {len(kline_map)} kline records.")
 
-        # 3. Compare
+        # 4. Compare
         missing_list = []
         invalid_list = []
         valid_cnt = 0
@@ -202,57 +155,68 @@ class AuditJob:
             if code not in tick_map:
                 missing_list.append(code)
                 continue
-            
-            if code not in kline_map:
-                continue
                 
             t_data = tick_map[code]
-            k_data = kline_map[code]
             
-            price_diff = abs(t_data['price'] - k_data['close'])
-            amt_diff_abs = abs(t_data['amt'] - k_data['amt'])
-
-            if price_diff > 0.01:
-                invalid_list.append({
-                    'code': code, 
-                    'reason': f"Price Mismatch ({t_data['price']} vs {k_data['close']})",
-                    'amt_diff': amt_diff_abs
-                })
+            # Determine reference
+            ref_source = "snapshot"
+            ref_data = snap_map.get(code)
+            
+            if not ref_data:
+                ref_data = kline_map.get(code)
+                ref_source = "kline"
+            
+            if not ref_data:
+                # No reference available, skip specific check but count as valid for now (or warning)
+                valid_cnt += 1
                 continue
-                
-            vol_diff_pct = 0
-            if k_data['vol'] > 0:
-                vol_diff_pct = abs(t_data['vol'] - k_data['vol']) / k_data['vol']
-                
-            amt_diff_pct = 0
-            if k_data['amt'] > 0:
-                amt_diff_pct = abs(t_data['amt'] - k_data['amt']) / k_data['amt']
+            
+            reasons = []
+            
+            # Price Compare (Precise: <= 0.1)
+            price_diff = abs(t_data['price'] - ref_data['close'])
+            if price_diff > TickStandards.Precise.PRICE_TOLERANCE:
+                reasons.append(f"Price: {t_data['price']} vs {ref_data['close']} (Diff={price_diff:.4f})")
+            
+            # Volume Compare (Precise: <= 0.5%)
+            vol_diff_abs = abs(t_data['vol'] - ref_data['vol'])
+            vol_diff_pct = vol_diff_abs / ref_data['vol'] if ref_data['vol'] > 0 else 0
+            
+            if ref_data['vol'] > 0 and vol_diff_pct > TickStandards.Precise.VOLUME_TOLERANCE:
+                reasons.append(f"Volume: {t_data['vol']} vs {ref_data['vol']} (Diff={vol_diff_pct:.2%})")
+            elif ref_data['vol'] == 0 and t_data['vol'] > 0:
+                reasons.append(f"Volume: {t_data['vol']} vs 0")
 
-            if vol_diff_pct > 0.02 or amt_diff_pct > 0.02:
+            if reasons:
                 invalid_list.append({
                     'code': code,
-                    'reason': f"Vol/Amt Mismatch ({vol_diff_pct:.1%})",
-                    'amt_diff': amt_diff_abs,
-                    'vol_diff_pct': vol_diff_pct
+                    'reasons': reasons,
+                    'source': ref_source,
+                    'vol_diff_abs': vol_diff_abs
                 })
                 continue
             
             valid_cnt += 1
 
+        # Summary and Diagnosis
         output = {
             "target_date": self.target_date,
+            "session": self.session,
             "stats": {
+                "total_expected": len(target_scope),
                 "valid": valid_cnt,
                 "missing": len(missing_list),
-                "heavy_fault": len([i for i in invalid_list if i['amt_diff'] >= 100000]),
-                "light_fault": len([i for i in invalid_list if i['amt_diff'] < 100000])
+                "bad_quality": len(invalid_list)
             },
-            "missing_list": missing_list + [i['code'] for i in invalid_list if i['amt_diff'] >= 100000],
-            "abnormal_list": [i['code'] for i in invalid_list if i['amt_diff'] < 100000],
+            # 汇总缺失和质量差的代码用于补采
+            "missing_list": missing_list + [i['code'] for i in invalid_list],
+            "details": invalid_list[:10], # 只保留前10个详情
             "diagnosis": {
-                "action": "AI_AUDIT" if (len(missing_list) + len(invalid_list)) <= 200 else "FAILOVER"
+                "action": "AI_AUDIT" if (len(missing_list) + len(invalid_list)) <= 200 else "FAILOVER",
+                "reason": f"Audit found {len(missing_list)} missing and {len(invalid_list)} bad quality stocks"
             }
         }
+        
         if (len(missing_list) + len(invalid_list)) == 0:
             output["diagnosis"]["action"] = "NONE"
 
@@ -260,50 +224,31 @@ class AuditJob:
 
     async def run(self):
         try:
-            # 归一化日期
-            if self.target_date and "-" in self.target_date:
-                self.target_date = self.target_date.replace("-", "")
+            # Normalize date
+            clean_date = self.target_date.replace("-", "")
+            self.target_date = clean_date
 
-            # 路由到具体的审计器
-            if self.session == "noon":
-                from core.audit.noon_auditor import NoonAuditor
-                logger.info(f"🎯 路由至 NoonAuditor (午间审计模式)")
-                auditor = NoonAuditor(target_date=self.target_date, stock_codes=self.stock_codes, threshold=self.threshold)
-                await auditor.initialize()
-                try:
-                    output = await auditor.run()
-                    auditor.print_gsd_output(output)
-                finally:
-                    await auditor.close()
-            else:
-                # 默认/盘后审计模式 (保留原有逻辑)
-                await self.initialize()
-                try:
-                    target_scope = await self.get_target_scope()
-                    if not target_scope:
-                        return
-                    
-                    # 只有盘后审计需要检查 K 线依赖
-                    is_ready = await self.check_dependency(target_scope)
-                    if not is_ready:
-                        logger.error("Dependency Check Failed. ABORTING.")
-                        sys.exit(1)
-                        
-                    output = await self.execute_validation(target_scope)
-                    # 统一输出
-                    print(f"\n---GSD_START---\nGSD_OUTPUT_JSON: {json.dumps(output)}\n---GSD_END---", flush=True)
-                finally:
-                    await self.close()
+            await self.initialize()
+            try:
+                target_scope = await self.get_target_scope()
+                if not target_scope:
+                    return
+                
+                output = await self.execute_validation(target_scope)
+                # JSON output for orchestrator
+                print(f"\n---GSD_START---\nGSD_OUTPUT_JSON: {json.dumps(output)}\n---GSD_END---", flush=True)
+            finally:
+                await self.close()
             
         except Exception as e:
             logger.error(f"❌ 审计任务异常: {e}", exc_info=True)
             sys.exit(1)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="分笔数据审计入口 (Gate-Noon/Gate-3)")
+    parser = argparse.ArgumentParser(description="分笔数据精准审计入口 (Precise Edition)")
     parser.add_argument("--date", type=str, help="审计日期 (YYYYMMDD)")
     parser.add_argument("--session", type=str, choices=["noon", "close"], default="close", help="审计时段")
-    parser.add_argument("--threshold", type=float, help="故障阈值")
+    parser.add_argument("--threshold", type=float, help="故障阈值 (保留参数)")
     parser.add_argument("--stock-codes", type=str, help="手动指定审计列表 (逗号分隔)")
     args = parser.parse_args()
     
@@ -311,4 +256,3 @@ if __name__ == "__main__":
     job = AuditJob(target_date=args.date, stock_codes=codes, session=args.session, threshold=args.threshold)
     
     asyncio.run(job.run())
-

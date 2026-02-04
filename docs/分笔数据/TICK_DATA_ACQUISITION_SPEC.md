@@ -123,42 +123,27 @@
 | 文件 | 职责 |
 |------|------|
 | `services/gsd-worker/src/jobs/sync_tick.py` | 分笔同步入口 |
-| `services/gsd-worker/src/jobs/post_market_gate.py` | 盘后审计门禁 |
-| `services/gsd-worker/src/jobs/intraday_tick_validation.py` | 盘中校验与补采 |
+| `services/gsd-worker/src/jobs/audit_tick_resilience.py` | 盘后精准审计 |
 | `services/gsd-worker/src/core/tick_sync_service.py` | 分笔同步核心服务 |
-| `services/gsd-worker/src/core/post_market_gate_service.py` | 审计门禁服务 |
 
 ### 3.3 工作流程
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    盘后补采当天流程                           │
+│                    盘后精准审计流程 (V4.0)                     │
 ├─────────────────────────────────────────────────────────────┤
-│  15:35  daily_tick_sync                                     │
-│         ├─ 从 Redis 获取分片股票列表                          │
-│         ├─ 调用 mootdx-api 采集当天分笔                       │
-│         └─ 写入 ClickHouse tick_data_intraday                │
-├─────────────────────────────────────────────────────────────┤
-│  19:18  post_market_gate (Gate-3)                           │
-│         ├─ 检查 K线覆盖率 (≥98%)                              │
-│         ├─ 检查分笔覆盖率 (≥95%)                              │
-│         ├─ 分层修复策略:                                      │
-│         │   └─ <50只: 定向补采 (stock_data_supplement)        │
-│         │   └─ 51-200只: 分片并行补采                         │
-│         │   └─ >200只: 全量重采                               │
-│         └─ 生成审计报告                                       │
+│  Audit Phase: audit_tick_resilience                         │
+│         ├─ 确定对账基准: 快照 (≥11:30/15:00) -> 降级 K线       │
+│         ├─ 精准对账标准: 价格误差 ≤ 0.1, 成交量误差 ≤ 0.5%   │
+│         ├─ 识别缺失 & 质量异常股票                            │
+│         └─ 生成自愈指令 (AI_AUDIT / FAILOVER)                 │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ### 3.4 关键方法
 
-| 方法 | 文件 | 说明 |
-|------|------|------|
 | `main()` | sync_tick.py | 分笔同步主入口 |
-| `run_gate_check()` | post_market_gate_service.py | 执行 Gate-3 审计 |
-| `_check_tick_coverage()` | post_market_gate_service.py | 分笔覆盖率检查 |
-| `_process_tiered_repair()` | post_market_gate_service.py | 分层修复策略 |
-| `check_intraday_coverage()` | intraday_tick_validation.py | 盘中覆盖率校验 |
+| `execute_validation()` | audit_tick_resilience.py | 执行精准审计对账 |
 
 ### 3.5 命令行接口
 
@@ -183,6 +168,7 @@ docker exec gsd-worker python -m jobs.intraday_tick_validation --session close
 | 服务规格 | `services/gsd-worker/docs/SERVICE_SPEC.md` |
 | 每日分笔场景 | `services/gsd-worker/docs/SCENARIO_DAILY_TICK_SYNC.md` |
 | 采集策略 | `services/gsd-worker/docs/TICK_ACQUISITION_STRATEGY_AND_CONCURRENCY.md` |
+| 精准审计设计 | `docs/分笔数据/TICK_DATA_PRECISE_AUDIT_DESIGN.md` |
 
 ---
 
@@ -329,11 +315,8 @@ ORDER BY (trade_date, stock_code, tick_time);
 | 任务 ID | 触发时间 | 服务 | 场景 |
 |---------|---------|------|------|
 | `intraday_tick_collector` | 09:20 启动 | get-stockdata | 场景一 |
-| `daily_tick_sync` | 15:35 | gsd-worker | 场景二 |
-| `intraday_tick_validation_noon` | 11:35 | gsd-worker | 场景二 |
-| `intraday_tick_validation_close` | 15:10 | gsd-worker | 场景二 |
-| `post_market_gate` | 19:18 | gsd-worker | 场景二 |
-| `retry_tick` | 按需 | gsd-worker | 场景三 |
+| `calculate_data_quality`  | 对应工作流 | gsd-worker | 场景二 |
+| `stock_data_supplement`   | 对应工作流 | gsd-worker | 场景二 |
 | `weekly_audit` | 周日 02:00 | gsd-worker | 场景三 |
 
 ---
