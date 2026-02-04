@@ -86,14 +86,17 @@ class PreMarketGateService:
         # 2. 股票名单一致性检查
         list_sync_ok, list_desc = await self._check_stock_list_consistency()
         
-        # 3. 昨日 Gate-3 状态核对
+        # 3. 昨日 Gate-3 状态核对 (仅参考)
         yesterday_gate_ok, gate_desc = await self._check_yesterday_gate_status(now)
         
-        # 4. 判定整体状态
-        is_complete = 1 if (db_ok and redis_ok and list_sync_ok and yesterday_gate_ok) else 0
+        # 4. 校验当日表是否已清洗归档 (仅参考)
+        migration_ok, migration_desc = await self._check_intraday_table_cleanliness(now)
+        
+        # 5. 判定整体状态 (Gate-1 核心标准: 仅关注名单与心跳)
+        is_complete = 1 if (db_ok and redis_ok and list_sync_ok) else 0
         status = "SUCCESS" if is_complete else "WARNING"
         
-        description = f"股票代码:{'OK' if list_sync_ok else 'FAIL'} 心跳:{'OK' if (db_ok and redis_ok) else 'FAIL'} 昨日数据:{'OK' if yesterday_gate_ok else 'FAIL'}"
+        description = f"代码清单:{'OK' if list_sync_ok else 'FAIL'} 基础心跳:{'OK' if (db_ok and redis_ok) else 'FAIL'} (昨日审计:{'PASS' if yesterday_gate_ok else 'SKIP'} 归档清理:{'DONE' if migration_ok else 'PENDING'})"
         
         report = {
             "date": today,
@@ -106,7 +109,8 @@ class PreMarketGateService:
                 "redis_heartbeat": redis_ok,
                 "list_consistency": list_sync_ok,
                 "list_info": list_desc,
-                "yesterday_gate": gate_desc
+                "yesterday_gate": gate_desc,
+                "table_cleanup": migration_desc
             }
         }
         
@@ -146,7 +150,7 @@ class PreMarketGateService:
         try:
             # 1. 从云端获取计数
             params = {"security_type": "stock", "is_listed": "true", "is_active": "true"}
-            async with httpx.AsyncClient(proxies=self.proxy_url, timeout=10.0) as client:
+            async with httpx.AsyncClient(proxy=self.proxy_url, timeout=10.0) as client:
                 resp = await client.get(self.cloud_api_url, params=params)
                 if resp.status_code != 200:
                     return False, f"Cloud API 异常 ({resp.status_code})"
@@ -169,6 +173,7 @@ class PreMarketGateService:
     async def _check_yesterday_gate_status(self, now_dt: datetime) -> Tuple[bool, str]:
         """核对昨日 Gate-3 状态"""
         yesterday_str = (now_dt - timedelta(days=1)).strftime('%Y-%m-%d')
+        conn = None
         try:
             conn = await aiomysql.connect(**self.mysql_config)
             async with conn.cursor() as cur:
@@ -178,12 +183,36 @@ class PreMarketGateService:
                 if row and row[0] == 1:
                     return True, "昨日审计通过"
                 return False, "昨日审计未通过或无记录"
+        except aiomysql.Error as e:
+            logger.error(f"❌ 读取昨日状态数据库异常: {e}")
+            return False, "数据库异常"
         except Exception as e:
-            logger.error(f"❌ 读取昨日状态异常: {e}")
-            return False, "无法读取昨日状态"
+            logger.error(f"❌ 读取昨日状态非预期异常: {e}")
+            return False, "非预期异常"
+        finally:
+            if conn:
+                conn.close()
+
+    async def _check_intraday_table_cleanliness(self, now_dt: datetime) -> Tuple[bool, str]:
+        """校验当日表是否已清洗（应不含今天之前的数据）"""
+        today_str = now_dt.strftime('%Y-%m-%d')
+        try:
+            # 查询今日之前是否还有残留数据
+            sql = f"SELECT count() FROM stock_data.tick_data_intraday WHERE trade_date < '{today_str}'"
+            result = self.ch_client.execute(sql)
+            stale_count = result[0][0]
+            
+            if stale_count > 0:
+                return False, f"当日表未归档/清理: 发现 {stale_count} 条旧数据"
+            
+            return True, "当日表纯净 (已归档清理)"
+        except Exception as e:
+            logger.error(f"❌ 校验当日表清洗状态异常: {e}")
+            return False, f"表核查异常: {str(e)}"
 
     async def _persist_to_cloud(self, report: Dict):
         """持久化审计结果到云端 (Gate-1)"""
+        conn = None
         try:
             conn = await aiomysql.connect(**self.mysql_config)
             async with conn.cursor() as cur:
@@ -204,6 +233,9 @@ class PreMarketGateService:
             logger.info(f"✅ 盘前审计结果已持久化 (is_complete={report['is_complete']})")
         except Exception as e:
             logger.error(f"❌ 持久化失败: {e}")
+        finally:
+            if conn:
+                conn.close()
 
     async def _trigger_task(self, task_id: str, date_str: str):
         """触发任务"""
