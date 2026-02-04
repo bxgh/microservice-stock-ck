@@ -40,7 +40,7 @@ tasks:
       expression: "30 15 * * 1-5"
     target:
       # 替换为新的 Workflow
-      workflow_id: "post_market_audit"
+      workflow_id: "post_market_audit_4.0"
       initial_context:
         target_date: "{{today_nodash}}"
     retry:
