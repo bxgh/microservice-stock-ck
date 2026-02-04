@@ -278,8 +278,8 @@ class IntradayTickCollector:
         t = now.time()
         # 提前一分钟启动以捕获 9:25 集合竞价
         return (
-            (time(9, 24) <= t <= time(11, 31)) or
-            (time(12, 59) <= t <= time(15, 0))
+            (time(9, 24) <= t <= time(11, 35)) or
+            (time(12, 59) <= t <= time(15, 5))
         )
 
     def _gen_fingerprint(self, item: Dict[str, Any]) -> str:
