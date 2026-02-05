@@ -21,6 +21,7 @@ class RedisClient:
         self.url = settings.redis_url
         self._pool: redis.ConnectionPool | None = None
         self._client: redis.Redis | None = None
+        self._binary_client: redis.Redis | None = None
         logger.info(f"RedisClient initialized with URL: {self.url}")
 
     async def initialize(self) -> None:
@@ -32,7 +33,19 @@ class RedisClient:
                 decode_responses=True
             )
             self._client = redis.Redis(connection_pool=self._pool)
-            logger.info("Redis connection pool created")
+            
+            # Create a separate client for binary data using the same pool?
+            # redis-py's ConnectionPool stores connections with a specific encoding/decode_responses.
+            # Using the same pool might be problematic if we want different decode settings.
+            # However, initializing with separate pool is safer.
+            self._binary_pool = redis.ConnectionPool.from_url(
+                self.url,
+                max_connections=settings.redis_max_connections,
+                decode_responses=False
+            )
+            self._binary_client = redis.Redis(connection_pool=self._binary_pool)
+            
+            logger.info("Redis connection pools (String & Binary) created")
 
             # Test connection
             try:
@@ -43,14 +56,29 @@ class RedisClient:
                 raise
 
     async def close(self) -> None:
-        """Close Redis connection pool"""
+        """Close Redis connection pools"""
         if self._client:
             await self._client.close()
             self._client = None
         if self._pool:
             await self._pool.disconnect()
             self._pool = None
-        logger.info("Redis connection closed")
+            
+        if self._binary_client:
+            await self._binary_client.close()
+            self._binary_client = None
+        if hasattr(self, '_binary_pool') and self._binary_pool:
+            await self._binary_pool.disconnect()
+            self._binary_pool = None
+            
+        logger.info("Redis connection pools closed")
+
+    @property
+    async def binary_client(self) -> redis.Redis:
+        """Get binary-safe client"""
+        if not self._binary_client:
+            await self.initialize()
+        return self._binary_client
 
     async def get(self, key: str) -> str | None:
         """

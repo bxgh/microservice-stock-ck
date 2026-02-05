@@ -92,26 +92,30 @@ class DataValidator:
     @staticmethod
     def clean_stock_code(code: str) -> str:
         """
-        Clean and standardize stock code format
-        
-        Args:
-            code: Raw stock code
-            
-        Returns:
-            Cleaned stock code
+        Clean and standardize stock code format (Gate-3 Alignment)
+        - Removes SH/SZ/BJ prefixes and suffixes
+        - Removes dots
+        - Pads to 6 digits
         """
         if not code:
             return ""
 
         # Remove spaces and convert to uppercase
         code = str(code).strip().upper()
+        
+        # Remove dots (e.g., 000001.SZ -> 000001SZ)
+        code = code.replace(".", "")
 
         # Remove common prefixes/suffixes
-        for prefix in ['SH', 'SZ', 'BJ']:
-            if code.startswith(prefix):
-                code = code[len(prefix):]
+        prefixes = ['SH', 'SZ', 'BJ']
+        for p in prefixes:
+            if code.startswith(p):
+                code = code[len(p):]
+            if code.endswith(p):
+                code = code[:-len(p)]
 
-        # Pad to 6 digits if numeric
+        # Pad to 6 digits if it's mostly numeric
+        # Some special codes might exist, but usually it's 6 digits
         if code.isdigit() and len(code) < 6:
             code = code.zfill(6)
 
