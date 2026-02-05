@@ -20,12 +20,33 @@
 |------|------|------|
 | stock_code | String | 股票代码 |
 | timestamp | DateTime64(3) | 时间戳 |
-| bid1-5 / ask1-5 | Float64 | 五档买卖价 |
 | bid1_vol-5_vol / ask1_vol-5_vol | UInt64 | 五档买卖量 |
+| num | UInt32 | 成交笔数 (Story 002.03) |
 
 ---
 
-## 2. 边界条件处理
+## 2. 核心清洗与标准化
+
+### 2.1 股票代码规范化 (Stock Code Normalization)
+
+**问题**：数据源代码格式多样（带后缀 .SH/.SZ，带前缀 sh/sz，或纯 6 位数字），导致 Join 失败。
+
+**处理方案**：统一使用 `gsd_shared.tick.utils.clean_stock_code` 处理。
+```python
+from gsd_shared.tick.utils import clean_stock_code
+
+# 转换示例:
+# "600000.SH" -> "600000"
+# "sh600000"   -> "600000"
+# "600000"     -> "600000"
+```
+
+### 2.2 数据质量门禁 (Gate-3 Unification)
+
+**机制**：集成 `gsd_shared.validation.SnapshotValidator`。
+1. **密度校验**：记录数需满足预期（3秒一笔，阈值 75%）。
+2. **单调性校验**：`total_volume` 和 `total_amount` 必须非递减。
+3. **K线对账**：与 `stock_kline_daily` 核心指标进行边界对口。
 
 ### 2.1 涨跌停股处理
 
