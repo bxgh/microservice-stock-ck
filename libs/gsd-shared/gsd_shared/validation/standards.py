@@ -26,6 +26,11 @@ class TickStandards:
         PRICE_TOLERANCE = 0.1          # 价格绝对误差
         VOLUME_TOLERANCE = 0.005       # 成交量相对误差 0.5%
         
+        # 快照质量增强指标 (Story 2.05)
+        SNAPSHOT_DENSITY_THRESHOLD = 0.75  # 密度容忍度 (75%)
+        SNAPSHOT_EXPECTED_COUNT = 4800     # 全天预期笔数 (3秒1笔)
+        SNAPSHOT_MONOTONIC_PRICE_TOLERANCE = 0.001 # 价格界限误差 (0.1%)
+        
         # 快照时间门禁指标
         SNAPSHOT_MIN_TIME_NOON = "11:30:00"
         SNAPSHOT_MIN_TIME_CLOSE = "15:00:00"
