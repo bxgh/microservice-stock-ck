@@ -19,7 +19,7 @@ services:
       - ENVIRONMENT=development
       
       # Python 环境
-      - PYTHONPATH=/app/src
+      - PYTHONPATH=/app/src:/app/gsd-shared
       - PYTHONUNBUFFERED=1
       - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
       - TZ=Asia/Shanghai
@@ -69,6 +69,7 @@ services:
       - ./tests:/app/tests
       - ./unit_tests:/app/unit_tests
       - ./scripts:/app/scripts
+      - ../../libs/gsd-shared:/app/gsd-shared
       - quant-strategy-logs:/app/logs
       - quant-strategy-data:/app/data
     
