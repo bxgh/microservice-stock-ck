@@ -19,6 +19,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from core.tick_sync_service import TickSyncService
 from gsd_shared.validation.standards import TickStandards
+from gsd_shared.validation import SnapshotValidator, QualityLevel
 
 # Logger setup
 logging.basicConfig(
@@ -104,7 +105,42 @@ class AuditJob:
                         'last_time': str(r[3])
                     }
         
-        # 2. Load Snapshots (Batch) - Snapshot First
+        # 2. Check Snapshot Quality (Density & Monotonicity) - Story 2.05 Enhanced
+        bad_snap_codes = {}
+        if self.session == "close":
+            logger.info("   -> Auditing Snapshot Quality (Deep Scan)...")
+            async with self.service.clickhouse_pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    # 密度与单调性聚合检查 (使用 lagInFrame 替代 neighbor)
+                    await cursor.execute(f"""
+                        SELECT stock_code, 
+                               count() as cnt,
+                               any(vol_drop) as has_vol_drop,
+                               any(amt_drop) as has_amt_drop
+                        FROM (
+                            SELECT stock_code,
+                                   total_volume < lagInFrame(total_volume, 1, 0) OVER (PARTITION BY stock_code ORDER BY snapshot_time) 
+                                     AND lagInFrame(total_volume, 1, 0) OVER (PARTITION BY stock_code ORDER BY snapshot_time) > 0 as vol_drop,
+                                   total_amount < lagInFrame(total_amount, 1, 0) OVER (PARTITION BY stock_code ORDER BY snapshot_time)
+                                     AND lagInFrame(total_amount, 1, 0) OVER (PARTITION BY stock_code ORDER BY snapshot_time) > 0 as amt_drop
+                            FROM stock_data.snapshot_data_distributed
+                            WHERE trade_date = '{sql_date}'
+                        )
+                        GROUP BY stock_code
+                        HAVING cnt < {TickStandards.Precise.SNAPSHOT_EXPECTED_COUNT * TickStandards.Precise.SNAPSHOT_DENSITY_THRESHOLD}
+                           OR has_vol_drop = 1
+                           OR has_amt_drop = 1
+                    """)
+                    rows = await cursor.fetchall()
+                    for r in rows:
+                        reasons = []
+                        if r[1] < TickStandards.Precise.SNAPSHOT_EXPECTED_COUNT * TickStandards.Precise.SNAPSHOT_DENSITY_THRESHOLD:
+                            reasons.append(f"Low Density: {r[1]}")
+                        if r[2]: reasons.append("Non-monotonic Volume")
+                        if r[3]: reasons.append("Non-monotonic Amount")
+                        bad_snap_codes[r[0]] = reasons
+
+        # 3. Load Snapshots (Batch) - Snapshot First
         snap_map = {}
         min_snap_time = TickStandards.Precise.SNAPSHOT_MIN_TIME_NOON if self.session == "noon" else TickStandards.Precise.SNAPSHOT_MIN_TIME_CLOSE
         
@@ -122,13 +158,15 @@ class AuditJob:
                 """)
                 rows = await cursor.fetchall()
                 for r in rows:
+                    if r[0] in bad_snap_codes:
+                        continue # Skip bad snapshots as golden reference
                     snap_map[r[0]] = {
                         'vol': float(r[1]), 
                         'close': float(r[2]),
                         'time': str(r[3])
                     }
 
-        # 3. Load KLines (Batch) - Fallback
+        # 4. Load KLines (Batch) - Fallback
         kline_map = {}
         async with self.service.clickhouse_pool.acquire() as conn:
             async with conn.cursor() as cursor:
@@ -167,8 +205,17 @@ class AuditJob:
                 ref_source = "kline"
             
             if not ref_data:
-                # No reference available, skip specific check but count as valid for now (or warning)
-                valid_cnt += 1
+                # No reference available, or snapshot was bad
+                if code in bad_snap_codes:
+                    invalid_list.append({
+                        'code': code,
+                        'reasons': [f"Snapshot Quality Failure: {', '.join(bad_snap_codes[code])}"],
+                        'source': 'snapshot_quality',
+                        'vol_diff_abs': 0
+                    })
+                else:
+                    # No reference available, skip specific check but count as valid for now (or warning)
+                    valid_cnt += 1
                 continue
             
             reasons = []
