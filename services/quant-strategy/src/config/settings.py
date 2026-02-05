@@ -71,6 +71,13 @@ class Settings(BaseSettings):
     # 数据源配置 (host network mode, service on port 8083)
     stockdata_service_url: str = "http://127.0.0.1:8083"
 
+    # ClickHouse 配置 (新增)
+    QS_CLICKHOUSE_HOST: str = "127.0.0.1"
+    QS_CLICKHOUSE_PORT: int = 9000
+    QS_CLICKHOUSE_USER: str = "default"
+    QS_CLICKHOUSE_PASSWORD: str = ""
+    QS_CLICKHOUSE_DB: str = "stock_data"
+
     # Risk Filter Thresholds (EPIC-002)
     # 状态过滤
     filter_st_stocks: bool = True
