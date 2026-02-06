@@ -7,6 +7,7 @@ import aiohttp
 import pytz
 
 from src.core.collector.components.writer import ClickHouseWriter
+from gsd_shared.tick import clean_stock_code
 
 logger = logging.getLogger("IntradayTickCollector.SnapshotWorker")
 CST = pytz.timezone('Asia/Shanghai')
@@ -154,7 +155,7 @@ class SnapshotWorker:
             return (
                 snapshot_time,
                 trade_date,
-                item['code'],
+                clean_stock_code(item['code']),
                 item.get('name', ''),
                 str(item.get('market', '')),  # market (Fixed: ClickHouse String column)
                 current_price,

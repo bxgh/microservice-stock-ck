@@ -12,6 +12,7 @@ import pytz
 import yaml
 import redis.asyncio as aioredis
 from gsd_shared.stock_universe import StockUniverseService
+from gsd_shared.tick import clean_stock_code
 
 # 导入项目依赖
 from src.core.scheduling.calendar_service import CalendarService
@@ -341,7 +342,7 @@ class IntradayTickCollector:
                     
                     # (stock_code, trade_date, tick_time, price, volume, amount, direction, num)
                     new_rows.append((
-                        code.lstrip('sh').lstrip('sz'), # 存储纯代码
+                        clean_stock_code(code), # 存储 TS 格式代码 (如 600519.SH)
                         today,
                         time_str,
                         price,
