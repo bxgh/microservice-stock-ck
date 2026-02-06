@@ -60,7 +60,7 @@ async def test_snapshot_data_mapping(collector):
     item = {"code": "sh600519", "name": "茅台", "market": "1", "price": 1700}
     today = datetime.now(CST).date()
     row = collector._map_snapshot_row(item, today, datetime.now(CST))
-    assert row[2] == "600519"
+    assert row[2] == "600519.SH"
     assert isinstance(row[4], str)
 
 @pytest.mark.asyncio

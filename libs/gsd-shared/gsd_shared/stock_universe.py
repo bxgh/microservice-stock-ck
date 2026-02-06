@@ -7,7 +7,7 @@ from typing import List, Optional, Union
 from datetime import datetime
 import aiomysql
 import redis.asyncio as redis
-from .validators import is_valid_a_stock
+from .validators import is_valid_a_stock, is_valid_etf, is_valid_index
 
 logger = logging.getLogger(__name__)
 
@@ -228,32 +228,20 @@ class StockUniverseService:
         return is_valid_a_stock(code)
     
     def _filter_and_normalize(self, raw_codes: List[str]) -> List[str]:
-        """批量标准化并过滤 (增强版: 剔除上证指数)"""
+        """批量标准化并过滤 (支持 A 股/北证/ETF/指数)"""
         valid = set()
         for c in raw_codes:
             c_str = str(c).strip().upper()
             
-            # 1. 前置过滤: 上证指数 (000xxx.SH)
-            if '.' in c_str:
-                parts = c_str.split('.')
-                if len(parts[0]) == 6:
-                    code, suffix = parts[0], parts[1]
-                else:
-                    code, suffix = parts[1], parts[0]
-                
-                # 剔除规则: 后缀为SH 且 代码以000开头 (上证指数)
-                if suffix == 'SH' and code.startswith('000'):
-                    continue
-                    
-                # 规则 B: 排除北交所 (BJ)
-                if suffix == 'BJ':
-                    continue
-            
-            # 2. 标准化
+            # 标准化 (000001.SH -> 000001)
             norm = self.normalize_code(c_str)
             
-            # 3. 基础格式校验
-            if self.is_valid_a_stock(norm):
+            # 基础格式校验: 允许 A 股、北证、ETF 或 指数
+            if any([
+                is_valid_a_stock(norm),
+                is_valid_etf(norm),
+                is_valid_index(norm)
+            ]):
                 valid.add(norm)
                 
         return sorted(list(valid))

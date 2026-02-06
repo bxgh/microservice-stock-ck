@@ -21,10 +21,22 @@ import aiohttp
 import json
 import os
 import xxhash
-from datetime import datetime
+import pytz
 from redis.asyncio import Redis
 from redis.asyncio.cluster import RedisCluster
-from gsd_shared.validators import is_valid_a_stock
+from gsd_shared.validators import is_valid_a_stock, is_valid_etf, is_valid_index
+
+# 时区设置 (标准化要求：Asia/Shanghai)
+TZ_SHANGHAI = pytz.timezone('Asia/Shanghai')
+
+# 核心分析基准指数 (精选 30 个标杆)
+CORE_INDICES = [
+    "000001.SH", "399001.SZ", "399006.SZ", "000300.SH", "000905.SH", "000852.SH", 
+    "000016.SH", "000688.SH", "899050.BJ", "399102.SZ", "399005.SZ",
+    "399971.SZ", "399975.SZ", "399707.SZ", "399986.SZ", "399997.SZ", "399396.SZ",
+    "000922.SH", "000932.SH", "000991.SH", "399967.SZ", "399812.SZ", "399394.SZ",
+    "399973.SZ", "399970.SZ", "000010.SH", "000015.SH", "000042.SH", "399330.SZ"
+]
 
 # 配置日志
 logging.basicConfig(
@@ -42,6 +54,27 @@ REDIS_KEY_INFO = "metadata:stock_info"
 REDIS_KEY_SHARD_PREFIX = "metadata:stock_codes:shard"
 TOTAL_SHARDS = 3
 REDIS_TTL = 3600 * 24 * 14  # 14天，覆盖长假
+
+async def get_top_etfs_from_clickhouse(limit: int = 200) -> list:
+    """从 ClickHouse 获取昨日成交额前 N 的 ETF (Async First)"""
+    try:
+        from data_access.clickhouse_pool import ClickHousePoolManager
+        pool = await ClickHousePoolManager.get_pool()
+        # 查询最近一个交易日成交额前 N 的 ETF (51/58/159开头)
+        sql = f"""
+            SELECT stock_code FROM stock_data.stock_kline_daily 
+            WHERE trade_date = (SELECT max(trade_date) FROM stock_data.stock_kline_daily)
+            AND (stock_code LIKE '51%' OR stock_code LIKE '58%' OR stock_code LIKE '159%')
+            ORDER BY amount DESC LIMIT {limit}
+        """
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(sql)
+                rows = await cursor.fetchall()
+        return [r[0] for r in rows]
+    except Exception as e:
+        logger.warning(f"⚠️ [CH] 无法获取活跃 ETF 列表 (可能无 K 线数据): {e}")
+        return []
 
 async def fetch_stock_data():
     """从云端 API 获取全量股票数据"""
@@ -99,24 +132,48 @@ async def update_redis_cache(redis, items):
         stock_codes = []
         stock_info_map = {}
         
+        # 获取活跃 ETF 列表 (精选)
+        active_etfs_set = set(await get_top_etfs_from_clickhouse(200))
+        logger.info(f"📍 活跃 ETF 筛选列表: {len(active_etfs_set)} 只")
+
         for item in items:
             code = item.get("standard_code")
             exchange = item.get("exchange")
+            s_type = item.get("security_type", "stock")
             
             if not code or not exchange:
                 continue
             
-            # 改为全量同步：不再在这里进行 A 股前缀过滤
-            # 这种设计允许 Redis 存储全量权威名单，具体的采集范围由各采集任务内部自行过滤
             formatted_code = f"{code}.{exchange}"
-            stock_codes.append(formatted_code)
             
-            info_json = json.dumps({
-                "name": item.get("name"),
-                "type": item.get("security_type")
-            }, ensure_ascii=False)
-            stock_info_map[formatted_code] = info_json
+            # --- 筛选逻辑 (Epic-002 优化版) ---
+            keep = False
+            # 1. A 股 (含北证): 全量保留
+            if s_type == "stock" and is_valid_a_stock(formatted_code):
+                keep = True
+            # 2. ETF: 仅保留成交额头部的活跃基金
+            elif s_type == "etf" and (formatted_code in active_etfs_set or is_valid_etf(formatted_code)):
+                # 如果 CH 列表为空，则回退到基础校验 (确保至少有数据)
+                if not active_etfs_set or formatted_code in active_etfs_set:
+                    keep = True
+            # 3. 指数: 仅保留核心标杆
+            elif formatted_code in CORE_INDICES:
+                keep = True
+            
+            if keep:
+                stock_codes.append(formatted_code)
+                stock_info_map[formatted_code] = json.dumps({
+                    "name": item.get("name"),
+                    "type": s_type
+                }, ensure_ascii=False)
         
+        # 补充核心指数 (兜底防止 API 未返回)
+        for code in CORE_INDICES:
+            if code not in stock_codes:
+                stock_codes.append(code)
+                if code not in stock_info_map:
+                    stock_info_map[code] = json.dumps({"name": "基准指数", "type": "index"}, ensure_ascii=False)
+
         if not stock_codes or len(stock_codes) < 20:
             logger.error(f"❌ 数据解析后数量不足 (Count={len(stock_codes)} < 20)，可能有异常，中止更新")
             # 如果有旧数据，延长 TTL 避免过期
@@ -189,7 +246,7 @@ async def update_redis_cache(redis, items):
 
 async def main():
     """主任务流程"""
-    start_time = datetime.now()
+    start_time = datetime.now(TZ_SHANGHAI)
     
     redis_host = os.getenv("REDIS_HOST", "127.0.0.1")
     redis_port = int(os.getenv("REDIS_PORT", "6379"))
@@ -232,7 +289,7 @@ async def main():
         # 3. 更新缓存
         success = await update_redis_cache(redis, items)
         
-        duration = (datetime.now() - start_time).total_seconds()
+        duration = (datetime.now(TZ_SHANGHAI) - start_time).total_seconds()
         if success:
             logger.info(f"✨ 任务成功完成，耗时: {duration:.2f}s")
             return 0
