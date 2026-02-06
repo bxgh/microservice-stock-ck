@@ -261,7 +261,8 @@ class StockUniverseService:
             tmp_path = path.with_suffix(".tmp")
             loop = asyncio.get_running_loop()
             
-            content = json.dumps({"updated_at": datetime.now().isoformat(), "data": data})
+            china_tz = pytz.timezone('Asia/Shanghai')
+            content = json.dumps({"updated_at": datetime.now(china_tz).isoformat(), "data": data})
             await loop.run_in_executor(None, tmp_path.write_text, content)
             tmp_path.rename(path)
         except Exception as e:
