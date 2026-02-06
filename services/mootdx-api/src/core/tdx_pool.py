@@ -81,30 +81,52 @@ class RobustQuotes:
         
         params = []
         for s in symbol:
-             m = get_stock_market(s)
-             c = s[2:] if s.startswith(('sh','sz')) else s
+             m, c = self._clean_symbol(s)
              params.append((m, c))
         
         data = self.client.get_security_quotes(params)
         return to_data(data, symbol=symbol, client=self)
         
+    def _clean_symbol(self, symbol):
+        s = str(symbol).upper()
+        
+        # 1. 优先从前后缀提取市场 ID (1=上海, 0=深圳, 2=北京)
+        m = None
+        if '.SH' in s or s.startswith('SH'):
+            m = 1
+        elif '.SZ' in s or s.startswith('SZ'):
+            m = 0
+        elif '.BJ' in s or s.startswith('BJ'):
+            m = 2
+            
+        # 2. 提取 6 位纯数字代码
+        c = s.split('.')[0] if '.' in s else s
+        c = c[2:] if c.startswith(('SH','SZ','BJ')) else c
+        # 防御性：确保 c 是纯数字并补齐 6 位
+        c = "".join(filter(str.isdigit, c))
+        if len(c) < 6:
+            c = c.zfill(6)
+            
+        # 3. 如果没能从前后缀识别，则使用 mootdx 原生逻辑推断
+        if m is None:
+            m = get_stock_market(c)
+            
+        return m, c
+
     def transaction(self, symbol, start=0, offset=800, **kwargs):
-        m = get_stock_market(symbol)
-        c = symbol[2:] if symbol.startswith(('sh','sz')) else symbol
+        m, c = self._clean_symbol(symbol)
         data = self.client.get_transaction_data(m, c, start, offset)
         return to_data(data, symbol=symbol, client=self)
 
     def transactions(self, symbol, date, start=0, offset=800, **kwargs):
-        m = get_stock_market(symbol)
-        c = symbol[2:] if symbol.startswith(('sh','sz')) else symbol
+        m, c = self._clean_symbol(symbol)
         data = self.client.get_history_transaction_data(m, c, start, offset, int(date))
         return to_data(data, symbol=symbol, client=self)
         
     def bars(self, frequency, symbol, start=0, offset=800, **kwargs):
         if isinstance(frequency, str):
              frequency = get_frequency(frequency)
-        m = get_stock_market(symbol)
-        c = symbol[2:] if symbol.startswith(('sh','sz')) else symbol
+        m, c = self._clean_symbol(symbol)
         
         data = self.client.get_instrument_bars(frequency, m, c, start, offset)
         return to_data(data, symbol=symbol, client=self)
@@ -112,21 +134,18 @@ class RobustQuotes:
     def index_bars(self, symbol, frequency, start=0, offset=800, **kwargs):
         if isinstance(frequency, str):
              frequency = get_frequency(frequency)
-        m = get_stock_market(symbol)
-        c = symbol[2:] if symbol.startswith(('sh','sz')) else symbol
+        m, c = self._clean_symbol(symbol)
         
         data = self.client.get_index_bars(frequency, m, c, start, offset)
         return to_data(data, symbol=symbol, client=self)
 
     def finance(self, symbol):
-         m = get_stock_market(symbol)
-         c = symbol[2:] if symbol.startswith(('sh','sz')) else symbol
+         m, c = self._clean_symbol(symbol)
          data = self.client.get_finance_info(m, c)
          return to_data(data, symbol=symbol, client=self)
 
     def xdxr(self, symbol):
-         m = get_stock_market(symbol)
-         c = symbol[2:] if symbol.startswith(('sh','sz')) else symbol
+         m, c = self._clean_symbol(symbol)
          data = self.client.get_xdxr_info(m, c)
          return to_data(data, symbol=symbol, client=self)
          

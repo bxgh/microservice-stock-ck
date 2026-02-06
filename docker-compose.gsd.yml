@@ -133,7 +133,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./libs/gsd-shared:/app/libs/gsd-shared:ro
       - ./logs/task-orchestrator:/app/logs
-      - ./services/task-orchestrator/config/tasks.yml:/app/config/tasks.yml:ro
+      - ./services/task-orchestrator/config:/app/config:ro
       - ./services/task-orchestrator/src:/app/src:ro
       - ./libs/gsd-agent:/app/libs/gsd-agent:ro
     healthcheck:
