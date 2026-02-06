@@ -118,3 +118,6 @@ final_audit.json
 
 # Agent config
 .opencode/
+
+# TDX Runtime Files
+services/mootdx-api/src/core/tdx_nodes_ranked.json
