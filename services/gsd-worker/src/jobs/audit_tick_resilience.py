@@ -20,6 +20,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from core.tick_sync_service import TickSyncService
 from gsd_shared.validation.standards import TickStandards
 from gsd_shared.validation import SnapshotValidator, QualityLevel
+from gsd_shared.tick.utils import clean_stock_code
 
 # Logger setup
 logging.basicConfig(
@@ -58,7 +59,7 @@ class AuditJob:
 
         target_scope = set()
         for code in all_codes:
-            normalized = self._normalize_code(code)
+            normalized = clean_stock_code(code)
             # 过滤北证
             if normalized.startswith(('4', '8', '9')):
                 continue
@@ -66,14 +67,6 @@ class AuditJob:
             
         logger.info(f"🎯 目标范围: 总数={len(all_codes)} -> 过滤非法/北证后={len(target_scope)}")
         return target_scope
-
-    def _normalize_code(self, raw_code: str) -> str:
-        code = str(raw_code).upper()
-        if code.endswith(('.SZ', '.SH', '.BJ')):
-            return code.split('.')[0]
-        if code.startswith(('SZ.', 'SH.', 'BJ.')):
-            return code.split('.')[1]
-        return code
 
     async def execute_validation(self, target_scope: set):
         """Step 3: 高速内存对账 (Snapshot First -> Kline Fallback)"""
@@ -178,7 +171,7 @@ class AuditJob:
                 """)
                 rows = await cursor.fetchall()
                 for r in rows:
-                    std_code = self._normalize_code(r[0])
+                    std_code = clean_stock_code(r[0])
                     kline_map[std_code] = {
                         'vol': float(r[1]), 
                         'close': float(r[2])

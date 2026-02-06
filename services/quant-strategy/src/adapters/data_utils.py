@@ -92,34 +92,54 @@ class DataValidator:
     @staticmethod
     def clean_stock_code(code: str) -> str:
         """
-        Clean and standardize stock code format (Gate-3 Alignment)
-        - Removes SH/SZ/BJ prefixes and suffixes
-        - Removes dots
-        - Pads to 6 digits
+        标准化为 TS 格式: 6位代码.市场 (如 600519.SH, 000001.SZ)
+        
+        对齐 Gate-3 标准，确保能正确匹配 ClickHouse 中的带后缀代码。
         """
         if not code:
             return ""
 
-        # Remove spaces and convert to uppercase
-        code = str(code).strip().upper()
+        code = str(code).upper().strip()
         
-        # Remove dots (e.g., 000001.SZ -> 000001SZ)
-        code = code.replace(".", "")
+        # 1. 识别核心代码与市场
+        market = None
+        raw_code = code
 
-        # Remove common prefixes/suffixes
-        prefixes = ['SH', 'SZ', 'BJ']
-        for p in prefixes:
-            if code.startswith(p):
-                code = code[len(p):]
-            if code.endswith(p):
-                code = code[:-len(p)]
+        # 处理带点的格式 (000001.SZ)
+        if '.' in code:
+            parts = code.split('.')
+            if len(parts[0]) == 6:
+                raw_code, market = parts[0], parts[1]
+            elif len(parts[-1]) == 6:
+                raw_code, market = parts[-1], parts[0]
+        
+        # 处理前缀 (SH600519)
+        elif code.startswith(('SH', 'SZ', 'BJ')):
+            market = code[:2]
+            raw_code = code[2:]
+            
+        # 处理后缀 (600519SH)
+        elif code.endswith(('SH', 'SZ', 'BJ')):
+            market = code[-2:]
+            raw_code = code[:-2]
 
-        # Pad to 6 digits if it's mostly numeric
-        # Some special codes might exist, but usually it's 6 digits
-        if code.isdigit() and len(code) < 6:
-            code = code.zfill(6)
+        # 清洗核心代码 (只保留数字)
+        raw_code = "".join(filter(str.isdigit, raw_code))
+        if len(raw_code) < 6:
+            raw_code = raw_code.zfill(6)
 
-        return code
+        # 2. 推断市场 (如果不明确)
+        if not market or market not in ['SH', 'SZ', 'BJ']:
+            if raw_code.startswith(('6', '9', '5')):
+                market = 'SH'
+            elif raw_code.startswith(('0', '3', '1')):
+                market = 'SZ'
+            elif raw_code.startswith(('4', '8')):
+                market = 'BJ'
+            else:
+                market = 'SH' # 默认
+        
+        return f"{raw_code}.{market}"
 
     @staticmethod
     def filter_trading_hours(df: pd.DataFrame,

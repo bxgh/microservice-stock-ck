@@ -53,15 +53,15 @@ graph TD
 ```python
 def euclidean_prefilter(
     features: Dict[str, np.ndarray],  # {stock_code: 240维向量}
-    top_k_percent: float = 0.3
+    top_k_percent: float = 0.05  # 保留前5%候选对
 ) -> Set[Tuple[str, str]]:
     """
     第一阶段：Euclidean距离预筛选
     
     计算方式：
     - 对向量A/B/C分别计算欧式距离
-    - 加权融合：D_euclidean = 0.4*D_A + 0.3*D_B + 0.3*D_C
-    - 保留距离最小的前30%股票对进入DTW精算
+    - 加权融合：D_euclidean = 0.5*D_A + 0.3*D_B + 0.2*D_C
+    - 保留距离最小的前5%股票对进入DTW精算（约62.5万对）
     
     复杂度：O(N²) 但计算极快（纯向量运算）
     """
@@ -80,15 +80,15 @@ def euclidean_prefilter(
 def dtw_with_window(
     series_a: np.ndarray,  # 240维
     series_b: np.ndarray,
-    window_size: int = 30   # 允许±30分钟时移
+    window_size: int = 15   # 允许±15分钟时移（推荐值）
 ) -> float:
     """
     DTW动态规划实现（含窗口约束）
     
     窗口意义：
-    - 限制时间扭曲范围在±30分钟内
+    - 限制时间扭曲范围在±15分钟内
     - 避免9:30的走势与14:30的走势错配
-    - 大幅降低计算量（从O(240²)降至O(240×60)）
+    - 大幅降低计算量（从O(240²)降至O(240×30)）
     
     返回：归一化DTW距离 [0, 1]
     """
@@ -105,29 +105,40 @@ def _dtw_core(a, b, window):
 ```
 
 **并行策略**：
-- 使用 `multiprocessing.Pool` 分配股票对到多核
-- 每个进程处理 ~10万个股票对
+- 使用 `concurrent.futures.ProcessPoolExecutor` + `asyncio` 分配股票对到多核
+- 默认 `num_workers = 8`，可根据服务器调整
+- 每个进程处理 ~8万个股票对
 - 48核服务器预计耗时：约30-45分钟
 
 #### 多特征融合策略
 ```python
+import numpy as np
+
 def compute_final_distance(
     dtw_a: float,  # 向量A的DTW距离
     dtw_b: float,  # 向量B的DTW距离
     dtw_c: float,  # 向量C的DTW距离
-    weights: Tuple[float, float, float] = (0.4, 0.3, 0.3)
+    std_a: float,  # 向量A的标准差（用于归一化）
+    std_b: float,  # 向量B的标准差
+    std_c: float,  # 向量C的标准差
+    weights: Tuple[float, float, float] = (0.5, 0.3, 0.2)
 ) -> float:
     """
-    最终距离 = 加权平均
+    最终距离 = 归一化后加权平均
     
     权重建议：
-    - 向量A（主动买入强度）：0.4（核心信号）
+    - 向量A（主动买入强度）：0.5（核心信号）
     - 向量B（盘口失衡）：0.3
-    - 向量C（收益率）：0.3
+    - 向量C（收益率）：0.2（验证作用）
     
-    可通过回测调整权重
+    归一化：各特征量纲不同，必须除以标准差
     """
-    return weights[0]*dtw_a + weights[1]*dtw_b + weights[2]*dtw_c
+    # 归一化（消除量纲差异）
+    norm_a = dtw_a / std_a if std_a > 0 else 0
+    norm_b = dtw_b / std_b if std_b > 0 else 0
+    norm_c = dtw_c / std_c if std_c > 0 else 0
+    
+    return weights[0]*norm_a + weights[1]*norm_b + weights[2]*norm_c
 ```
 
 #### 输出格式
@@ -160,15 +171,15 @@ class SimilarityMatrix:
 
 ##### 1. 图构建
 **节点**：股票代码  
-**边权重**：相似度 = `1 - DTW_distance`  
-**稀疏化**：仅保留距离 < 0.3 的边（相似度 > 0.7）
+**边权重**：相似度 = `1 / (1 + DTW_distance)` （距离越小，权重越大）  
+**稀疏化**：仅保留距离 < 阈值的边（阈值取 DTW 距离分布的 5% 分位数）
 
 ```python
 import networkx as nx
 
 def build_similarity_graph(
     similarity_matrix: SimilarityMatrix,
-    edge_threshold: float = 0.7  # 相似度阈值
+    distance_threshold: float  # 由自适应算法计算
 ) -> nx.Graph:
     """
     构建无向加权图
@@ -180,9 +191,9 @@ def build_similarity_graph(
     G = nx.Graph()
     for (a, b), dist in zip(similarity_matrix.stock_pairs, 
                             similarity_matrix.distances):
-        similarity = 1 - dist
-        if similarity >= edge_threshold:
-            G.add_edge(a, b, weight=similarity)
+        if dist < distance_threshold:
+            weight = 1.0 / (1.0 + dist)  # 与源文档一致
+            G.add_edge(a, b, weight=weight, distance=dist)
     return G
 ```
 
@@ -344,7 +355,7 @@ from scipy.signal import correlate
 def compute_tlcc(
     series_a: np.ndarray,  # 240维收益率序列
     series_b: np.ndarray,
-    max_lag: int = 30      # 最大时滞±30分钟
+    max_lag: int = 15      # 最大时滞±15分钟（与 DTW 窗口一致）
 ) -> Tuple[int, float]:
     """
     时滞互相关计算
