@@ -57,31 +57,35 @@ class TestAnalysisPipeline:
             mock_bench.return_value = np.random.randn(240)
             mock_redis_set.return_value = True
             
-            # 使用 100% prefilter 确保所有 45 对都被计算 (绕过 Euclidean 粗由于可能的误差)
-            # 使用 100% threshold (clustering) 确保所有边都保留
+            # 运行分析 (使用 Leiden 算法)
             report = await service.run_market_analysis(
                 trade_date, stock_universe, 
                 threshold_percentile=100.0,
-                prefilter_percentile=1.0 # 100%
+                prefilter_percentile=1.0,
+                clustering_method="leiden"
             )
             
             # 验证结果
             assert report is not None
             assert len(report) >= 1
             
+            # 验证 ClickHouse 写入被调用 (之前 Patch 了 execute)
+            # 注意: ClickHouseLoader.client.execute 被调用了两次（DDL 和 Insert）
+            # 在集成测试中，我们 Patch 了 initialize，但没有直接 Patch client.execute 在 service initialization 之后
+            # 实际上在 test_run_market_analysis_flow 中，service 已经初始化了。
+            
             # 检查第一个簇的成员
             found_cluster = False
             for cluster in report:
                 members = set(cluster['members'])
-                # Stock_0, 1, 2 应该是最相似的 (因为其他都是随机噪声，距离巨大)
+                # Stock_0, 1, 2 应该是最相似的
                 if "Stock_0" in members and "Stock_1" in members:
                     found_cluster = True
-                    assert len(members) >= 2 
-                    # 检查龙头: Stock_0 领先 Stock_1 (lag=2)
-                    if len(cluster['leaders']) > 0:
-                        # 0 应该是 Top Leader
-                        leaders = [L[0] for L in cluster['leaders']]
-                        assert "Stock_0" in leaders
+                    # 检查趋势阶段是否由 Enum 转换为了字符串
+                    assert isinstance(cluster['trend_phase'], str)
+                    # 检查龙头 (PageRank + OBI 增强后)
+                    leaders = [L[0] for L in cluster['leaders']]
+                    assert "Stock_0" in leaders
                     
             assert found_cluster, f"Failed to identify the correlated cluster S0/1. Report: {report}"
 

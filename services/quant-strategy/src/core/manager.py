@@ -29,11 +29,11 @@ class BackgroundTaskManager:
 
     async def start_task(self, name: str, coro: Coroutine) -> asyncio.Task:
         """启动一个后台任务
-        
+
         Args:
             name: 任务唯一名称
             coro: 协程对象
-            
+
         Returns:
             创建的 Task 对象
         """
@@ -62,11 +62,11 @@ class BackgroundTaskManager:
 
     async def stop_task(self, name: str, wait: bool = True) -> bool:
         """停止指定任务
-        
+
         Args:
             name: 任务名称
             wait: 是否等待任务结束
-            
+
         Returns:
             True表示成功停止（或任务已结束），False表示任务不存在
         """

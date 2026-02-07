@@ -33,7 +33,7 @@ class Priority(str, Enum):
 class Signal:
     """
     交易信号数据结构
-    
+
     所有策略生成的信号必须符合此格式
     """
     stock_code: str              # 股票代码
@@ -78,7 +78,7 @@ class Signal:
     ) -> 'Signal':
         """
         创建Signal实例，自动添加CST时间戳
-        
+
         Args:
             stock_code: 股票代码
             signal_type: 信号类型
@@ -88,7 +88,7 @@ class Signal:
             score: 信号强度 (0-100)
             price: 触发价格
             metadata: 额外数据
-            
+
         Returns:
             Signal实例
         """
@@ -110,7 +110,7 @@ class Signal:
     def is_valid(self) -> bool:
         """
         验证信号是否有效
-        
+
         Returns:
             True if valid
         """
@@ -131,10 +131,7 @@ class Signal:
                 return False
 
             # 时区检查
-            if self.timestamp.tzinfo is None:
-                return False
-
-            return True
+            return self.timestamp.tzinfo is not None
 
         except (ValueError, TypeError, AttributeError) as e:
             logger.warning(f"Signal validation failed: {e}")
@@ -143,7 +140,7 @@ class Signal:
     def to_dict(self) -> dict[str, Any]:
         """
         转换为字典格式
-        
+
         Returns:
             字典表示
         """

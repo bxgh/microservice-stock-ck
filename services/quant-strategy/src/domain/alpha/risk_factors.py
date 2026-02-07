@@ -38,10 +38,10 @@ class RiskRule(ABC):
     def check(self, data: dict[str, Any]) -> RiskFactor:
         """
         Evaluate if the stock passes this risk rule.
-        
+
         Args:
             data: Dictionary containing relevant stock data (financials, market info, etc.)
-            
+
         Returns:
             RiskFactor object containing the check result
         """

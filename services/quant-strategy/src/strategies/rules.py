@@ -2,6 +2,7 @@
 具体的风控规则实现
 """
 
+import contextlib
 import logging
 from datetime import datetime, time
 from typing import Any
@@ -56,10 +57,8 @@ class TradingHoursRule(RiskRule):
             if isinstance(signal.timestamp, datetime):
                 check_time = signal.timestamp.time()
             elif isinstance(signal.timestamp, str):
-                try:
+                with contextlib.suppress(ValueError):
                     check_time = datetime.fromisoformat(signal.timestamp).time()
-                except ValueError:
-                    pass
 
         if check_time is None:
             check_time = datetime.now().time()

@@ -9,12 +9,12 @@ logger = logging.getLogger(__name__)
 class InternalLooper:
     """
     内部后台任务循环管理器
-    
+
     用于处理服务内部的高频、轻量级维护任务，例如：
     - 刷新本地缓存
     - 发送心跳
     - 清理临时文件
-    
+
     不处理复杂的业务调度，业务调度由外部 task-scheduler 通过 API 触发。
     """
 
@@ -26,7 +26,7 @@ class InternalLooper:
     def add_loop(self, func: Callable, interval_seconds: int, name: str | None = None) -> None:
         """
         添加一个循环任务
-        
+
         Args:
             func: 异步执行函数
             interval_seconds: 执行间隔(秒)

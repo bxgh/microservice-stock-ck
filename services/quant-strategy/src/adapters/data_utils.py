@@ -18,10 +18,10 @@ class DataValidator:
     def validate_quote_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         """
         Validate and standardize quote DataFrame
-        
+
         Args:
             df: Raw quote DataFrame
-            
+
         Returns:
             Cleaned and validated DataFrame
         """
@@ -55,10 +55,10 @@ class DataValidator:
     def validate_kline_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         """
         Validate and standardize K-line DataFrame
-        
+
         Args:
             df: Raw K-line DataFrame
-            
+
         Returns:
             Cleaned and validated DataFrame
         """
@@ -93,14 +93,14 @@ class DataValidator:
     def clean_stock_code(code: str) -> str:
         """
         标准化为 TS 格式: 6位代码.市场 (如 600519.SH, 000001.SZ)
-        
+
         对齐 Gate-3 标准，确保能正确匹配 ClickHouse 中的带后缀代码。
         """
         if not code:
             return ""
 
         code = str(code).upper().strip()
-        
+
         # 1. 识别核心代码与市场
         market = None
         raw_code = code
@@ -112,12 +112,12 @@ class DataValidator:
                 raw_code, market = parts[0], parts[1]
             elif len(parts[-1]) == 6:
                 raw_code, market = parts[-1], parts[0]
-        
+
         # 处理前缀 (SH600519)
         elif code.startswith(('SH', 'SZ', 'BJ')):
             market = code[:2]
             raw_code = code[2:]
-            
+
         # 处理后缀 (600519SH)
         elif code.endswith(('SH', 'SZ', 'BJ')):
             market = code[-2:]
@@ -138,7 +138,7 @@ class DataValidator:
                 market = 'BJ'
             else:
                 market = 'SH' # 默认
-        
+
         return f"{raw_code}.{market}"
 
     @staticmethod
@@ -146,11 +146,11 @@ class DataValidator:
                             datetime_col: str = 'datetime') -> pd.DataFrame:
         """
         Filter data to trading hours only (09:30-11:30, 13:00-15:00)
-        
+
         Args:
             df: DataFrame with datetime column
             datetime_col: Name of datetime column
-            
+
         Returns:
             Filtered DataFrame
         """

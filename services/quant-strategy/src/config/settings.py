@@ -77,6 +77,7 @@ class Settings(BaseSettings):
     QS_CLICKHOUSE_USER: str = "default"
     QS_CLICKHOUSE_PASSWORD: str = ""
     QS_CLICKHOUSE_DB: str = "stock_data"
+    QS_CLICKHOUSE_ANALYTICS_TABLE: str = "analysis_results"
 
     # Risk Filter Thresholds (EPIC-002)
     # 状态过滤

@@ -8,13 +8,13 @@ import logging
 from typing import Any
 
 from core.risk import RiskManager
+from models.signal import Signal
 from strategies.rules_fundamental import (
     CashflowQualityRule,
     FinancialFraudRule,
     GoodwillRiskRule,
     PledgeRiskRule,
 )
-from models.signal import Signal
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ class FundamentalFilter:
     ):
         """
         初始化基本面过滤器
-        
+
         Args:
             goodwill_threshold: 商誉占净资产比例阈值
             pledge_threshold: 大股东质押率阈值
@@ -54,10 +54,10 @@ class FundamentalFilter:
     async def filter_stocks(self, stock_codes: list[str]) -> dict[str, Any]:
         """
         批量过滤股票
-        
+
         Args:
             stock_codes: 股票代码列表
-            
+
         Returns:
             {
                 'passed': [通过的股票代码],

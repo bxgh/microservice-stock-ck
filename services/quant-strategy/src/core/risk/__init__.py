@@ -30,11 +30,11 @@ class RiskRule(ABC):
     async def check(self, signal: 'Signal', context: dict[str, Any] = None) -> bool:
         """
         执行风控检查
-        
+
         Args:
             signal: 交易信号对象
             context: 上下文信息 (如当前持仓、资金等)
-            
+
         Returns:
             bool: True表示通过，False表示拒绝
         """
@@ -69,11 +69,11 @@ class RiskManager:
     async def validate(self, signal: 'Signal', context: dict[str, Any] = None) -> bool:
         """
         验证信号是否符合所有风控规则
-        
+
         Args:
             signal: 交易信号
             context: 上下文 (可选)
-            
+
         Returns:
             bool: True表示通过所有规则，False表示被拦截
         """

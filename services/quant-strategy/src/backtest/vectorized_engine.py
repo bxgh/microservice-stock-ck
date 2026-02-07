@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 class VectorizedBacktester:
     """
     向量化回测引擎
-    
+
     使用pandas向量化计算,避免循环遍历
     """
 
@@ -31,7 +31,7 @@ class VectorizedBacktester:
     ):
         """
         初始化回测器
-        
+
         Args:
             initial_capital: 初始资金
             commission_rate: 手续费率
@@ -48,11 +48,11 @@ class VectorizedBacktester:
     ) -> BacktestResult:
         """
         基于信号列表回测
-        
+
         Args:
             signals: 信号列表
             strategy_name: 策略名称
-            
+
         Returns:
             BacktestResult对象
         """

@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 class PositionPoolService:
     """
     持仓池服务
-    
+
     核心功能:
     1. 持仓管理 (CRUD)
     2. 流动性风险检查 (Pre-trade check)
@@ -44,14 +44,14 @@ class PositionPoolService:
     ) -> tuple[str, str, float]:
         """
         交易前流动性检查
-        
+
         计算拟交易金额与日均成交额的比率。
-        
+
         Args:
             code: 股票代码
             quantity: 拟买入数量
             price: 拟买入价格
-            
+
         Returns:
             (impact_level, warning_message, market_cap)
              impact_level: LOW, MEDIUM, HIGH

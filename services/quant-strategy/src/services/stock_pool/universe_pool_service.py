@@ -50,7 +50,7 @@ class PoolStats:
 class UniversePoolService:
     """
     Universe Pool 管理服务
-    
+
     负责:
     1. 从 get-stockdata 获取全市场股票
     2. 根据动态配置进行筛选
@@ -129,13 +129,13 @@ class UniversePoolService:
     ) -> UniverseFilterConfig:
         """
         更新筛选配置
-        
+
         Args:
             min_list_months: 最小上市月份
             min_avg_turnover: 最小日均成交额 (万元)
             min_market_cap: 最小市值 (亿元)
             min_turnover_ratio: 最小换手率 (%)
-        
+
         Returns:
             更新后的配置
         """
@@ -175,13 +175,13 @@ class UniversePoolService:
     ) -> RefreshResult:
         """
         刷新 Universe Pool
-        
+
         由 task-scheduler 或手动触发调用。
-        
+
         Args:
             triggered_by: 触发来源 ("manual", "task-scheduler")
             job_id: 调度任务ID (如有)
-        
+
         Returns:
             刷新结果
         """
@@ -262,7 +262,7 @@ class UniversePoolService:
     ) -> tuple[list[dict], list[dict]]:
         """
         应用筛选规则
-        
+
         Returns:
             (qualified_list, disqualified_list)
         """
@@ -312,7 +312,7 @@ class UniversePoolService:
     ) -> str | None:
         """
         检查单只股票是否合格
-        
+
         Returns:
             None 表示合格，否则返回不合格原因
         """
@@ -373,7 +373,7 @@ class UniversePoolService:
     ) -> tuple[int, int]:
         """
         持久化筛选结果到数据库
-        
+
         Returns:
             (new_entries_count, removed_entries_count)
         """

@@ -20,11 +20,11 @@ logger = logging.getLogger(__name__)
 class SimpleMAStrategy(BaseStrategy):
     """
     简单均线策略
-    
+
     逻辑:
     - 当前价格 > 5日均线 → 做多信号
     - 当前价格 < 5日均线 → 做空信号
-    
+
     使用真实数据进行测试
     """
 
@@ -52,10 +52,10 @@ class SimpleMAStrategy(BaseStrategy):
     def validate_parameters(self) -> bool:
         """
         验证参数
-        
+
         Returns:
             True if valid
-            
+
         Raises:
             ValueError: 参数无效
         """
@@ -73,10 +73,10 @@ class SimpleMAStrategy(BaseStrategy):
     async def generate_signals(self, data: pd.DataFrame) -> list[Signal]:
         """
         生成交易信号
-        
+
         Args:
             data: 实时行情数据 (从StockDataProvider获取)
-            
+
         Returns:
             Signal列表
         """

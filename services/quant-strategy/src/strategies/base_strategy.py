@@ -37,7 +37,7 @@ class MarketRegime(Enum):
 @dataclass
 class StrategyResult:
     """策略评估结果
-    
+
     用于每日扫描返回的评分结果。
     """
     strategy_id: str
@@ -47,7 +47,7 @@ class StrategyResult:
     reason: str
     details: dict[str, Any] = field(default_factory=dict)
     evaluated_at: datetime = field(default_factory=datetime.now)
-    
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "strategy_id": self.strategy_id,
@@ -63,11 +63,11 @@ class StrategyResult:
 class BaseStrategy(ABC):
     """
     策略抽象基类
-    
+
     所有策略必须实现:
     - strategy_id: 策略唯一标识
     - evaluate(): 评估单只股票 (用于批量扫描)
-    
+
     可选实现:
     - initialize(): 初始化策略
     - generate_signals(): 生成交易信号 (实时交易)
@@ -77,7 +77,7 @@ class BaseStrategy(ABC):
     def __init__(self, name: str, parameters: dict[str, Any] | None = None):
         """
         初始化策略
-        
+
         Args:
             name: 策略名称
             parameters: 策略参数
@@ -92,12 +92,12 @@ class BaseStrategy(ABC):
     def strategy_id(self) -> str:
         """策略唯一标识符"""
         pass
-    
+
     @property
     def timeframe(self) -> Timeframe:
         """策略时间周期，默认日线"""
         return Timeframe.DAILY
-    
+
     @property
     def preferred_regime(self) -> list[MarketRegime]:
         """策略适用的市场环境，默认所有环境"""
@@ -107,10 +107,10 @@ class BaseStrategy(ABC):
     async def evaluate(self, stock_code: str, data: dict[str, Any]) -> StrategyResult:
         """
         评估单只股票
-        
+
         这是批量扫描模式的核心方法。ScannerEngine 会调用此方法
         对每只股票进行评估。
-        
+
         Args:
             stock_code: 股票代码
             data: 股票数据快照，包含:
@@ -118,7 +118,7 @@ class BaseStrategy(ABC):
                 - valuation: 估值数据
                 - price: 行情数据
                 - factors: 预计算因子
-                
+
         Returns:
             StrategyResult: 评估结果
         """
@@ -127,7 +127,7 @@ class BaseStrategy(ABC):
     async def initialize(self) -> None:
         """
         初始化策略 (可选)
-        
+
         在策略运行前调用，用于加载配置、连接数据源等
         """
         self._initialized = True
@@ -136,10 +136,10 @@ class BaseStrategy(ABC):
     async def generate_signals(self, data: pd.DataFrame) -> list[Signal]:
         """
         生成交易信号 (可选，用于实时交易)
-        
+
         Args:
             data: 市场数据DataFrame
-            
+
         Returns:
             Signal对象列表
         """
@@ -148,7 +148,7 @@ class BaseStrategy(ABC):
     def validate_parameters(self) -> bool:
         """
         验证策略参数 (可选)
-        
+
         Returns:
             True if valid
         """

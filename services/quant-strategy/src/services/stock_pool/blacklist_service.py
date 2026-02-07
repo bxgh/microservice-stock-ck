@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 class BlacklistService:
     """
     黑名单服务
-    
+
     核心功能:
     1. 添加黑名单 (自动计算解禁期)
     2. 检查黑名单 (Check)
@@ -34,7 +34,7 @@ class BlacklistService:
     ) -> BlacklistStock:
         """
         添加到黑名单
-        
+
         Args:
             code: 股票代码
             reason: 原因描述
@@ -94,7 +94,7 @@ class BlacklistService:
     async def is_blacklisted(self, code: str) -> tuple[bool, str | None, date | None]:
         """
         检查是否在黑名单中
-        
+
         Returns:
             (is_blacklisted, reason, release_date)
         """

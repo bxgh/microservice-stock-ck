@@ -22,7 +22,7 @@ _session_factory = None
 def get_database_url() -> str:
     """
     Get database connection URL based on settings
-    
+
     Returns:
         Database connection string
     """
@@ -109,7 +109,7 @@ async def close_database() -> None:
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
     """
     Get database session (async context manager)
-    
+
     Usage:
         async with get_session() as session:
             result = await session.execute(...)
@@ -132,7 +132,7 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
 def create_session() -> AsyncSession:
     """
     Create a new session (must be closed manually)
-    
+
     Returns:
         AsyncSession instance
     """

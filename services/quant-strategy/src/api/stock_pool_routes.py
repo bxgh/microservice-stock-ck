@@ -100,7 +100,7 @@ async def get_universe_pool(
 ):
     """
     获取 Universe Pool 股票列表
-    
+
     返回通过筛选的合格股票。
     """
     try:
@@ -133,7 +133,7 @@ async def get_universe_pool(
 async def get_universe_stats():
     """
     获取 Universe Pool 统计信息
-    
+
     返回合格/不合格数量、按交易所分布、平均市值等。
     """
     try:
@@ -158,9 +158,9 @@ async def get_universe_stats():
 async def refresh_universe_pool(request: RefreshRequest = None):
     """
     刷新 Universe Pool
-    
+
     由 task-scheduler 微服务调用，或手动触发。
-    
+
     **task-scheduler 配置示例**:
     ```yaml
     jobs:
@@ -192,7 +192,7 @@ async def refresh_universe_pool(request: RefreshRequest = None):
 async def get_filter_config():
     """
     获取当前筛选配置
-    
+
     返回活跃的筛选参数配置。
     """
     try:
@@ -217,7 +217,7 @@ async def get_filter_config():
 async def update_filter_config(request: FilterConfigUpdateRequest):
     """
     更新筛选配置
-    
+
     动态调整筛选参数，无需重新部署。
     修改后需手动触发刷新才能生效。
     """
@@ -248,7 +248,7 @@ async def update_filter_config(request: FilterConfigUpdateRequest):
 async def reset_filter_config():
     """
     重置筛选配置为默认值
-    
+
     恢复默认参数:
     - min_list_months: 12
     - min_avg_turnover: 3000万

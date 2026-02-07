@@ -35,11 +35,11 @@ class ValuationService:
     ) -> ValuationScore | None:
         """
         Calculate valuation score based on historical PE/PB bands.
-        
+
         Args:
             code: Stock code
             current_valuation: Pre-fetched valuation data (optional)
-            
+
         Returns:
             ValuationScore object or None if insufficient data
         """

@@ -152,19 +152,39 @@ async def startup():
 
         # 2.6 Register Strategies (Phase 1 - Multi-Strategy Scanner)
         logger.info("Registering strategies...")
+        from strategies.lead_lag_strategy import LeadLagStrategy
         from strategies.registry import StrategyRegistry
         from strategies.value_strategy import ValueStrategy
-        
+
         registry = StrategyRegistry()
-        
+
         # Register ValueStrategy
         value_strategy = ValueStrategy()
         await registry.register(value_strategy.strategy_id, value_strategy)
         logger.info(f"  ✓ Registered strategy: {value_strategy.strategy_id}")
-        
+
+        # Register LeadLagStrategy (EPIC-005)
+        lead_lag_strategy = LeadLagStrategy()
+        await registry.register(lead_lag_strategy.strategy_id, lead_lag_strategy)
+        logger.info(f"  ✓ Registered strategy: {lead_lag_strategy.strategy_id}")
+
         # Store registry in app state
         app.state.strategy_registry = registry
         logger.info(f"✅ Strategies registered ({registry.count()} total)")
+
+        # 2.7 Initialize Signal Dispatcher (EPIC-005)
+        from core.analysis.signal_dispatcher import SignalDispatcher
+        dispatcher = SignalDispatcher(registry=registry)
+        await dispatcher.initialize()
+        app.state.signal_dispatcher = dispatcher
+        logger.info("✅ Signal Dispatcher initialized and active")
+
+        # 2.8 Initialize Cluster Reporter (EPIC-005)
+        from core.reporting.cluster_reporter import ClusterReporter
+        reporter = ClusterReporter()
+        await reporter.initialize()
+        app.state.cluster_reporter = reporter
+        logger.info("✅ Cluster Reporter initialized and active")
 
         # 3. Initialize Risk Manager
         from core.risk import RiskManager

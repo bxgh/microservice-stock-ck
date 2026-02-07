@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 class BacktestResult:
     """
     回测结果数据结构
-    
+
     包含策略回测的所有关键指标
     """
     strategy_name: str              # 策略名称
@@ -57,7 +57,7 @@ class BacktestResult:
     def get_profit(self) -> float:
         """
         获取盈利金额
-        
+
         Returns:
             盈利金额
         """
@@ -66,7 +66,7 @@ class BacktestResult:
     def get_annual_return(self) -> float:
         """
         计算年化收益率
-        
+
         Returns:
             年化收益率
         """
@@ -85,7 +85,7 @@ class BacktestResult:
     def to_dict(self) -> dict[str, Any]:
         """
         转换为字典
-        
+
         Returns:
             字典表示
         """
@@ -109,7 +109,7 @@ class BacktestResult:
     def summary(self) -> str:
         """
         生成摘要字符串
-        
+
         Returns:
             摘要文本
         """

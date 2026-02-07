@@ -15,7 +15,7 @@ from database.models import Base
 class UniverseFilterConfig(Base):
     """
     Universe Pool 筛选配置 (动态可调)
-    
+
     允许通过 API 修改筛选参数，无需重新部署。
     """
     __tablename__ = 'universe_filter_configs'
@@ -44,7 +44,7 @@ class UniverseFilterConfig(Base):
 class UniverseStock(Base):
     """
     全市场基础池 (Universe Pool)
-    
+
     存储通过筛选的股票列表，作为所有策略的输入源。
     数据持久化到腾讯云 MySQL。
     """
@@ -83,7 +83,7 @@ class UniverseStock(Base):
 class PoolTransition(Base):
     """
     池流转历史记录
-    
+
     记录股票在不同池之间的流转，便于复盘和审计。
     """
     __tablename__ = 'pool_transitions'

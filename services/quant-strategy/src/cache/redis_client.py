@@ -33,7 +33,7 @@ class RedisClient:
                 decode_responses=True
             )
             self._client = redis.Redis(connection_pool=self._pool)
-            
+
             # Create a separate client for binary data using the same pool?
             # redis-py's ConnectionPool stores connections with a specific encoding/decode_responses.
             # Using the same pool might be problematic if we want different decode settings.
@@ -44,7 +44,7 @@ class RedisClient:
                 decode_responses=False
             )
             self._binary_client = redis.Redis(connection_pool=self._binary_pool)
-            
+
             logger.info("Redis connection pools (String & Binary) created")
 
             # Test connection
@@ -63,30 +63,35 @@ class RedisClient:
         if self._pool:
             await self._pool.disconnect()
             self._pool = None
-            
+
         if self._binary_client:
             await self._binary_client.close()
             self._binary_client = None
         if hasattr(self, '_binary_pool') and self._binary_pool:
             await self._binary_pool.disconnect()
             self._binary_pool = None
-            
+
         logger.info("Redis connection pools closed")
 
-    @property
-    async def binary_client(self) -> redis.Redis:
+    async def get_binary_client(self) -> redis.Redis:
         """Get binary-safe client"""
         if not self._binary_client:
             await self.initialize()
         return self._binary_client
 
+    async def get_client(self) -> redis.Redis:
+        """Get standard string client"""
+        if not self._client:
+            await self.initialize()
+        return self._client
+
     async def get(self, key: str) -> str | None:
         """
         Get value by key
-        
+
         Args:
             key: Cache key
-            
+
         Returns:
             Cached value or None if not found
         """
@@ -112,12 +117,12 @@ class RedisClient:
     ) -> bool:
         """
         Set key-value pair with optional TTL
-        
+
         Args:
             key: Cache key
             value: Value to cache (must be string)
             ttl: Time to live in seconds
-            
+
         Returns:
             True if successful
         """
@@ -138,10 +143,10 @@ class RedisClient:
     async def delete(self, key: str) -> bool:
         """
         Delete key from cache
-        
+
         Args:
             key: Cache key to delete
-            
+
         Returns:
             True if deleted
         """

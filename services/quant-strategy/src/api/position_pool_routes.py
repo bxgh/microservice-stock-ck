@@ -52,7 +52,7 @@ class LiquidityCheckResponse(BaseModel):
 async def add_position(position: PositionCreateRequest):
     """
     添加新持仓
-    
+
     会自动进行流动性检查，并在日志中记录风险。
     """
     try:
@@ -109,7 +109,7 @@ async def get_positions():
 async def check_liquidity(request: LiquidityCheckRequest):
     """
     交易前流动性检查
-    
+
     评估拟交易金额对盘面的冲击风险。
     """
     try:

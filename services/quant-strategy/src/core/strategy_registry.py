@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 class StrategyRegistry:
     """
     策略注册表
-    
+
     使用装饰器自动注册策略类，提供线程安全的注册和查询
     """
 
@@ -38,7 +38,7 @@ class StrategyRegistry:
     async def register(self, name: str, strategy_class: type[BaseStrategy]) -> None:
         """
         注册策略
-        
+
         Args:
             name: 策略名称
             strategy_class: 策略类
@@ -53,10 +53,10 @@ class StrategyRegistry:
     async def get(self, name: str) -> type[BaseStrategy] | None:
         """
         获取策略类
-        
+
         Args:
             name: 策略名称
-            
+
         Returns:
             策略类或None
         """
@@ -66,7 +66,7 @@ class StrategyRegistry:
     async def list_strategies(self) -> list[str]:
         """
         列出所有已注册策略
-        
+
         Returns:
             策略名称列表
         """
@@ -81,12 +81,12 @@ class StrategyRegistry:
     ) -> BaseStrategy | None:
         """
         创建策略实例
-        
+
         Args:
             name: 策略类名称
             instance_name: 实例名称 (默认与类名相同)
             parameters: 策略参数
-            
+
         Returns:
             策略实例或None
         """
@@ -122,12 +122,12 @@ async def get_registry() -> StrategyRegistry:
 def strategy(name: str):
     """
     策略注册装饰器 (简化版)
-    
+
     使用方法:
         @strategy("MyStrategy")
         class MyStrategy(BaseStrategy):
             ...
-    
+
     注意: 实际注册发生在首次调用get_registry()时
     """
     def decorator(cls: type[BaseStrategy]):

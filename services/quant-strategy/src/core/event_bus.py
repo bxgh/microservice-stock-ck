@@ -49,17 +49,23 @@ class EventBus:
         if topic not in self._subscribers:
             return
 
+        import inspect
         handlers = self._subscribers[topic]
         logger.debug(f"Publishing event to {topic} ({len(handlers)} handlers)")
 
         # 并发执行所有处理器
         tasks = []
         for handler in handlers:
-            if asyncio.iscoroutinefunction(handler):
+            if inspect.iscoroutinefunction(handler):
                 tasks.append(asyncio.create_task(self._safe_execute(handler, event)))
             else:
-                # 同步处理器也在 Task 中运行以免阻塞 Loop
-                tasks.append(asyncio.create_task(self._safe_execute_sync(handler, event)))
+                # 检查处理结果是否为协程 (针对一些包装过的函数)
+                try:
+                    res = handler(event)
+                    if inspect.isawaitable(res):
+                        tasks.append(asyncio.create_task(self._safe_execute_awaited(res)))
+                except Exception as e:
+                    logger.error(f"Error executing sync handler for {topic}: {e}")
 
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
@@ -69,6 +75,12 @@ class EventBus:
             await handler(event)
         except Exception as e:
             logger.error(f"Error handling event: {e}", exc_info=True)
+
+    async def _safe_execute_awaited(self, coro):
+        try:
+            await coro
+        except Exception as e:
+            logger.error(f"Error handling awaited coroutine: {e}", exc_info=True)
 
     async def _safe_execute_sync(self, handler, event):
         try:

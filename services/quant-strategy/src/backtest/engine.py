@@ -12,12 +12,12 @@ from typing import Any
 
 import pandas as pd
 
+from models.signal import Signal as StrategySignal
 from strategies.base_strategy import BaseStrategy
 
 # Note: SignalType is just "BUY"/"SELL" strings in Signal model, not a separate Enum class in new design
 # So we define it locally or use strings
 from strategies.registry import StrategyRegistry
-from models.signal import Signal as StrategySignal
 
 from .analyzer import PerformanceAnalyzer
 from .models import BacktestConfig, BacktestResult, TradeRecord
@@ -30,7 +30,7 @@ class BacktestEngine:
     def __init__(self, data_provider=None):
         """
         初始化回测引擎
-        
+
         Args:
             data_provider: 数据提供者，支持 get_history_bars(stock_code, start, end)
                            如果为None，run()时必须传入data
@@ -49,7 +49,7 @@ class BacktestEngine:
     ) -> BacktestResult:
         """
         运行回测
-        
+
         Args:
             strategy_id: 策略ID
             stock_code: 标的代码
@@ -57,7 +57,7 @@ class BacktestEngine:
             end_date: 结束日期
             config: 回测配置
             data: 可选，直接传入历史数据DataFrame
-            
+
         Returns:
             BacktestResult
         """

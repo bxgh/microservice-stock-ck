@@ -5,6 +5,7 @@ Nacos 服务注册模板
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -280,10 +281,8 @@ async def cleanup_nacos():
     # 停止心跳任务
     if heartbeat_task:
         heartbeat_task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await heartbeat_task
-        except asyncio.CancelledError:
-            pass
         logger.info("💓 心跳任务已停止")
 
     # 关闭注册器

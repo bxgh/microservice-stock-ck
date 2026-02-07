@@ -15,18 +15,18 @@ logger = logging.getLogger(__name__)
 
 class StrategyRegistry:
     """策略注册表（单例模式）
-    
+
     管理所有策略实例的注册、查询、启动和停止。
     支持并发安全访问，适用于多协程环境。
-    
+
     设计模式：
     - 单例模式：全局唯一实例
     - 注册表模式：集中管理策略实例
-    
+
     并发安全：
     - 写操作（register/unregister）使用Lock保护
     - 读操作（get/list_all）不加锁，允许脏读
-    
+
     Example:
         >>> registry = StrategyRegistry()
         >>> await registry.register("macd_001", macd_strategy)
@@ -40,7 +40,7 @@ class StrategyRegistry:
 
     def __new__(cls) -> 'StrategyRegistry':
         """确保单例模式
-        
+
         Returns:
             StrategyRegistry的唯一实例
         """
@@ -59,7 +59,7 @@ class StrategyRegistry:
 
     def _ensure_lock(self) -> asyncio.Lock:
         """确保Lock绑定到当前event loop
-        
+
         解决单例模式下Lock跨event loop使用的问题。
         """
         try:
@@ -82,14 +82,14 @@ class StrategyRegistry:
         strategy: BaseStrategy
     ) -> None:
         """注册策略到注册表
-        
+
         注册后会自动调用策略的initialize()方法。
         如果策略ID已存在，则抛出异常。
-        
+
         Args:
             strategy_id: 策略唯一标识符
             strategy: 策略实例
-            
+
         Raises:
             ValueError: 策略ID已存在
             Exception: 策略初始化失败
@@ -116,10 +116,10 @@ class StrategyRegistry:
 
     async def unregister(self, strategy_id: str) -> None:
         """从注册表注销策略
-        
+
         注销前会自动调用策略的close()方法。
         如果策略不存在，静默返回。
-        
+
         Args:
             strategy_id: 策略标识符
         """
@@ -143,13 +143,13 @@ class StrategyRegistry:
 
     def get(self, strategy_id: str) -> BaseStrategy | None:
         """获取指定策略实例（非阻塞）
-        
+
         此方法不加锁，允许读取过程中的脏读，
         以换取更高的查询性能（< 1ms）。
-        
+
         Args:
             strategy_id: 策略标识符
-            
+
         Returns:
             策略实例，如果不存在则返回None
         """
@@ -157,9 +157,9 @@ class StrategyRegistry:
 
     def list_all(self) -> list[str]:
         """列出所有已注册的策略ID（非阻塞）
-        
+
         此方法不加锁，返回当前时刻的策略ID列表。
-        
+
         Returns:
             策略ID列表
         """
@@ -167,7 +167,7 @@ class StrategyRegistry:
 
     def count(self) -> int:
         """获取已注册策略数量
-        
+
         Returns:
             策略数量
         """
@@ -175,10 +175,10 @@ class StrategyRegistry:
 
     async def start_all(self) -> None:
         """启动所有策略
-        
+
         并发初始化所有策略。
         如果部分策略初始化失败，其他策略不受影响。
-        
+
         Returns:
             None，失败的策略会记录错误日志
         """
@@ -206,13 +206,13 @@ class StrategyRegistry:
         )
 
         # 记录失败的策略
-        for strategy_id, result in zip(self._strategies.keys(), results):
+        for strategy_id, result in zip(self._strategies.keys(), results, strict=False):
             if isinstance(result, Exception):
                 logger.error(f"Strategy '{strategy_id}' start failed: {result}")
 
     async def stop_all(self) -> None:
         """停止所有策略并清空注册表
-        
+
         并发关闭所有策略，然后清空注册表。
         即使部分策略关闭失败，注册表也会被清空。
         """
@@ -239,7 +239,7 @@ class StrategyRegistry:
         )
 
         # 记录失败的策略
-        for strategy_id, result in zip(list(self._strategies.keys()), results):
+        for strategy_id, result in zip(list(self._strategies.keys()), results, strict=False):
             if isinstance(result, Exception):
                 logger.error(f"Strategy '{strategy_id}' stop failed: {result}")
 

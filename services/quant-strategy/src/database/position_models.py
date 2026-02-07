@@ -15,7 +15,7 @@ from database.models import Base
 class PositionStock(Base):
     """
     持仓池 (Position Pool)
-    
+
     管理当前实际持仓，包含交易详情、盈亏状态和流动性风险指标。
     """
     __tablename__ = 'positions'

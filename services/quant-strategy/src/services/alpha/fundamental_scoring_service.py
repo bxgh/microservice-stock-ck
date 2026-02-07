@@ -42,13 +42,13 @@ class FundamentalScoringService:
     ) -> FundamentalScore | None:
         """
         Calculate fundamental score for a stock.
-        
+
         Args:
             code: Stock code
             financials: Pre-fetched financial data (optional, fetches if None)
             industry_stats: Pre-fetched industry stats (optional)
             mode: Scoring mode (RELATIVE/ABSOLUTE) - acts as hint/override
-            
+
         Returns:
             FundamentalScore or None if data unavailable
         """
@@ -181,10 +181,7 @@ class FundamentalScoringService:
         ocf = fin.operating_cash_flow if fin.operating_cash_flow is not None else 0.0
         profit = fin.net_profit if fin.net_profit is not None else 1.0
 
-        if profit <= 0:
-            quality_ratio = 0.0
-        else:
-            quality_ratio = ocf / profit
+        quality_ratio = 0.0 if profit <= 0 else ocf / profit
 
         # Use absolute scoring (no industry stats for this metric typically)
         raw_score = self._absolute_quality_score(quality_ratio)

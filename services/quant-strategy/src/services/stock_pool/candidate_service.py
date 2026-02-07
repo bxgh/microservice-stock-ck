@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 class CandidatePoolService:
     """
     候选池服务 (Enhanced with Real Alpha Scoring)
-    
+
     Integrates:
     - FundamentalScoringService: ROE, Growth, Quality scoring
     - ValuationService: PE/PB historical band scoring
@@ -38,7 +38,7 @@ class CandidatePoolService:
     ):
         """
         Initialize with scoring services
-        
+
         Args:
             data_provider: Data provider for fetching stock data
             fundamental_scoring: Fundamental scoring service (optional for backward compatibility)
@@ -94,7 +94,7 @@ class CandidatePoolService:
             scores = await asyncio.gather(*score_tasks, return_exceptions=True)
 
             # 3. 筛选与分类
-            for stock, score_result in zip(universe_stocks, scores):
+            for stock, score_result in zip(universe_stocks, scores, strict=False):
                 # Handle exceptions
                 if isinstance(score_result, Exception):
                     logger.warning(f"Scoring failed for {stock.code}: {score_result}")
@@ -158,11 +158,11 @@ class CandidatePoolService:
     async def _calculate_real_score(self, stock: UniverseStock, pool_type: str) -> float | None:
         """
         Real Alpha Scoring using FundamentalScoringService and ValuationService
-        
+
         Args:
             stock: Universe stock to score
             pool_type: Pool type ('long' or 'swing')
-            
+
         Returns:
             Combined score (0-100) or None if scoring fails
         """
@@ -257,12 +257,12 @@ class CandidatePoolService:
     def _classify_stock(self, stock: UniverseStock, pool_type: str, score: float) -> str | None:
         """
         Enhanced sub-pool classification based on score and stock characteristics
-        
+
         Args:
             stock: Universe stock
             pool_type: Pool type ('long' or 'swing')
             score: Alpha score (0-100)
-            
+
         Returns:
             Sub-pool classification
         """

@@ -10,7 +10,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
-from scanner import ScannerEngine, ScannerConfig
+from scanner import ScannerConfig, ScannerEngine
 
 logger = logging.getLogger(__name__)
 
@@ -54,28 +54,28 @@ async def trigger_daily_scan(
 ):
     """
     触发每日扫描
-    
+
     异步执行，立即返回任务ID。
     """
     try:
         # 获取股票池 (暂时使用硬编码的测试数据)
         # TODO: 从 UniversePoolService 获取
         stock_codes = ["600519", "000001", "300750"]  # 测试数据
-        
+
         scan_date = request.scan_date or date.today()
-        
+
         job = await engine.run_daily_scan(
             stock_codes=stock_codes,
             scan_date=scan_date,
             strategies=request.strategies
         )
-        
+
         return DailyScanResponse(
             success=True,
             message="扫描任务已完成",
             data=job.to_dict()
         )
-        
+
     except Exception as e:
         logger.error(f"Daily scan failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -88,10 +88,10 @@ async def get_job_status(
 ):
     """查询扫描任务状态"""
     job = engine.get_current_job()
-    
+
     if job is None or str(job.job_id) != job_id:
         raise HTTPException(status_code=404, detail="Job not found")
-    
+
     return {
         "success": True,
         "data": job.to_dict()
@@ -107,22 +107,22 @@ async def get_latest_results(
 ):
     """获取最新扫描结果"""
     results = engine.get_results()
-    
+
     # 过滤
     if strategy:
         results = [r for r in results if r.get("strategy_id") == strategy]
-    
+
     if min_score is not None:
         results = [r for r in results if r.get("score", 0) >= min_score]
-    
+
     # 排序 (按得分降序)
     results = sorted(results, key=lambda x: x.get("score", 0), reverse=True)
-    
+
     # 限制数量
     results = results[:limit]
-    
+
     job = engine.get_current_job()
-    
+
     return {
         "success": True,
         "data": {
@@ -140,7 +140,7 @@ async def get_scan_errors(
 ):
     """获取扫描错误列表"""
     errors = engine.get_errors()
-    
+
     return {
         "success": True,
         "data": {

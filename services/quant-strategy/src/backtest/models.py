@@ -69,6 +69,10 @@ class PerformanceMetrics(BaseModel):
     total_trades: int = Field(description="总交易次数")
     winning_trades: int = Field(description="盈利次数")
     losing_trades: int = Field(description="亏损次数")
+    alpha: float = Field(default=0.0, description="超额收益 (Alpha)")
+    beta: float = Field(default=0.0, description="市场相关性 (Beta)")
+    tracking_error: float = Field(default=0.0, description="跟踪误差")
+    info_ratio: float = Field(default=0.0, description="信息比率")
 
 class BacktestResult(BaseModel):
     """回测结果"""

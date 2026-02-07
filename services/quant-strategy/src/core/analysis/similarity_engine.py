@@ -1,10 +1,9 @@
 
-import logging
 import asyncio
-import numpy as np
-import pandas as pd
-from typing import Dict, List, Set, Tuple, Optional
+import logging
 from concurrent.futures import ProcessPoolExecutor
+
+import numpy as np
 from numba import jit
 from scipy.spatial.distance import cdist
 
@@ -17,17 +16,17 @@ def _dtw_core(series_a: np.ndarray, series_b: np.ndarray, window: int) -> float:
     """
     n = len(series_a)
     m = len(series_b)
-    
+
     # 累积代价矩阵
     # 使用 inf 初始化以满足边界以外的路径不可达
     dtw_matrix = np.full((n + 1, m + 1), np.inf)
     dtw_matrix[0, 0] = 0
-    
+
     for i in range(1, n + 1):
         # 窗口范围控制
         lower = max(1, i - window)
         upper = min(m, i + window)
-        
+
         for j in range(lower, upper + 1):
             cost = abs(series_a[i-1] - series_b[j-1])
             # 状态转移
@@ -36,40 +35,40 @@ def _dtw_core(series_a: np.ndarray, series_b: np.ndarray, window: int) -> float:
                 dtw_matrix[i, j-1],    # 删除
                 dtw_matrix[i-1, j-1]   # 匹配
             )
-            
+
     return dtw_matrix[n, m]
 
 def _worker_compute_batch(
-    pairs: List[Tuple[int, int]], 
-    feat_a: np.ndarray, 
-    feat_b: np.ndarray, 
+    pairs: list[tuple[int, int]],
+    feat_a: np.ndarray,
+    feat_b: np.ndarray,
     feat_c: np.ndarray,
     std_a: float,
     std_b: float,
     std_c: float,
     window: int,
-    weights: Tuple[float, float, float]
-) -> List[Tuple[int, int, float]]:
+    weights: tuple[float, float, float]
+) -> list[tuple[int, int, float]]:
     """
     子进程计算函数
     """
     results = []
     w_a, w_b, w_c = weights
-    
+
     for idx_i, idx_j in pairs:
         # 分别计算三个向量的 DTW
         d_a = _dtw_core(feat_a[idx_i], feat_a[idx_j], window)
         d_b = _dtw_core(feat_b[idx_i], feat_b[idx_j], window)
         d_c = _dtw_core(feat_c[idx_i], feat_c[idx_j], window)
-        
+
         # 归一化融合
         norm_a = d_a / std_a if std_a > 0 else 0
         norm_b = d_b / std_b if std_b > 0 else 0
         norm_c = d_c / std_c if std_c > 0 else 0
-        
+
         total_dist = w_a * norm_a + w_b * norm_b + w_c * norm_c
         results.append((idx_i, idx_j, total_dist))
-        
+
     return results
 
 class SimilarityEngine:
@@ -85,13 +84,42 @@ class SimilarityEngine:
     async def initialize(self):
         logger.info(f"🚀 SimilarityEngine initialized with {self.num_workers} workers")
 
+    def identify_stable_stocks(
+        self,
+        current_feat: np.ndarray,
+        past_feat: np.ndarray,
+        stability_threshold: float = 0.98
+    ) -> set[int]:
+        """
+        识别特征指纹稳定的股票
+        使用余弦相似度对比今日与昨日特征
+        """
+        if current_feat.shape != past_feat.shape:
+            return set()
+
+        # 向量化计算余弦相似度: (A . B) / (|A| * |B|)
+        dot_product = np.sum(current_feat * past_feat, axis=1)
+        norm_current = np.linalg.norm(current_feat, axis=1)
+        norm_past = np.linalg.norm(past_feat, axis=1)
+
+        # 避免除以零
+        norm_prod = norm_current * norm_past
+        valid_mask = norm_prod > 0
+
+        cosine_sim = np.zeros(len(current_feat))
+        cosine_sim[valid_mask] = dot_product[valid_mask] / norm_prod[valid_mask]
+
+        stable_indices = np.where(cosine_sim >= stability_threshold)[0]
+        logger.info(f"🔍 Found {len(stable_indices)}/{len(current_feat)} stable stocks (sim >= {stability_threshold})")
+        return set(stable_indices)
+
     def euclidean_prefilter(
-        self, 
-        feat_a: np.ndarray, 
-        feat_b: np.ndarray, 
-        feat_c: np.ndarray, 
+        self,
+        feat_a: np.ndarray,
+        feat_b: np.ndarray,
+        feat_c: np.ndarray,
         top_k_percent: float = 0.05
-    ) -> List[Tuple[int, int]]:
+    ) -> list[tuple[int, int]]:
         """
         第一阶段：Euclidean 距离粗筛
         计算量级：O(N^2 * T)
@@ -115,26 +143,26 @@ class SimilarityEngine:
 
         # 4. 计算分位数阈值
         threshold = np.percentile(flat_distances, top_k_percent * 100)
-        
+
         # 5. 过滤出候选对
         mask = flat_distances <= threshold
         idx_i = triu_indices[0][mask]
         idx_j = triu_indices[1][mask]
-        
-        candidates = list(zip(idx_i, idx_j))
+
+        candidates = list(zip(idx_i, idx_j, strict=False))
         logger.info(f"✅ Euclidean filtering done. Kept {len(candidates)} pairs (Threshold: {threshold:.4f})")
-        
+
         return candidates
 
     async def compute_dtw_parallel(
         self,
-        candidates: List[Tuple[int, int]],
+        candidates: list[tuple[int, int]],
         feat_a: np.ndarray,
         feat_b: np.ndarray,
         feat_c: np.ndarray,
         window: int = 15,
-        weights: Tuple[float, float, float] = (0.5, 0.3, 0.2)
-    ) -> Dict[Tuple[int, int], float]:
+        weights: tuple[float, float, float] = (0.5, 0.3, 0.2)
+    ) -> dict[tuple[int, int], float]:
         """
         第二阶段：并行计算 DTW
         """
@@ -149,7 +177,7 @@ class SimilarityEngine:
         # 任务分片
         chunk_size = max(1, len(candidates) // (self.num_workers * 4))
         chunks = [candidates[i:i + chunk_size] for i in range(0, len(candidates), chunk_size)]
-        
+
         logger.info(f"Dispatching {len(candidates)} pairs to {len(chunks)} tasks...")
 
         loop = asyncio.get_running_loop()
@@ -165,7 +193,7 @@ class SimilarityEngine:
 
         # 等待所有子任务完成
         results = await asyncio.gather(*tasks)
-        
+
         # 汇总结果
         final_results = {}
         for chunk_res in results:

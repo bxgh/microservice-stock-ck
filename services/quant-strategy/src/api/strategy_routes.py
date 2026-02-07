@@ -93,7 +93,7 @@ async def run_strategy_job(
 ) -> ApiResponse:
     """
     触发策略任务 (供调度器调用)
-    
+
     - **job_type**: 任务类型 (如 daily_backtest, monitor)
     """
     if strategy_id not in _strategies:

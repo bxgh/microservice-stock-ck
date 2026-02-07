@@ -1,6 +1,6 @@
+import asyncio
 import json
 import logging
-import asyncio
 from datetime import datetime
 from typing import Any, Optional
 
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 class StockDataProvider:
     """
     数据适配层 (Adapter)
-    
+
     负责与 get-stockdata 服务通信，获取行情和历史数据。
     实现自动重试、错误处理和数据验证。
     """
@@ -77,16 +77,16 @@ class StockDataProvider:
     ) -> dict[str, Any]:
         """
         统一的HTTP请求方法，带重试逻辑
-        
+
         Args:
             method: HTTP方法 (GET, POST)
             endpoint: API端点 (不包含base_url)
             params: URL参数
             json_data: POST请求的JSON数据
-            
+
         Returns:
             API响应的JSON数据
-            
+
         Raises:
             Exception: 请求失败时抛出异常
         """
@@ -122,13 +122,13 @@ class StockDataProvider:
     async def get_realtime_quotes(self, codes: list[str]) -> pd.DataFrame:
         """
         获取实时行情快照 (Batch API)
-        
+
         使用 /api/v1/quotes/realtime 批量端点获取实时数据
         提升效率，减少网络往返次数
-        
+
         Args:
             codes: 股票代码列表，如 ['600519', '000001']
-            
+
         Returns:
             包含实时行情的DataFrame
         """
@@ -251,14 +251,14 @@ class StockDataProvider:
     ) -> pd.DataFrame:
         """
         获取历史K线数据
-        
+
         Args:
             code: 股票代码
             start_date: 开始日期 (YYYY-MM-DD)
             end_date: 结束日期 (YYYY-MM-DD)
             frequency: 频率: d=日, w=周, m=月, 1m, 5m, 15m, 30m, 60m
             adjust: 复权: 0=不复权, 1=前复权, 2=后复权
-            
+
         Returns:
             包含K线数据的DataFrame
         """
@@ -277,7 +277,7 @@ class StockDataProvider:
 
         try:
             data = await self._make_request('GET', f'/api/v1/quotes/history/{code}', params=params)
-            
+
             if isinstance(data, dict) and 'data' in data:
                 df = pd.DataFrame(data['data'])
             elif isinstance(data, list):
@@ -287,7 +287,7 @@ class StockDataProvider:
 
             if not df.empty and 'code' in df.columns:
                 df['code'] = df['code'].astype(str).str.zfill(6)
-                
+
             return df
         except Exception as e:
             logger.error(f"Failed to fetch history bar for {code}: {e}")
@@ -296,25 +296,25 @@ class StockDataProvider:
     async def get_tick_data(self, code: str, date: str | None = None) -> pd.DataFrame:
         """
         获取分笔数据 (Tick Data)
-        
+
         Args:
             code: 股票代码
             date: 日期 (YYYYMMDD)
-            
+
         Returns:
             包含分笔数据的DataFrame
         """
         params = {"date": date} if date else {}
         try:
             data = await self._make_request('GET', f'/api/v1/quotes/tick/{code}', params=params)
-            
+
             if isinstance(data, dict) and 'data' in data:
                 df = pd.DataFrame(data['data'])
             elif isinstance(data, list):
                 df = pd.DataFrame(data)
             else:
                 df = pd.DataFrame()
-                
+
             return df
         except Exception as e:
             logger.error(f"Failed to fetch tick data for {code}: {e}")
@@ -323,20 +323,20 @@ class StockDataProvider:
     async def get_market_ranking(self, ranking_type: str = "limit_up") -> pd.DataFrame:
         """
         获取市场榜单
-        
+
         Args:
             ranking_type: limit_up, hot, up, volume
         """
         try:
             data = await self._make_request('GET', '/api/v1/market/ranking', params={"ranking_type": ranking_type})
-            
+
             if isinstance(data, dict) and 'data' in data:
                 df = pd.DataFrame(data['data'])
             elif isinstance(data, list):
                 df = pd.DataFrame(data)
             else:
                 df = pd.DataFrame()
-                
+
             return df
         except Exception as e:
             logger.error(f"Failed to fetch market ranking {ranking_type}: {e}")
@@ -390,12 +390,12 @@ class StockDataProvider:
     async def get_stock_info(self, code: str) -> dict[str, Any] | None:
         """
         获取股票基本信息（带缓存）
-        
+
         使用 /api/v1/stocks/{stock_code}/detail 端点
-        
+
         Args:
             code: 股票代码
-            
+
         Returns:
             股票信息字典
         """
@@ -432,10 +432,10 @@ class StockDataProvider:
     async def search_stocks(self, query: str) -> list[dict[str, Any]]:
         """
         搜索股票
-        
+
         Args:
             query: 搜索关键词
-            
+
         Returns:
             匹配的股票列表
         """
@@ -449,13 +449,13 @@ class StockDataProvider:
     async def get_all_stocks(self, limit: int = 5000) -> list[dict[str, Any]]:
         """
         获取全市场股票列表
-        
+
         调用 get-stockdata 的 /api/v1/stocks/list 接口获取股票列表。
         结果缓存1小时。
-        
+
         Args:
             limit: 返回数量限制，默认5000
-            
+
         Returns:
             股票信息列表，每个元素包含 code, name, exchange 等字段
         """
@@ -514,10 +514,10 @@ class StockDataProvider:
     async def get_financial_indicators(self, code: str) -> Optional['FinancialIndicators']:
         """
         获取股票财务指标
-        
+
         Args:
             code: 股票代码
-            
+
         Returns:
             财务指标对象，如果获取失败返回None
         """
@@ -554,10 +554,10 @@ class StockDataProvider:
     async def get_valuation(self, code: str) -> dict[str, Any] | None:
         """
         获取股票估值数据
-        
+
         Args:
             code: 股票代码
-            
+
         Returns:
             估值数据字典
         """
@@ -568,13 +568,13 @@ class StockDataProvider:
                 # Ensure code is string and mapped correctly
                 if 'code' in data:
                     data['stock_code'] = str(data['code']).zfill(6)
-                
+
                 # Map pe/pb to pe_ttm/pb_ratio expected by ValuationService
                 if 'pe' in data:
                     data['pe_ttm'] = data['pe']
                 if 'pb' in data:
                     data['pb_ratio'] = data['pb']
-                    
+
                 return data
             return None
         except Exception as e:
@@ -584,10 +584,10 @@ class StockDataProvider:
     async def get_industry_stats(self, industry_code: str) -> dict[str, Any] | None:
         """
         获取行业统计数据 (For Relative Scoring)
-        
+
         Args:
             industry_code: 行业代码/名称 (如 "酿酒行业")
-            
+
         Returns:
             行业统计数据字典 (包含 PE/PB/ROE/Growth 分布)
         """
@@ -602,11 +602,11 @@ class StockDataProvider:
     async def get_valuation_history(self, code: str, years: int = 5) -> dict[str, Any] | None:
         """
         获取历史估值数据 (For PE/PB Band Scoring)
-        
+
         Args:
             code: 股票代码
             years: 历史年数
-            
+
         Returns:
             包含 'stats', 'pe_ttm_list', 'pb_ratio_list' 的字典
         """
@@ -614,14 +614,14 @@ class StockDataProvider:
             # Call Real History API
             endpoint = f"/api/v1/market/valuation/{code}/history?years={years}&frequency=D"
             data = await self._make_request("GET", endpoint)
-            
+
             # get-stockdata history response is {"code": "...", "data": [...], "count": ...}
             # ValuationService expects {"stats": {"pe_ttm": {...}, "pb_ratio": {...}}, ...}
             if data and isinstance(data, dict) and 'data' in data:
                 history_list = data['data']
                 stats = self._calculate_valuation_stats(history_list)
                 data['stats'] = stats
-                
+
             return data
         except Exception as e:
             logger.warning(f"Failed to fetch valuation history for {code}: {e}")
@@ -630,10 +630,10 @@ class StockDataProvider:
     def _calculate_valuation_stats(self, history_list: list[dict]) -> dict:
         """从历史记录计算统计信息 (min, max, median)"""
         import numpy as np
-        
+
         pe_vals = [item.get('pe', item.get('pe_ttm')) for item in history_list if item.get('pe', item.get('pe_ttm')) is not None]
         pb_vals = [item.get('pb', item.get('pb_ratio')) for item in history_list if item.get('pb', item.get('pb_ratio')) is not None]
-        
+
         def get_stats(vals):
             if not vals:
                 return {}
@@ -644,7 +644,7 @@ class StockDataProvider:
                 "p25": float(np.percentile(vals, 25)),
                 "p75": float(np.percentile(vals, 75))
             }
-            
+
         return {
             "pe_ttm": get_stats(pe_vals),
             "pb_ratio": get_stats(pb_vals)
