@@ -117,7 +117,7 @@ services:
     depends_on:
       - nacos
       - redis
-      - clickhouse
+      #- clickhouse
       - rabbitmq
     
 volumes:

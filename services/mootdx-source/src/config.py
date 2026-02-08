@@ -1,11 +1,29 @@
-"""
-Configuration Constants for MooTDX Service
-"""
+import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 # 从 ds_registry 包导入 DataSource 枚举 (统一来源)
 from ds_registry import DataSource
+
+
+@dataclass(frozen=True)
+class MySQLConfig:
+    """MySQL 连接配置"""
+    host: str = os.getenv("GSD_DB_HOST", "localhost")
+    port: int = int(os.getenv("GSD_DB_PORT", 36301))
+    user: str = os.getenv("GSD_DB_USER", "root")
+    password: str = os.getenv("GSD_DB_PASSWORD", "")
+    database: str = os.getenv("GSD_DB_NAME", "alwaysup")
+
+
+@dataclass(frozen=True)
+class ClickHouseConfig:
+    """ClickHouse 连接配置"""
+    host: str = os.getenv("CLICKHOUSE_HOST", "localhost")
+    port: int = int(os.getenv("CLICKHOUSE_PORT", 9000))
+    user: str = os.getenv("CLICKHOUSE_USER", "admin")
+    password: str = os.getenv("CLICKHOUSE_PASSWORD", "admin123")
+    database: str = os.getenv("CLICKHOUSE_DATABASE", "stock_data")
 
 
 def get_default_date_range() -> tuple[str, str]:

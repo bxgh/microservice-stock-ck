@@ -24,10 +24,11 @@ import grpc
 import pandas as pd
 
 from datasource.v1 import data_source_pb2, data_source_pb2_grpc
-from ds_registry import DataSource  # 从本地 ds_registry 包导入
-from ds_registry.handlers import EasyquotationHandler, MootdxHandler
+from ds_registry import DataSource, DataType  # 从本地 ds_registry 包导入
+from ds_registry.handlers import EasyquotationHandler, MootdxHandler, MySQLHandler, ClickHouseHandler
 from cloud_client import CloudAPIClient
-from config import HistoryDefaults, QueryDefaults, DragonTigerDefaults, RetryConfig
+from mootdx_client import MootdxAPIClient
+from config import HistoryDefaults, QueryDefaults, DragonTigerDefaults, RetryConfig, MySQLConfig, ClickHouseConfig
 
 logger = logging.getLogger("unified-datasource")
 
@@ -82,6 +83,18 @@ VALIDATION_RULES = {
         "required_columns": ["code"],
         "min_rows": 1
     },
+    "ISSUE_PRICE": {
+        "required_columns": ["code", "issue_price"],
+        "min_rows": 1
+    },
+    "SW_INDUSTRY": {
+        "required_columns": ["code", "l1_name"],
+        "min_rows": 1
+    },
+    "FEATURES": {
+        "required_columns": ["code", "feature_vector"],
+        "min_rows": 1
+    },
 }
 
 
@@ -91,14 +104,15 @@ class MooTDXService(data_source_pb2_grpc.DataSourceServiceServicer):
     # 路由映射表
     ROUTING_TABLE = {
         data_source_pb2.DATA_TYPE_QUOTES: RouteConfig(
-            handler="_fetch_quotes_mootdx",
-            source_name=DataSource.MOOTDX,
-            fallback_handler="_fetch_quotes_easyquotation",
-            fallback_source_name=DataSource.EASYQUOTATION
+            handler="_fetch_quotes_mootdx_api",
+            source_name=DataSource.MOOTDX_API,
+            fallback_handler="_fetch_quotes_mootdx",
+            fallback_source_name=DataSource.MOOTDX
         ),
         data_source_pb2.DATA_TYPE_TICK: RouteConfig(
-            handler="_fetch_tick_mootdx",
-            source_name=DataSource.MOOTDX
+            handler="_fetch_tick_mootdx_api",
+            source_name=DataSource.MOOTDX_API,
+            fallback_handler="_fetch_tick_mootdx"
         ),
         data_source_pb2.DATA_TYPE_HISTORY: RouteConfig(
             handler="_fetch_history_baostock",
@@ -134,17 +148,32 @@ class MooTDXService(data_source_pb2_grpc.DataSourceServiceServicer):
             fallback_source_name=DataSource.AKSHARE_API
         ),
         data_source_pb2.DATA_TYPE_META: RouteConfig(
-            handler="_fetch_meta_mootdx",
-            source_name=DataSource.MOOTDX,
-            fallback_handler="_fetch_dragon_tiger_akshare",
-            fallback_source_name=DataSource.AKSHARE_API
+            handler="_fetch_meta_mootdx_api",
+            source_name=DataSource.MOOTDX_API,
+            fallback_handler="_fetch_meta_mootdx",
+            fallback_source_name=DataSource.MOOTDX
+        ),
+        data_source_pb2.DATA_TYPE_ISSUE_PRICE: RouteConfig(
+            handler="_fetch_issue_price_mysql",
+            source_name=DataSource.MYSQL
+        ),
+        data_source_pb2.DATA_TYPE_SW_INDUSTRY: RouteConfig(
+            handler="_fetch_sw_industry_mysql",
+            source_name=DataSource.MYSQL
+        ),
+        data_source_pb2.DATA_TYPE_FEATURES: RouteConfig(
+            handler="_fetch_features_clickhouse",
+            source_name=DataSource.CLICKHOUSE
         ),
     }
     
     def __init__(self):
         # 本地/HTTP 数据源客户端
         self.mootdx_handler: Optional[MootdxHandler] = None
+        self.mootdx_api_client: Optional[MootdxAPIClient] = None
         self.easy_handler: Optional[EasyquotationHandler] = None
+        self.mysql_handler: Optional[MySQLHandler] = None
+        self.ch_handler: Optional[ClickHouseHandler] = None
         
         # 云端 API 客户端
         self.cloud_client: Optional[CloudAPIClient] = None
@@ -160,11 +189,24 @@ class MooTDXService(data_source_pb2_grpc.DataSourceServiceServicer):
             self.mootdx_handler = MootdxHandler()
             await self.mootdx_handler.initialize()
             
-            # 2. 初始化 easyquotation handler
+            # 2. 初始化 mootdx-api client
+            self.mootdx_api_client = MootdxAPIClient()
+            await self.mootdx_api_client.initialize()
+            logger.info("✓ Mootdx API client initialized")
+            
+            # 3. 初始化 easyquotation handler
             self.easy_handler = EasyquotationHandler()
             await self.easy_handler.initialize()
             
-            # 3. 初始化云端 API 客户端
+            # 4. 初始化 MySQL handler
+            self.mysql_handler = MySQLHandler(MySQLConfig())
+            await self.mysql_handler.initialize()
+            
+            # 5. 初始化 ClickHouse handler
+            self.ch_handler = ClickHouseHandler(ClickHouseConfig())
+            await self.ch_handler.initialize()
+            
+            # 6. 初始化云端 API 客户端
             self.cloud_client = CloudAPIClient()
             await self.cloud_client.initialize()
             logger.info("✓ Cloud API client initialized")
@@ -181,6 +223,12 @@ class MooTDXService(data_source_pb2_grpc.DataSourceServiceServicer):
                 await self.mootdx_handler.close()
             if self.easy_handler:
                 await self.easy_handler.close()
+            if self.mootdx_api_client:
+                await self.mootdx_api_client.close()
+            if self.mysql_handler:
+                await self.mysql_handler.close()
+            if self.ch_handler:
+                await self.ch_handler.close()
             if self.cloud_client:
                 await self.cloud_client.close()
             logger.info("All resources cleaned up")
@@ -439,6 +487,97 @@ class MooTDXService(data_source_pb2_grpc.DataSourceServiceServicer):
             return pd.DataFrame()
         return await self.mootdx_handler.get_tick(codes, params)
     
+    async def _fetch_quotes_mootdx_api(
+        self,
+        codes: List[str],
+        params: Dict[str, Any]
+    ) -> pd.DataFrame:
+        """mootdx-api: 实时行情"""
+        if not self.mootdx_api_client:
+            logger.warning("Mootdx API client not initialized")
+            return pd.DataFrame()
+        return await self.mootdx_api_client.get_quotes(codes, params)
+    
+    async def _fetch_tick_mootdx_api(
+        self,
+        codes: List[str],
+        params: Dict[str, Any]
+    ) -> pd.DataFrame:
+        """mootdx-api: 分笔数据"""
+        if not self.mootdx_api_client:
+            logger.warning("Mootdx API client not initialized")
+            return pd.DataFrame()
+        return await self.mootdx_api_client.get_tick(codes, params)
+
+    async def _fetch_history_mootdx_api(
+        self,
+        codes: List[str],
+        params: Dict[str, Any]
+    ) -> pd.DataFrame:
+        """mootdx-api: 历史K线"""
+        if not self.mootdx_api_client:
+            logger.warning("Mootdx API client not initialized")
+            return pd.DataFrame()
+        return await self.mootdx_api_client.get_history(codes, params)
+
+    async def _fetch_meta_mootdx_api(
+        self,
+        codes: List[str],
+        params: Dict[str, Any]
+    ) -> pd.DataFrame:
+        """mootdx-api: 股票元数据"""
+        if not self.mootdx_api_client:
+            logger.warning("Mootdx API client not initialized")
+            return pd.DataFrame()
+            
+        if not codes or codes == ["all"]:
+            return await self.mootdx_api_client.get_stocks([], params)
+            
+        df = await self.mootdx_api_client.get_stocks([], params)
+        if not df.empty and 'code' in df.columns:
+            df['code'] = df['code'].astype(str).str.zfill(6)
+            code_list = list(codes)
+            df = df[df['code'].isin(code_list)]
+        return df
+
+    async def _fetch_issue_price_mysql(
+        self,
+        codes: List[str],
+        params: Dict[str, Any]
+    ) -> pd.DataFrame:
+        """MySQL: 获取发行价"""
+        if not self.mysql_handler:
+            logger.warning("MySQL handler not initialized")
+            return pd.DataFrame()
+        return await self.mysql_handler.fetch_issue_price_from_db(codes)
+
+    async def _fetch_sw_industry_mysql(
+        self,
+        codes: List[str],
+        params: Dict[str, Any]
+    ) -> pd.DataFrame:
+        """MySQL: 获取申万行业"""
+        if not self.mysql_handler:
+            logger.warning("MySQL handler not initialized")
+            return pd.DataFrame()
+        level = int(params.get('level', 3))
+        return await self.mysql_handler.fetch_sw_industry_from_db(codes, level)
+
+    async def _fetch_features_clickhouse(
+        self,
+        codes: List[str],
+        params: Dict[str, Any]
+    ) -> pd.DataFrame:
+        """ClickHouse: 获取特征矩阵"""
+        if not self.ch_handler:
+            logger.warning("ClickHouse handler not initialized")
+            return pd.DataFrame()
+        date = params.get('date')
+        if not date:
+            logger.warning("Missing 'date' parameter for DATA_TYPE_FEATURES")
+            return pd.DataFrame()
+        return await self.ch_handler.get_features(codes, date)
+
     async def _fetch_history_mootdx(
         self,
         codes: List[str],

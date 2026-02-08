@@ -12,10 +12,13 @@ class DataSource(str, Enum):
     定义系统支持的所有数据源标识符
     """
     MOOTDX = "mootdx"               # 通达信直连
+    MOOTDX_API = "mootdx-api"       # 通达信 API 代理
     EASYQUOTATION = "easyquotation" # 新浪/腾讯行情
     AKSHARE_API = "akshare-api"     # AkShare API
     BAOSTOCK_API = "baostock-api"   # 证券宝 API
     PYWENCAI_API = "pywencai-api"   # 同花顺问财
+    MYSQL = "mysql"                 # 本地 MySQL (基础信息、行业数据)
+    CLICKHOUSE = "clickhouse"       # ClickHouse (特征矩阵、分笔存储)
     ERROR = "error"                 # 错误标识
 
 
@@ -35,6 +38,11 @@ class DataType(str, Enum):
     INDEX = "INDEX"             # 指数成分
     INDUSTRY = "INDUSTRY"       # 行业数据
     DRAGON_TIGER = "DRAGON_TIGER"  # 龙虎榜
+    
+    # 扩展数据类型
+    ISSUE_PRICE = "ISSUE_PRICE"     # 发行价
+    SW_INDUSTRY = "SW_INDUSTRY"     # 申万行业
+    FEATURES = "FEATURES"           # 特征矩阵
     
     # Mootdx 扩展
     STOCK_LIST = "STOCK_LIST"   # 股票列表

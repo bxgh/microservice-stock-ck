@@ -53,16 +53,38 @@ CAPABILITIES: Dict[DataSource, DataSourceCapability] = {
             DataType.QUOTES, 
             DataType.TICK, 
             DataType.HISTORY, 
-            DataType.STOCK_LIST,     # 新增
-            DataType.FINANCE_INFO,   # 新增
-            DataType.XDXR,           # 新增
-            DataType.INDEX_BARS,     # 新增
+            DataType.STOCK_LIST,
+            DataType.FINANCE_INFO,
+            DataType.XDXR,
+            DataType.INDEX_BARS,
         ),
         latency_ms=(10, 100),
         reliability=0.99,
         requires_network=False,
         rate_limit=0,
-        notes="通达信TCP直连，延迟最低(10-100ms)，覆盖实时+历史+财务+除权；缺点：无复权，历史最多800条"
+        notes="通达信TCP直连（受限环境下易失效）；缺点：无复权，历史最多800条"
+    ),
+    
+    # --------------------------------------------------------
+    # MOOTDX_API - 通达信代理 API
+    # --------------------------------------------------------
+    DataSource.MOOTDX_API: DataSourceCapability(
+        name="mootdx-api",
+        display_name="通达信代理API",
+        supported_types=(
+            DataType.QUOTES, 
+            DataType.TICK, 
+            DataType.HISTORY, 
+            DataType.STOCK_LIST,
+            DataType.FINANCE_INFO,
+            DataType.XDXR,
+            DataType.INDEX_BARS,
+        ),
+        latency_ms=(50, 200),
+        reliability=0.98,
+        requires_network=True,
+        rate_limit=0,
+        notes="通过 mootdx-api 代理访问，解决直连 TCP 被封锁问题"
     ),
     
     # --------------------------------------------------------
@@ -185,6 +207,41 @@ CAPABILITIES: Dict[DataSource, DataSourceCapability] = {
         rate_limit=10,
         notes="唯一支持自然语言查询(如'今日涨停')；缺点：反爬严格，失败率高"
     ),
+
+    # --------------------------------------------------------
+    # MYSQL - 本地 MySQL
+    # --------------------------------------------------------
+    DataSource.MYSQL: DataSourceCapability(
+        name="mysql",
+        display_name="本地MySQL",
+        supported_types=(
+            DataType.ISSUE_PRICE,
+            DataType.SW_INDUSTRY,
+            DataType.STOCK_LIST,
+        ),
+        latency_ms=(1, 20),
+        reliability=1.0,
+        requires_network=False,
+        rate_limit=0,
+        notes="从 alwaysup 数据库读取基础信息和行业分类"
+    ),
+
+    # --------------------------------------------------------
+    # CLICKHOUSE - ClickHouse FeatureStore
+    # --------------------------------------------------------
+    DataSource.CLICKHOUSE: DataSourceCapability(
+        name="clickhouse",
+        display_name="ClickHouse",
+        supported_types=(
+            DataType.FEATURES,
+            DataType.TICK,
+        ),
+        latency_ms=(5, 50),
+        reliability=1.0,
+        requires_network=False,
+        rate_limit=0,
+        notes="从 stock_data 读取特征矩阵和实时 Tick 数据"
+    ),
 }
 
 
@@ -194,9 +251,9 @@ CAPABILITIES: Dict[DataSource, DataSourceCapability] = {
 # ============================================================
 
 FALLBACK_CHAINS: Dict[DataType, List[DataSource]] = {
-    DataType.QUOTES: [DataSource.MOOTDX, DataSource.EASYQUOTATION],
-    DataType.TICK: [DataSource.MOOTDX],  # 无备选
-    DataType.HISTORY: [DataSource.BAOSTOCK_API, DataSource.MOOTDX],
+    DataType.QUOTES: [DataSource.MOOTDX_API, DataSource.MOOTDX, DataSource.EASYQUOTATION],
+    DataType.TICK: [DataSource.MOOTDX_API, DataSource.MOOTDX],
+    DataType.HISTORY: [DataSource.BAOSTOCK_API, DataSource.MOOTDX_API, DataSource.MOOTDX],
     DataType.RANKING: [DataSource.AKSHARE_API],  # 无备选
     DataType.SECTOR: [DataSource.PYWENCAI_API],  # 无备选
     DataType.FINANCE: [DataSource.AKSHARE_API, DataSource.BAOSTOCK_API],
@@ -205,10 +262,15 @@ FALLBACK_CHAINS: Dict[DataType, List[DataSource]] = {
     DataType.INDUSTRY: [DataSource.BAOSTOCK_API, DataSource.AKSHARE_API],
     DataType.DRAGON_TIGER: [DataSource.AKSHARE_API],  # 无备选
     
-    # Mootdx 扩展 (无备选，mootdx 是唯一本地源)
-    DataType.STOCK_LIST: [DataSource.MOOTDX],
-    DataType.FINANCE_INFO: [DataSource.MOOTDX],
-    DataType.XDXR: [DataSource.MOOTDX],
-    DataType.INDEX_BARS: [DataSource.MOOTDX],
+    # Mootdx 扩展
+    DataType.STOCK_LIST: [DataSource.MOOTDX_API, DataSource.MOOTDX],
+    DataType.FINANCE_INFO: [DataSource.MOOTDX_API, DataSource.MOOTDX],
+    DataType.XDXR: [DataSource.MOOTDX_API, DataSource.MOOTDX],
+    DataType.INDEX_BARS: [DataSource.MOOTDX_API, DataSource.MOOTDX],
+    
+    # 扩展数据类型
+    DataType.ISSUE_PRICE: [DataSource.MYSQL],
+    DataType.SW_INDUSTRY: [DataSource.MYSQL],
+    DataType.FEATURES: [DataSource.CLICKHOUSE],
 }
 

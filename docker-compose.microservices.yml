@@ -2,8 +2,8 @@ services:
   # Mootdx API 服务 (通达信数据源)
   mootdx-api:
     build:
-      context: ./services/mootdx-api
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/mootdx-api/Dockerfile
       network: host
     container_name: microservice-stock-mootdx-api
     restart: unless-stopped
@@ -14,6 +14,7 @@ services:
       # Dynamic Configuration:
       - TDX_HOSTS=${TDX_HOSTS:-59.36.5.11:7709}
       - TDX_BIND_IP=${TDX_BIND_IP:-}
+      - REDIS_PASSWORD=redis123
     # ports:  # host模式不需要端口映射
     #   - "8003:8000"
     healthcheck:
@@ -56,6 +57,19 @@ services:
       - AKSHARE_API_URL=http://124.221.80.250:8003
       - BAOSTOCK_API_URL=http://124.221.80.250:8001
       - PYWENCAI_API_URL=http://124.221.80.250:8002
+      - REDIS_PASSWORD=redis123
+      # MySQL Config
+      - GSD_DB_HOST=127.0.0.1
+      - GSD_DB_PORT=36301
+      - GSD_DB_USER=root
+      - GSD_DB_PASSWORD=alwaysup@888
+      - GSD_DB_NAME=alwaysup
+      # ClickHouse Config
+      - CLICKHOUSE_HOST=127.0.0.1
+      - CLICKHOUSE_PORT=9000
+      - CLICKHOUSE_USER=admin
+      - CLICKHOUSE_PASSWORD=admin123
+      - CLICKHOUSE_DATABASE=stock_data
     network_mode: host
     volumes:
       - ./services/mootdx-source/src:/app/src  # 开发模式挂载源码
