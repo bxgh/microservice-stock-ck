@@ -124,6 +124,30 @@ class MetadataSyncService:
                 'date_col': 'updated_at',
                 'mysql_cols': ['ts_code', 'industry_code', 'industry_name', 'updated_at'],
                 'ch_cols': ['stock_code', 'industry_code', 'industry_name', 'update_time']
+            },
+            'stock_basic_info': {
+                'clickhouse': 'stock_basic_info',
+                'date_col': 'list_date',
+                'mysql_cols': ['ts_code', 'symbol', 'name', 'area', 'industry', 'fullname', 'enname', 'cnspell', 'market', 'exchange', 'curr_type', 'list_status', 'list_date', 'delist_date', 'is_hs', 'act_name', 'act_ent_type', 'issue_price'],
+                'ch_cols': ['stock_code', 'symbol', 'name', 'area', 'industry', 'fullname', 'enname', 'cnspell', 'market', 'exchange', 'curr_type', 'list_status', 'list_date', 'delist_date', 'is_hs', 'act_name', 'act_ent_type', 'issue_price']
+            },
+            'trade_cal': {
+                'clickhouse': 'stock_trade_cal',
+                'date_col': 'cal_date',
+                'mysql_cols': ['cal_date', 'exchange', 'is_open', 'pretrade_date'],
+                'ch_cols': ['cal_date', 'exchange', 'is_open', 'pretrade_date']
+            },
+            'stock_adjust_factor': {
+                'clickhouse': 'stock_adjust_factor',
+                'date_col': 'adjust_date',
+                'mysql_cols': ['code', 'adjust_date', 'fore_adjust_factor', 'back_adjust_factor', 'adjust_factor'],
+                'ch_cols': ['stock_code', 'adjust_date', 'fore_adjust_factor', 'back_adjust_factor', 'adjust_factor']
+            },
+            'ts_concept_detail': {
+                'clickhouse': 'stock_concept_detail',
+                'date_col': 'in_date',
+                'mysql_cols': ['concept_name', 'ts_code', 'name', 'in_date', 'out_date'],
+                'ch_cols': ['concept_name', 'stock_code', 'name', 'in_date', 'out_date']
             }
         }
 
@@ -188,11 +212,16 @@ class MetadataSyncService:
         
         # 2. 从 MySQL 获取数据
         cols_str = ', '.join(mysql_cols)
-        query = f"SELECT {cols_str} FROM {mysql_table} WHERE {date_col} >= %s"
+        if days >= 0:
+            query = f"SELECT {cols_str} FROM {mysql_table} WHERE {date_col} >= %s"
+            params = (start_date,)
+        else:
+            query = f"SELECT {cols_str} FROM {mysql_table}"
+            params = ()
         
         async with self.mysql_pool.acquire() as conn:
             async with conn.cursor() as cursor:
-                await cursor.execute(query, (start_date,))
+                await cursor.execute(query, params)
                 rows = await cursor.fetchall()
         
         if not rows:
@@ -200,24 +229,27 @@ class MetadataSyncService:
             return 0
 
         # 3. 尝试清理 ClickHouse 中对应日期的数据 (非必须，因为是 ReplacingMergeTree)
-        unique_dates = sorted(list(set(row[mysql_cols.index(date_col)] for row in rows)))
-        for d in unique_dates:
-            d_str = d.strftime('%Y-%m-%d') if isinstance(d, datetime) else str(d)
-            if '-' not in d_str: # YYYYMMDD -> YYYY-MM-DD
-                d_str = f"{d_str[:4]}-{d_str[4:6]}-{d_str[6:8]}"
-                
-            try:
-                async with self.clickhouse_pool.acquire() as conn:
-                    async with conn.cursor() as cursor:
-                        # 尝试在集群上删除，如果失败则记录警告但不中断
-                        # 注意：对于 ReplacingMergeTree，Delete 不是必须的，因为后续插入会覆盖
-                        date_ch_col = config['ch_cols'][config['mysql_cols'].index(date_col)]
-                        await cursor.execute(
-                            f"ALTER TABLE {ch_table}_local ON CLUSTER {self.cluster_name} DELETE WHERE {date_ch_col} = %(d)s",
-                            {'d': d_str}
-                        )
-            except Exception as e:
-                logger.warning(f"Failed to delete partition for {ch_table} on date {d_str} (non-fatal): {e}")
+        unique_dates = sorted(list(set(row[mysql_cols.index(date_col)] for row in rows if row[mysql_cols.index(date_col)] is not None)))
+        
+        # 优化：如果日期太多（超过 50 个），说明是全量或大规模同步，使用一次性 DELETE 或跳过
+        if len(unique_dates) > 0 and len(unique_dates) <= 50:
+            for d in unique_dates:
+                d_str = d.strftime('%Y-%m-%d') if isinstance(d, datetime) else str(d)
+                if '-' not in d_str: # YYYYMMDD -> YYYY-MM-DD
+                    d_str = f"{d_str[:4]}-{d_str[4:6]}-{d_str[6:8]}"
+                    
+                try:
+                    async with self.clickhouse_pool.acquire() as conn:
+                        async with conn.cursor() as cursor:
+                            date_ch_col = config['ch_cols'][config['mysql_cols'].index(date_col)]
+                            await cursor.execute(
+                                f"ALTER TABLE {ch_table}_local ON CLUSTER {self.cluster_name} DELETE WHERE {date_ch_col} = %(d)s",
+                                {'d': d_str}
+                            )
+                except Exception as e:
+                    logger.warning(f"Failed to delete partition for {ch_table} on date {d_str} (non-fatal): {e}")
+        elif len(unique_dates) > 50:
+            logger.info(f"Large batch detected ({len(unique_dates)} dates). Skipping granular DELETE to avoid mutation overhead.")
         
         # 4. 插入到 ClickHouse
         # 如果 ClickHouse 表定义中有 update_time，且 mysql_cols 中没有，我们让 ClickHouse 自动生成 now()
@@ -227,17 +259,39 @@ class MetadataSyncService:
         
         # 转换数据格式
         values = []
-        for row in rows:
+        for index, row in enumerate(rows):
             processed_row = []
-            for i, val in enumerate(row):
-                # 时间、Decimal等转换
-                if isinstance(val, (datetime, timedelta)):
-                    processed_row.append(str(val))
-                elif hasattr(val, '__float__') and not isinstance(val, (int, float)):
-                    processed_row.append(float(val))
-                else:
-                    processed_row.append(val)
-            values.append(tuple(processed_row))
+            try:
+                for i, val in enumerate(row):
+                    ch_col = ch_cols[i]
+                    if val is None:
+                        # 对于 DDL 中定义为 Nullable 的字段，保持 None
+                        if any(suffix in ch_col for suffix in ['date', 'time', 'price', 'factor', 'ratio', 'count', 'amount']):
+                            processed_row.append(None)
+                        else:
+                            processed_row.append("")
+                    elif isinstance(val, (datetime, timedelta)):
+                        processed_row.append(str(val))
+                    elif any(suffix in ch_col for suffix in ['price', 'factor', 'ratio', 'count', 'amount']):
+                        # 强制转为 float，确保 numeric 类型一致性
+                        try:
+                            if val is None:
+                                processed_row.append(None)
+                            else:
+                                f_val = float(val)
+                                import math
+                                if math.isnan(f_val) or math.isinf(f_val):
+                                    processed_row.append(None)
+                                else:
+                                    processed_row.append(f_val)
+                        except:
+                            processed_row.append(None)
+                    else:
+                        processed_row.append(val)
+                values.append(tuple(processed_row))
+            except Exception as e:
+                logger.error(f"Failed to process row {index}: {row}, error: {e}")
+                continue
 
         async with self.clickhouse_pool.acquire() as conn:
             async with conn.cursor() as cursor:

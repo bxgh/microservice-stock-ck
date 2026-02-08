@@ -39,7 +39,7 @@ class StrategyFactory:
         await self.liquidity_gatekeeper.initialize()
         logger.info("🚀 StrategyFactory components initialized")
 
-    async def compute_and_store(self, stock_code: str, trade_date: str) -> bool:
+    async def compute_and_store(self, stock_code: str, trade_date: str, skip_gate_check: bool = False) -> bool:
         """
         全量计算管线
         1. 代码标准化 (Gate-3)
@@ -55,10 +55,17 @@ class StrategyFactory:
 
             # 2. 质量初审 (Gate-3)
             # 检查 Redis 中的同步状态
-            is_qualified, msg = await self.quality_monitor.is_qualified(stock_code, trade_date)
-            if not is_qualified:
-                logger.warning(f"⚠️ Stock {stock_code} skipped: {msg}")
-                return False
+            if not skip_gate_check:
+                is_qualified, msg = await self.quality_monitor.is_qualified(stock_code, trade_date)
+                if not is_qualified:
+                    logger.warning(f"⚠️ Stock {stock_code} skipped: {msg}")
+                    return False
+            else:
+                # 即使跳过 Gate-3，仍需基本活跃度确认 (K线对仗)
+                is_active = await self.quality_monitor.check_if_active(stock_code, trade_date)
+                if not is_active:
+                    logger.warning(f"⚠️ Stock {stock_code} skipped: Not active on {trade_date}")
+                    return False
 
             # 3. 数据加载
             ticks = await self.loader.get_ticks(stock_code, trade_date)
@@ -96,9 +103,13 @@ class StrategyFactory:
                 snapshot_df=snapshots
             )
 
+            # 针对历史数据跳过 Gate-3 状态限制，但保留拓扑校验结果
             if not is_final_ok:
-                logger.error(f"❌ Final quality check failed for {stock_code}: {final_msg}")
-                return False
+                if skip_gate_check and "Gate-3 Status: MISSING" in final_msg:
+                    logger.info(f"ℹ️ {stock_code} Gate-3 MISSING on {trade_date}, but proceeding as skip_gate_check=True")
+                else:
+                    logger.error(f"❌ Final quality check failed for {stock_code}: {final_msg}")
+                    return False
 
             # 7. 存储
             feature_matrix = main_df.to_numpy()

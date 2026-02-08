@@ -18,6 +18,8 @@ enum DataType {
   DATA_TYPE_ISSUE_PRICE = 11;    // 发行价
   DATA_TYPE_SW_INDUSTRY = 12;    // 申万行业分类
   DATA_TYPE_FEATURES = 13;       // 特征矩阵
+  DATA_TYPE_THS_INDUSTRY = 14;   // 同花顺行业分类
+  DATA_TYPE_THS_CONCEPTS = 15;   // 同花顺概念板块
 }
 
 // 通用数据请求

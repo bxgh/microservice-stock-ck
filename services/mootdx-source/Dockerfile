@@ -59,9 +59,9 @@ ENV SERVICE_PORT=50051
 # 暴露端口
 EXPOSE 50051
 
-# 健康检查 (检查gRPC端口是否可用)
+# 健康检查 (检查 gRPC 端口是否可用)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD curl -f http://localhost:50051/ || exit 1
+    CMD python -c "import socket; s = socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.settimeout(2); exit(0 if s.connect_ex(('127.0.0.1', 50051)) == 0 else 1)"
 
 # 启动命令
 CMD ["python", "src/main.py"]

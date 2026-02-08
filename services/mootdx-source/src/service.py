@@ -95,6 +95,10 @@ VALIDATION_RULES = {
         "required_columns": ["code", "feature_vector"],
         "min_rows": 1
     },
+    "META": {
+        "required_columns": ["ts_code", "name"],
+        "min_rows": 1
+    },
 }
 
 
@@ -148,10 +152,10 @@ class MooTDXService(data_source_pb2_grpc.DataSourceServiceServicer):
             fallback_source_name=DataSource.AKSHARE_API
         ),
         data_source_pb2.DATA_TYPE_META: RouteConfig(
-            handler="_fetch_meta_mootdx_api",
-            source_name=DataSource.MOOTDX_API,
-            fallback_handler="_fetch_meta_mootdx",
-            fallback_source_name=DataSource.MOOTDX
+            handler="_fetch_meta_clickhouse",
+            source_name=DataSource.CLICKHOUSE,
+            fallback_handler="_fetch_meta_mootdx_api",
+            fallback_source_name=DataSource.MOOTDX_API
         ),
         data_source_pb2.DATA_TYPE_ISSUE_PRICE: RouteConfig(
             handler="_fetch_issue_price_mysql",
@@ -163,6 +167,14 @@ class MooTDXService(data_source_pb2_grpc.DataSourceServiceServicer):
         ),
         data_source_pb2.DATA_TYPE_FEATURES: RouteConfig(
             handler="_fetch_features_clickhouse",
+            source_name=DataSource.CLICKHOUSE
+        ),
+        data_source_pb2.DATA_TYPE_THS_INDUSTRY: RouteConfig(
+            handler="_fetch_ths_industry_clickhouse",
+            source_name=DataSource.CLICKHOUSE
+        ),
+        data_source_pb2.DATA_TYPE_THS_CONCEPTS: RouteConfig(
+            handler="_fetch_ths_concepts_clickhouse",
             source_name=DataSource.CLICKHOUSE
         ),
     }
@@ -568,15 +580,66 @@ class MooTDXService(data_source_pb2_grpc.DataSourceServiceServicer):
         codes: List[str],
         params: Dict[str, Any]
     ) -> pd.DataFrame:
-        """ClickHouse: 获取特征矩阵"""
+        """ClickHouse: 获取特征矩阵 (支持范围查询)"""
         if not self.ch_handler:
             logger.warning("ClickHouse handler not initialized")
             return pd.DataFrame()
-        date = params.get('date')
-        if not date:
-            logger.warning("Missing 'date' parameter for DATA_TYPE_FEATURES")
+        
+        start_date = params.get('start_date') or params.get('date')
+        end_date = params.get('end_date') or start_date
+        
+        if not start_date:
+            logger.warning("Missing 'start_date' or 'date' parameter for DATA_TYPE_FEATURES")
             return pd.DataFrame()
-        return await self.ch_handler.get_features(codes, date)
+            
+        return await self.ch_handler.get_features(codes, start_date, end_date)
+
+    async def _fetch_ths_industry_clickhouse(
+        self,
+        codes: List[str],
+        params: Dict[str, Any]
+    ) -> pd.DataFrame:
+        """ClickHouse: 获取同花顺行业分类 (支持反向查询)"""
+        if not self.ch_handler:
+            logger.warning("ClickHouse handler not initialized")
+            return pd.DataFrame()
+        
+        # 反向查询模式: codes=["*"] + l3_name 参数
+        l3_name = params.get('l3_name')
+        if l3_name and codes == ["*"]:
+            return await self.ch_handler.get_stocks_by_ths_industry(l3_name)
+        
+        # 正向查询模式
+        return await self.ch_handler.get_ths_industry(codes)
+
+    async def _fetch_ths_concepts_clickhouse(
+        self,
+        codes: List[str],
+        params: Dict[str, Any]
+    ) -> pd.DataFrame:
+        """ClickHouse: 获取同花顺概念板块 (支持反向查询)"""
+        if not self.ch_handler:
+            logger.warning("ClickHouse handler not initialized")
+            return pd.DataFrame()
+        
+        # 反向查询模式: codes=["*"] + concept_name 参数
+        concept_name = params.get('concept_name')
+        if concept_name and codes == ["*"]:
+            return await self.ch_handler.get_concept_stocks([concept_name])
+        
+        # 正向查询模式
+        return await self.ch_handler.get_stock_concepts(codes)
+
+    async def _fetch_meta_clickhouse(
+        self,
+        codes: List[str],
+        params: Dict[str, Any]
+    ) -> pd.DataFrame:
+        """ClickHouse: 获取股票基础信息/元数据"""
+        if not self.ch_handler:
+            logger.warning("ClickHouse handler not initialized")
+            return pd.DataFrame()
+        return await self.ch_handler.get_stock_basic(codes)
 
     async def _fetch_history_mootdx(
         self,
