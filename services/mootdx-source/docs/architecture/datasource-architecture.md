@@ -1,162 +1,114 @@
-# MooTDX-Source 数据源架构
+# mootdx-source 服务架构 (Unified Gateway Pattern)
 
-## 概述
+**版本**: 2.0.0-hybrid
+**该当日期**: 2026-02-08
+**状态**: 生产就绪
 
-`mootdx-source` 是一个统一数据源服务，整合本地数据源（mootdx, easyquotation）和云端 API（baostock, akshare, pywencai）。
+---
 
-## 架构图
+## 1. 服务定位
+
+`mootdx-source` 是系统中的**统一数据网关（Unified Data Gateway）**，通过 **gRPC** 协议为上游微服务提供标准化的数据获取接口。它屏蔽了底层异构数据源（MySQL, ClickHouse, Redis, HTTP API, TCP）的复杂性。
 
 ```mermaid
 graph TB
-    subgraph "gRPC Layer"
-        GS[gRPC Server]
+    subgraph Clients
+        A[get-stockdata]
+        B[quant-strategy]
     end
-    
-    subgraph "Service Layer"
-        MS[MooTDXService]
-        RT[ROUTING_TABLE]
-        VL[Validation Layer]
-        ST[Stats Tracker]
+
+    subgraph "mootdx-source (Unified Gateway)"
+        GW[gRPC Service]
+        ROUTER[Routing Logic]
+        VAL[Validation Layer]
     end
-    
-    subgraph "Datasource Package"
-        DS[datasource/]
-        EN[enums.py]
-        CP[capability.py]
-        RG[registry.py]
-        HP[helpers.py]
-        
-        subgraph "Handlers Layer"
-            MH[MootdxHandler]
-            EH[EasyquotationHandler]
-        end
+
+    subgraph "Data Sources (Heterogeneous)"
+        MYSQL[(MySQL<br/>AlwaysUp)]
+        CH[(ClickHouse<br/>StockData)]
+        MOOTDX_API[Mootdx API<br/>(HTTP Proxy)]
+        CLOUD_API[Cloud API<br/>(AkShare/Baostock)]
     end
-    
-    subgraph "Data Sources"
-        subgraph "Local"
-            M[mootdx lib]
-            EQ[easyquotation lib]
-        end
-        subgraph "Cloud API"
-            CC[CloudAPIClient]
-            BS[baostock-api]
-            AK[akshare-api]
-            PW[pywencai-api]
-        end
-    end
-    
-    GS --> MS
-    MS --> RT
-    MS --> VL
-    MS --> ST
-    RT --> DS
-    
-    MS --> MH
-    MS --> EH
-    MS --> CC
-    
-    MH --> M
-    EH --> EQ
-    CC --> BS
-    CC --> AK
-    CC --> PW
+
+    A --> GW
+    B --> GW
+    GW --> ROUTER
+    ROUTER --> VAL
+    VAL --> MYSQL
+    VAL --> CH
+    VAL --> MOOTDX_API
+    VAL --> CLOUD_API
 ```
 
-## 模块结构
+### 核心能力
+1.  **统一协议**: 所有数据请求统一走 gRPC (Protobuf)，无需关心底层是 SQL 还是 HTTP。
+2.  **智能路由**: 基于 `DataType` 自动路由到最优数据源（例如 `ISSUE_PRICE` -> MySQL, `FEATURES` -> ClickHouse）。
+3.  **连接池管理**: 内置 MySQL (`aiomysql`) 和 ClickHouse (`asynch`) 连接池，保障高并发稳定性。
+4.  **数据标准化**: 自动处理证券代码后缀 (`.SZ/.SH`) 和字段映射 (`ts_code` -> `code`)。
+
+---
+
+## 2. 核心架构
+
+### 组件关系图
 
 ```
-src/
-├── main.py              # 入口点, gRPC 服务器
-├── service.py           # MooTDXService 核心逻辑
-├── config.py            # 配置常量 (重导出 DataSource)
-├── cloud_client.py      # 云端 API 客户端
-│
-└── datasource/          # 数据源能力模块
-    ├── __init__.py      # 统一导出
-    ├── enums.py         # DataSource, DataType 枚举
-    ├── capability.py    # DataSourceCapability 数据类
-    ├── registry.py      # CAPABILITIES, FALLBACK_CHAINS
-    └── helpers.py       # 辅助函数
+┌─────────────────────────────────────────────────────────────────┐
+│                        mootdx-source                            │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │                    MooTDXService                          │  │
+│  │  (gRPC Servicer, 路由入口, 数据验证)                       │  │
+│  └───────────┬───────────────────────────────────────────────┘  │
+│              │ 路由分发 (RouteConfig)                           │
+│  ┌───────────▼───────────────────────────────────────────────┐  │
+│  │                   Handler Layer                           │  │
+│  │  ┌─────────────────┐  ┌─────────────────┐ ┌────────────┐  │  │
+│  │  │ MySQLHandler    │  │ ClickHouseHdlr  │ │ CloudClient│  │  │
+│  │  │ (发行价/行业)   │  │ (特征/分笔)     │ │ (历史/榜单)│  │  │
+│  │  └────────┬────────┘  └────────┬────────┘ └─────┬──────┘  │  │
+│  └───────────┼────────────────────┼────────────────┼─────────┘  │
+│              │                    │                │            │
+│  ┌───────────▼───────────┐ ┌──────▼────────────┐ ┌─▼──────────┐ │
+│  │ MySQL (AlwaysUp)      │ │ ClickHouse (Data) │ │ ExternalAPI│ │
+│  │ - stock_basic_info    │ │ - features        │ │ - Akshare  │ │
+│  │ - stock_industry_sw   │ │ - intraday_local  │ │ - Baostock │ │
+│  └───────────────────────┘ └───────────────────┘ └────────────┘ │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-## 数据流
+### 关键模块说明
 
-1. **gRPC 请求** → `MooTDXService.FetchData()`
-2. **路由查找** → `ROUTING_TABLE[data_type]` 获取处理器配置
-3. **执行处理器** → 调用对应数据源方法
-4. **数据验证** → `_validate_data()` 检查结果
-5. **降级处理** → 失败时尝试 `fallback_handler`
-6. **统计记录** → `_record_stats()` 更新可观测性数据
-7. **返回响应** → gRPC DataResponse
+| 模块 | 文件 | 职责 |
+|:---|:---|:---|
+| **MooTDXService** | `service.py` | 服务入口，负责 gRPC 请求解析、路由分发、数据验证及异常处理。 |
+| **MySQLHandler** | `handlers/mysql_handler.py` | **[新增]** 管理 MySQL 连接池，提供基础信息查询（发行价、申万行业）。 |
+| **ClickHouseHandler** | `handlers/clickhouse_handler.py` | **[新增]** 管理 ClickHouse 连接池，提供高性能特征矩阵与分笔数据查询。 |
+| **MootdxAPIClient** | `mootdx_client.py` | 调用 `mootdx-api` 微服务获取实时行情（解决了直连不稳定问题）。 |
+| **CloudAPIClient** | `cloud_client.py` | 聚合调用 AkShare、Baostock 等外部 HTTP 数据源。 |
 
-## 降级策略
+---
 
-| 数据类型 | 主数据源 | 降级数据源 |
-|----------|----------|------------|
-| QUOTES | mootdx | easyquotation |
-| TICK | mootdx | - |
-| HISTORY | baostock | mootdx |
-| FINANCE | akshare | baostock |
-| INDUSTRY | baostock | akshare |
-| RANKING | akshare | - |
-| DRAGON_TIGER | akshare | - |
+## 3. 数据路由表 (Routing Table)
 
-## 关键接口
+| DataType | Handler | 数据源 | 备注 |
+|:---|:---|:---|:---|
+| `QUOTES` | `MootdxAPIClient` | `mootdx-api` | 实时行情，高频调用 |
+| `TICK` | `MootdxAPIClient` | `mootdx-api` | 分笔数据，高频调用 |
+| `ISSUE_PRICE` | `MySQLHandler` | `MySQL` | **新增**，取自 `stock_basic_info` |
+| `SW_INDUSTRY` | `MySQLHandler` | `MySQL` | **新增**，取自 `stock_industry_sw` |
+| `FEATURES` | `ClickHouseHandler` | `ClickHouse` | **新增**，取自 `stock_data.features` |
+| `HISTORY` | `CloudAPIClient` | `Baostock` | 历史 K 线，有本地降级策略 |
+| `FINANCE` | `CloudAPIClient` | `AkShare` | 财务数据 |
 
-### DataSource 枚举
+---
 
-```python
-from datasource import DataSource
+## 4. 基础设施依赖
 
-DataSource.MOOTDX          # 通达信直连
-DataSource.EASYQUOTATION   # 新浪/腾讯行情
-DataSource.BAOSTOCK_API    # 证券宝
-DataSource.AKSHARE_API     # AkShare
-DataSource.PYWENCAI_API    # 同花顺问财
-```
+- **Nacos**: 服务注册与发现 (`127.0.0.1:8848`)。
+- **MySQL**: 存储基础元数据 (`alwaysup` 库)，通常使用 Docker 部署 (`36301` 端口)。
+- **ClickHouse**: 存储海量行情与特征数据 (`stock_data` 库)，使用 Docker 部署 (`9000` 端口)。
+- **mootdx-api**: 独立的 Python 服务，专职处理通达信协议连接 (`8003` 端口)。
 
-### 能力查询
+## 5. 扩展指南
 
-```python
-from datasource import (
-    get_primary_source,
-    get_fallback_source,
-    recommend_source,
-    DataType
-)
-
-# 获取主数据源
-get_primary_source(DataType.QUOTES)  # -> DataSource.MOOTDX
-
-# 获取降级数据源
-get_fallback_source(DataType.QUOTES)  # -> DataSource.EASYQUOTATION
-
-# 智能推荐
-recommend_source(DataType.FINANCE, prefer_local=True)
-```
-
-## 可观测性
-
-### 统计指标
-
-```python
-stats = service.get_stats()
-# {
-#   "mootdx": {
-#     "success_count": 100,
-#     "failure_count": 2,
-#     "success_rate": "98.04%",
-#     "avg_latency_ms": "45.2"
-#   }
-# }
-```
-
-## 扩展指南
-
-### 添加新数据源
-
-1. 在 `datasource/enums.py` 添加枚举值
-2. 在 `datasource/registry.py` 添加 `CAPABILITIES` 条目
-3. 在 `datasource/registry.py` 更新 `FALLBACK_CHAINS`
-4. 在 `service.py` 添加处理器方法
-5. 在 `ROUTING_TABLE` 添加路由配置
+详见 [Extension Guide](./extension_guide.md)
