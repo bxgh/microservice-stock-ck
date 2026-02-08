@@ -56,9 +56,11 @@ class SmartDecisionEngine:
             
         # SiliconFlow (Qwen free tier)
         if key := self.api_keys.get("siliconflow"):
+            logger.debug(f"DEBUG: Initializing SiliconFlow client with key: {key[:10]}...")
             self.clients["siliconflow"] = AsyncOpenAI(
                 api_key=key,
-                base_url="https://api.siliconflow.cn/v1"
+                base_url="https://api.siliconflow.cn/v1/",
+                timeout=60.0
             )
 
     async def run(
@@ -112,7 +114,24 @@ class SmartDecisionEngine:
             import re
             cleaned_result = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', cleaned_result)
             
-            parsed_obj = response_model.model_validate_json(cleaned_result)
+            try:
+                parsed_obj = response_model.model_validate_json(cleaned_result)
+            except Exception:
+                # Fallback: Try to handle nested JSON (e.g. {"AIAnalysisResult": {...}})
+                data = json.loads(cleaned_result)
+                if isinstance(data, dict) and len(data) == 1:
+                    first_key = next(iter(data))
+                    # If the single key contains a dict, try to validate that inner dict
+                    if isinstance(data[first_key], dict):
+                        try:
+                            parsed_obj = response_model.model_validate(data[first_key])
+                        except:
+                            # If inner validation also fails, raise original error or new one
+                            raise
+                    else:
+                        raise
+                else:
+                    raise
             
             # 6. Set Cache
             if use_cache:
@@ -145,22 +164,36 @@ class SmartDecisionEngine:
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
     async def _call_llm_with_retry(self, client_key: str, model: str, prompt: str, temperature: float) -> str:
+        logger.debug(f"DEBUG: Entering _call_llm_with_retry for {client_key} / {model}")
         client = self.clients.get(client_key)
-        if not client:
-            raise ValueError(f"Provider {client_key} not configured")
+        if client is None:
+            # Fallback to default client if requested one doesn't exist
+            logger.debug(f"DEBUG: Client {client_key} not found, falling back to {self.default_config.provider}")
+            client = self.clients.get(self.default_config.provider)
+            client_key = self.default_config.provider
             
         kwargs = {
             "model": model,
-            "messages": [
-                {"role": "system", "content": "You are a helpful assistant. Output pure JSON."},
-                {"role": "user", "content": prompt}
-            ],
             "temperature": temperature
         }
         
-        # Some providers (e.g. SiliconFlow Qwen) might not support response_format={"type": "json_object"}
-        if client_key != "siliconflow":
+        if client_key == "siliconflow":
+            # SiliconFlow DeepSeek models sometimes prefer simple user message or have issues with system role in some tiers
+            messages = [{"role": "user", "content": prompt}]
+            kwargs["response_format"] = None # Ensure it is None
+        else:
+            messages = [
+                {"role": "system", "content": "You are a helpful assistant. Output pure JSON."},
+                {"role": "user", "content": prompt}
+            ]
             kwargs["response_format"] = {"type": "json_object"}
 
-        response = await client.chat.completions.create(**kwargs)
-        return response.choices[0].message.content
+        kwargs["messages"] = messages
+        
+        logger.debug(f"DEBUG: Calling LLM {client_key} model {model} with {len(messages)} messages")
+        try:
+            response = await client.chat.completions.create(**kwargs)
+            return response.choices[0].message.content
+        except Exception as e:
+            logger.error(f"DEBUG: LLM Call Error for {client_key}: {e}")
+            raise

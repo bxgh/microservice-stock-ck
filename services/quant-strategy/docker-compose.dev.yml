@@ -19,15 +19,15 @@ services:
       - ENVIRONMENT=development
       
       # Python 环境
-      - PYTHONPATH=/app/src:/app/gsd-shared
+      - PYTHONPATH=/app/src:/app/gsd-shared:/app/common:/app/gsd-agent/src
       - PYTHONUNBUFFERED=1
       - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
       - TZ=Asia/Shanghai
       
       # 代理配置（统一使用宿主机代理）
-      - PROXY_URL=http://192.168.151.18:3128
-      - HTTP_PROXY=http://192.168.151.18:3128
-      - HTTPS_PROXY=http://192.168.151.18:3128
+      #- PROXY_URL=http://192.168.151.18:3128
+      #- HTTP_PROXY=http://192.168.151.18:3128
+      #- HTTPS_PROXY=http://192.168.151.18:3128
       
       # MySQL 配置（腾讯云外网数据库）
       - QS_DATABASE_TYPE=${QS_DATABASE_TYPE:-mysql}
@@ -49,6 +49,9 @@ services:
       - QS_MAX_CONCURRENT_STRATEGIES=20
       - QS_SIGNAL_WINDOW_SECONDS=60
       - QS_BACKTEST_ENABLED=true
+      
+      # AI 接口配置
+      - SILICONFLOW_API_KEY=${SILICONFLOW_API_KEY}
     
     # 🔥 开发模式启动命令 - 启用热加载
     command: >
@@ -70,6 +73,8 @@ services:
       - ./unit_tests:/app/unit_tests
       - ./scripts:/app/scripts
       - ../../libs/gsd-shared:/app/gsd-shared
+      - ../../libs/common:/app/common
+      - ../../libs/gsd-agent:/app/gsd-agent
       - quant-strategy-logs:/app/logs
       - quant-strategy-data:/app/data
     
