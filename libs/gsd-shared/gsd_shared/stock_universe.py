@@ -233,6 +233,16 @@ class StockUniverseService:
         for c in raw_codes:
             c_str = str(c).strip().upper()
             
+            # --- 优化: 如果已经是 TS 格式 (如 000001.SZ)，优先保留全量格式 ---
+            if '.' in c_str:
+                if any([
+                    is_valid_a_stock(c_str),
+                    is_valid_etf(c_str),
+                    is_valid_index(c_str)
+                ]):
+                    valid.add(c_str)
+                    continue
+
             # 标准化 (000001.SH -> 000001)
             norm = self.normalize_code(c_str)
             
