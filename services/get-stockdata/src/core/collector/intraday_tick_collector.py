@@ -13,6 +13,7 @@ import yaml
 import redis.asyncio as aioredis
 from gsd_shared.stock_universe import StockUniverseService
 from gsd_shared.tick import clean_stock_code
+from gsd_shared.validators import is_valid_index
 
 # 导入项目依赖
 from src.core.scheduling.calendar_service import CalendarService
@@ -199,30 +200,40 @@ class IntradayTickCollector:
             )
             logger.info(f"✅ HTTP session initialized (limit=256, mootdx-api: {self.mootdx_api_url})")
 
-        # 初始化 SnapshotWorker
-        if self.snapshot_worker is None and self.stock_pool:
-            self.snapshot_worker = SnapshotWorker(
-                http_session=self.http_session,
-                writer=self.writer,
-                stock_pool=self.stock_pool,
-                semaphore=self.snapshot_sem,
-                mootdx_api_url=self.mootdx_api_url,
-                batch_size=SNAPSHOT_BATCH_SIZE,
-                interval=SNAPSHOT_INTERVAL_SECONDS,
-                circuit_breaker=self.api_circuit_breaker
-            )
+        # 4. 初始化 Workers
+        if self.stock_pool:
+            # --- 优化: 过滤掉指数，因为指数没有分笔明细，且可能导致快照 API 返回空结果 ---
+            tick_pool = [c for c in self.stock_pool if not is_valid_index(clean_stock_code(c))]
+            filtered_count = len(self.stock_pool) - len(tick_pool)
+            if filtered_count > 0:
+                logger.info(f"⚙️ Filtered {filtered_count} indices from stock pool.")
 
-        # 初始化 TickWorker
-        if self.tick_worker is None and self.stock_pool:
-            self.tick_worker = TickWorker(
-                http_session=self.http_session,
-                writer=self.writer,
-                stock_pool=self.stock_pool,
-                semaphore=self.tick_sem,
-                mootdx_api_url=self.mootdx_api_url,
-                redis_client=self.redis_client,
-                circuit_breaker=self.api_circuit_breaker
-            )
+            # 初始化 SnapshotWorker
+            if self.snapshot_worker is None:
+                self.snapshot_worker = SnapshotWorker(
+                    http_session=self.http_session,
+                    writer=self.writer,
+                    stock_pool=tick_pool, # 使用过滤后的池
+                    semaphore=self.snapshot_sem,
+                    mootdx_api_url=self.mootdx_api_url,
+                    batch_size=SNAPSHOT_BATCH_SIZE,
+                    interval=SNAPSHOT_INTERVAL_SECONDS,
+                    circuit_breaker=self.api_circuit_breaker,
+                    max_retries=3 # 确保传递重试参数 (默认 3)
+                )
+
+            # 初始化 TickWorker
+            if self.tick_worker is None:
+                logger.info(f"⚙️ TickWorker scheduled for {len(tick_pool)} stocks")
+                self.tick_worker = TickWorker(
+                    http_session=self.http_session,
+                    writer=self.writer,
+                    stock_pool=tick_pool,
+                    semaphore=self.tick_sem,
+                    mootdx_api_url=self.mootdx_api_url,
+                    redis_client=self.redis_client,
+                    circuit_breaker=self.api_circuit_breaker
+                )
 
     async def _load_stock_pool(self):
         """
@@ -248,10 +259,15 @@ class IntradayTickCollector:
             if not raw_stocks:
                 logger.warning("⚠️ StockUniverse returned empty list!")
             
-            # 格式化为 mootdx-api 需要的 sh/sz 前缀格式
+            # 格式化为 mootdx-api 需要的前缀格式
             self.stock_pool = []
             for code in raw_stocks:
-                if code.startswith('6') or code.startswith('9'): # 9 通常是 B 股但 Universe 已过滤，这里防御性保留
+                if '.' in code:
+                    # TS 格式: 000001.SZ, 600519.SH, 899050.BJ
+                    prefix = code.split('.')[-1].lower()
+                    pure_code = code.split('.')[0]
+                    self.stock_pool.append(f"{prefix}{pure_code}")
+                elif code.startswith('6') or code.startswith('9'):
                     self.stock_pool.append(f"sh{code}")
                 else:
                     self.stock_pool.append(f"sz{code}")

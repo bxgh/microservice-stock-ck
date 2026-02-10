@@ -29,9 +29,10 @@ class SnapshotWorker:
         stock_pool: List[str],
         semaphore: asyncio.Semaphore,
         mootdx_api_url: str,
-        batch_size: int = 150,
+        batch_size: int = 80,
         interval: float = 3.0,
-        circuit_breaker: Any = None
+        circuit_breaker: Any = None,
+        max_retries: int = 3
     ):
         self.http_session = http_session
         self.writer = writer
@@ -39,6 +40,7 @@ class SnapshotWorker:
         self.mootdx_api_url = mootdx_api_url
         self.interval = interval
         self.circuit_breaker = circuit_breaker
+        self.max_retries = max_retries
         
         # 预计算批次
         self.batches = [
@@ -92,7 +94,7 @@ class SnapshotWorker:
         async def fetch_batch(batch_idx: int, batch: List[str]):
             async with self.sem:
                 try:
-                    return await self._fetch_snapshot_batch(batch, today, snapshot_time)
+                    return await self._fetch_snapshot_batch(batch_idx, batch, today, snapshot_time)
                 except Exception as e:
                     logger.warning(f"⚠️ Batch {batch_idx} failed: {repr(e)[:80]}")
                     return []
@@ -115,30 +117,45 @@ class SnapshotWorker:
             
         logger.info(f"📊 Snapshot: {len(all_rows)} rows from {success_count}/{len(self.batches)} batches")
 
-    async def _fetch_snapshot_batch(self, batch: List[str], today: Any, snapshot_time: datetime) -> List[Tuple]:
-        """单个批次的 HTTP 请求"""
+    async def _fetch_snapshot_batch(self, batch_idx: int, batch: List[str], today: Any, snapshot_time: datetime) -> List[Tuple]:
+        """单个批次的 HTTP 请求 (带有重试逻辑)"""
         if self.circuit_breaker and not self.circuit_breaker.is_available():
             return []
 
-        rows = []
         codes_param = ",".join(batch)
         url = f"{self.mootdx_api_url}/api/v1/quotes?codes={codes_param}"
         
-        async with self.http_session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-            if resp.status == 200:
-                if self.circuit_breaker:
-                    self.circuit_breaker.record_success()
-                data = await resp.json()
-                for item in data:
-                    row = self._map_snapshot_row(item, today, snapshot_time)
-                    if row:
-                        rows.append(row)
-            else:
-                if self.circuit_breaker:
-                    self.circuit_breaker.record_failure()
-                logger.warning(f"⚠️ Snapshot API returned {resp.status}")
+        for attempt in range(self.max_retries + 1):
+            try:
+                async with self.http_session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        rows = []
+                        for item in data:
+                            row = self._map_snapshot_row(item, today, snapshot_time)
+                            if row:
+                                rows.append(row)
+                        
+                        # 只要请求成功即记录成功 (即使 rows 为空，说明业务正常但无成交)
+                        if self.circuit_breaker:
+                            self.circuit_breaker.record_success()
+                            
+                        if not rows:
+                            logger.info(f"ℹ️ Batch {batch_idx} returned 0 valid rows (API count: {len(data)})")
+                        return rows
+                    else:
+                        logger.warning(f"⚠️ Snapshot API returned {resp.status} (Batch {batch_idx}, Attempt {attempt+1}/{self.max_retries+1})")
+            except Exception as e:
+                logger.warning(f"⚠️ Batch {batch_idx} fetch exception: {repr(e)[:100]} (Attempt {attempt+1}/{self.max_retries+1})")
+            
+            if attempt < self.max_retries:
+                await asyncio.sleep(2 ** attempt)  # 指数退避
         
-        return rows
+        # 只有在所有重试都失败后才记录熔断故障
+        if self.circuit_breaker:
+            self.circuit_breaker.record_failure()
+        logger.error(f"❌ Batch {batch_idx} failed after {self.max_retries + 1} attempts. Stocks: {batch[:3]}...")
+        return []
 
     def _map_snapshot_row(self, item: Any, trade_date: Any, snapshot_time: datetime) -> tuple:
         """映射数据行 (复用原逻辑)"""
