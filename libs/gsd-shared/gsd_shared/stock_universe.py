@@ -236,7 +236,7 @@ class StockUniverseService:
             # 标准化 (000001.SH -> 000001)
             norm = self.normalize_code(c_str)
             
-            # 基础格式校验: 允许 A 股、北证、ETF 或 指数
+            # 基础格式校验: 允许 A 股、北证、ETF 或 指数 (由 universe.yaml 控制)
             if any([
                 is_valid_a_stock(norm),
                 is_valid_etf(norm),
