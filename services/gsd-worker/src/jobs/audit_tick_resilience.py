@@ -112,10 +112,10 @@ class AuditJob:
                                any(amt_drop) as has_amt_drop
                         FROM (
                             SELECT stock_code,
-                                   total_volume < lagInFrame(total_volume, 1, 0) OVER (PARTITION BY stock_code ORDER BY snapshot_time) 
-                                     AND lagInFrame(total_volume, 1, 0) OVER (PARTITION BY stock_code ORDER BY snapshot_time) > 0 as vol_drop,
-                                   total_amount < lagInFrame(total_amount, 1, 0) OVER (PARTITION BY stock_code ORDER BY snapshot_time)
-                                     AND lagInFrame(total_amount, 1, 0) OVER (PARTITION BY stock_code ORDER BY snapshot_time) > 0 as amt_drop
+                                   total_volume < lagInFrame(toUInt64(total_volume), 1, toUInt64(0)) OVER (PARTITION BY stock_code ORDER BY snapshot_time) 
+                                     AND lagInFrame(toUInt64(total_volume), 1, toUInt64(0)) OVER (PARTITION BY stock_code ORDER BY snapshot_time) > 0 as vol_drop,
+                                   total_amount < lagInFrame(total_amount, 1, CAST(0, 'Decimal(18, 2)')) OVER (PARTITION BY stock_code ORDER BY snapshot_time)
+                                     AND lagInFrame(total_amount, 1, CAST(0, 'Decimal(18, 2)')) OVER (PARTITION BY stock_code ORDER BY snapshot_time) > 0 as amt_drop
                             FROM stock_data.snapshot_data_distributed
                             WHERE trade_date = '{sql_date}'
                         )

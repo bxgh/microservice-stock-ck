@@ -7,7 +7,7 @@ tasks:
     enabled: true
     schedule:
       type: trading_cron
-      expression: "0 12 * * 1-5"
+      expression: "0 12 * * mon-fri"
     target:
       workflow_id: "noon_market_gate"
       initial_context:
@@ -22,7 +22,7 @@ tasks:
     enabled: true
     schedule:
       type: trading_cron
-      expression: "45 8 * * 1-5"
+      expression: "45 8 * * mon-fri"
     target:
       workflow_id: "pre_market_prep_4.0"
       initial_context:
@@ -37,7 +37,7 @@ tasks:
     enabled: true
     schedule:
       type: trading_cron
-      expression: "25 20 * * 1-5"
+      expression: "30 15 * * mon-fri"
     target:
       # 替换为新的 Workflow
       workflow_id: "post_market_audit_4.0"

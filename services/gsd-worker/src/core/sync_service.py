@@ -486,7 +486,7 @@ class KLineSyncService:
             # 1. 查询ClickHouse最大除权日期
             async with self.clickhouse_pool.acquire() as ch_conn:
                 async with ch_conn.cursor() as cursor:
-                    await cursor.execute("SELECT MAX(ex_date) FROM stock_adjust_factor")
+                    await cursor.execute("SELECT MAX(adjust_date) FROM stock_adjust_factor")
                     result = await cursor.fetchone()
                     ch_max_date = result[0] if result and result[0] else None # '1900-01-01' logic in date check
 
@@ -580,7 +580,7 @@ class KLineSyncService:
             async with ch_conn.cursor() as cursor:
                 insert_query = """
                     INSERT INTO stock_adjust_factor 
-                    (stock_code, ex_date, fore_factor, back_factor)
+                    (stock_code, adjust_date, fore_adjust_factor, back_adjust_factor)
                     VALUES
                 """
                 

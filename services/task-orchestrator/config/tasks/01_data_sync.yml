@@ -53,7 +53,7 @@ tasks:
     enabled: true
     schedule:
       type: trading_cron
-      expression: "0 18 * * 1-5"
+      expression: "0 18 * * mon-fri"
     target:
       environment:
         CLICKHOUSE_USE_DISTRIBUTED: "true"
@@ -78,7 +78,7 @@ tasks:
     enabled: false
     schedule:
       type: trading_cron
-      expression: "0 18 * * 1-5"
+      expression: "0 18 * * mon-fri"
     target:
       task_template: "collect_tick_sharded"
       params:
@@ -96,7 +96,7 @@ tasks:
     enabled: false
     schedule:
       type: trading_cron
-      expression: "35 11 * * 1-5"
+      expression: "35 11 * * mon-fri"
     target:
       image: gsd-worker:latest
       command: ["jobs.intraday_tick_validation", "--session", "noon"]
@@ -112,7 +112,7 @@ tasks:
     enabled: false
     schedule:
       type: trading_cron
-      expression: "5 15 * * 1-5"
+      expression: "5 15 * * mon-fri"
     target:
       image: gsd-worker:latest
       command: ["jobs.intraday_tick_validation", "--session", "close"]
@@ -168,7 +168,7 @@ tasks:
     enabled: true
     schedule:
       type: trading_cron
-      expression: "0 18 * * 1-5" # 交易日 18:00
+      expression: "0 18 * * mon-fri" # 交易日 18:00
     target:
       command: ["jobs.sync_metadata", "--table", "all", "--days", "7"]
     retry:
