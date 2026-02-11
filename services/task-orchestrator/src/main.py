@@ -397,7 +397,7 @@ async def register_jobs() -> None:
                     logger.info(f"  • {task_def.id}: Using Generic HTTP Runner")
                     
                 elif task_def.type == TaskType.DOCKER:
-                    async def docker_wrapper(t=task_def):
+                    async def docker_wrapper(t=task_def, params=None):
                         await GenericTaskRunner.run_docker_task(t)
                     job_func = docker_wrapper
                     logger.info(f"  • {task_def.id}: Using Generic Docker Runner")

@@ -22,6 +22,7 @@ import json
 import os
 import xxhash
 import pytz
+from datetime import datetime
 from redis.asyncio import Redis
 from redis.asyncio.cluster import RedisCluster
 from gsd_shared.validators import is_valid_a_stock, is_valid_etf, is_valid_index

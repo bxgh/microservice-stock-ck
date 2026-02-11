@@ -28,20 +28,26 @@ CONSUMER_MAX_IDLE_CYCLES = 10  # 队列最大轮询空闲次数 (5秒)
 
 
 async def main(
-    mode: str = 'incremental', 
+    mode: str = None, 
     date: str = None, 
-    scope: str = "config",
+    scope: str = None,
     shard_index: int = None,
     shard_total: int = None,
     distributed_source: str = "none",
     distributed_role: str = "consumer",
     concurrency: int = 60,
     stock_codes: list = None,
-    idempotent: bool = False  # Changed default to False for safety
+    idempotent: bool = False,
+    force_all: bool = False
 ) -> int:
     """
     分笔数据同步主函数
     """
+    # [New V4.0] 优先读取环境变量 (Orchestrator 注入)
+    mode = mode or os.getenv("SYNC_MODE") or "repair"
+    scope = scope or os.getenv("SYNC_SCOPE") or "config"
+    date = date or os.getenv("SYNC_DATE")
+    
     shard_info = f", 分片={shard_index}/{shard_total}" if shard_index is not None else ""
     
     # 获取目标日期：6:00 AM 之前使用前一日
@@ -79,7 +85,8 @@ async def main(
             )
             # 只有在非分片模式或分片0时，才执行全表物理清理 (避免重复操作导致 ClickHouse Mutation 堆积)
             if shard_index is None or shard_index == 0:
-                await service.purge_tick_data(target_date, stock_codes=None)
+                # 全量模式根据参数决定是否强制清场
+                await service.purge_tick_data(target_date, stock_codes=None, force_all=force_all)
             idempotent_next = False # 已经提前清场
             
         elif mode == "repair":
@@ -96,7 +103,8 @@ async def main(
                     shard_total=shard_total
                 )
                 if shard_index is None or shard_index == 0:
-                    await service.purge_tick_data(target_date, stock_codes=None)
+                    # 修复模式自动升级全量时，受 Safety Valve 保护 (除非显式传 force_all)
+                    await service.purge_tick_data(target_date, stock_codes=None, force_all=force_all)
                 idempotent_next = False
             else:
                 # [New V4.0] 定向修复模式也需要过滤停牌，防止无效补采
@@ -112,7 +120,7 @@ async def main(
                     logger.warning(f"⚠️ 定向修复过滤停牌失败: {e}")
 
                 if not stock_codes:
-                    logger.info("✅ 任务上下文中无待修复股票 (AI/Audit 过滤后为空)，优雅跳过。")
+                    logger.info("✅ 修复名单为空 (审计全覆盖)，无需补采。")
                     return 0
 
                 logger.info(f"🛠️ 定向修复模式: 正在清理并重抓 {len(stock_codes)} 只个股...")
@@ -261,7 +269,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--mode", 
         type=str, 
-        default="full",
+        default=None,
         choices=["full", "repair"],
         help="同步模式: full(全量重建) 或 repair(定向修复)"
     )
@@ -318,10 +326,14 @@ if __name__ == "__main__":
         help="分片ID (Alias for shard-index)"
     )
     parser.add_argument(
-        "--force-clean",
+        "--force-all",
         action="store_true",
-        dest="idempotent",
-        help="[危险] 同步前强制清理旧数据 (默认关闭)"
+        help="[危险] 允许强制全量删除全天数据 (跳过安全阈值)"
+    )
+    parser.add_argument(
+        "--idempotent",
+        action="store_true",
+        help="同步前强制清理对应股票的旧数据 (幂等模式)"
     )
     args, unknown = parser.parse_known_args()
     if unknown:
@@ -346,6 +358,7 @@ if __name__ == "__main__":
         args.distributed_role,
         args.concurrency,
         passed_codes,
-        idempotent=args.idempotent
+        idempotent=args.idempotent,
+        force_all=args.force_all
     ))
     sys.exit(exit_code)

@@ -162,8 +162,8 @@ class CommandPoller:
                         logger.error(f"❌ 任务 '{task_id}' 未找到 in {all_ids}")
                         raise ValueError(f"任务 {task_id} 未在本地注册. 可用任务: {all_ids}")
 
-                    # 如果是 Docker 任务且有参数，使用 DockerExecutor 动态执行
-                    if params and self.docker_client and task_def.type == "docker":
+                    # 如果是 Docker 任务，使用 DockerExecutor 动态执行
+                    if self.docker_client and task_def.type == "docker":
                         # [Optimization] Silent Skip check
                         # If a diagnostic step (like AI Review) decides we should SKIP, 
                         # the subsequent repair step can check this 'mode' or 'repair_mode'.

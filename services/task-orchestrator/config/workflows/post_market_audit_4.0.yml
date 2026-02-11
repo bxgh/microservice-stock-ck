@@ -63,6 +63,7 @@ workflow:
       retry_policy: fixed
       params:
         input_data: "{{ re_audit.abnormal_list }}"
+        input_file: "{{ re_audit.output_file }}"
         trigger_condition: "{{ re_audit.diagnosis.action }}"
 
     # 6. 最终修复

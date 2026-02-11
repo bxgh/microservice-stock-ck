@@ -48,6 +48,7 @@ async def main():
     # Support both old --quality-report and new workflow arguments
     parser.add_argument("--quality-report", type=str, help="Legacy: Abnormal list JSON string/Report")
     parser.add_argument("--input-data", type=str, help="Workflow: Abnormal list (JSON)")
+    parser.add_argument("--input-file", type=str, help="Workflow: Batch input file path (JSON)")
     parser.add_argument("--trigger-condition", type=str, default="AI_AUDIT", help="Workflow: Trigger Condition (Action)")
     
     args = parser.parse_args()
@@ -77,8 +78,18 @@ async def main():
         return
 
     try:
-        # 1. 解析输入
-        raw_input = args.input_data or args.quality_report
+        # 1. 解析输入 (优先读取文件以避免 Argument list too long)
+        raw_input = None
+        if args.input_file and os.path.exists(args.input_file):
+            try:
+                with open(args.input_file, 'r', encoding='utf-8') as f:
+                    raw_input = f.read()
+                logger.info(f"📂 从文件加载输入数据: {args.input_file} ({len(raw_input)} bytes)")
+            except Exception as e:
+                logger.error(f"❌ 读取输入文件失败: {e}")
+        
+        if not raw_input:
+            raw_input = args.input_data or args.quality_report
         if not raw_input:
             # Empty input -> No abnormalities
             print("GSD_OUTPUT_JSON: {\"confirmed_bad_codes\": []}")

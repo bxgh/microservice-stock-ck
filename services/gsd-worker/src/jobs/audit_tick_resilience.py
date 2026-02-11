@@ -275,6 +275,18 @@ class AuditJob:
                     return
                 
                 output = await self.execute_validation(target_scope)
+                
+                # [New V4.0] 处理大数据量输出，防止 Argument list too long
+                missing_count = output["stats"]["missing"] + output["stats"]["bad_quality"]
+                if missing_count > 100:
+                    tmp_dir = "/tmp/gsd_audit"
+                    os.makedirs(tmp_dir, exist_ok=True)
+                    file_path = f"{tmp_dir}/audit_{self.target_date}_{self.session}.json"
+                    with open(file_path, 'w', encoding='utf-8') as f:
+                        json.dump(output, f, ensure_ascii=False)
+                    output["output_file"] = file_path
+                    logger.info(f"💾 审计发现大量异常 ({missing_count})，原始数据已存至: {file_path}")
+
                 # JSON output for orchestrator
                 print(f"\n---GSD_START---\nGSD_OUTPUT_JSON: {json.dumps(output)}\n---GSD_END---", flush=True)
             finally:

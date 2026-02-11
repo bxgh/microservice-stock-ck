@@ -170,10 +170,11 @@ class TickSyncService:
                 self.redis_client = None
             logger.info("✓ Resources Closed")
 
-    async def purge_tick_data(self, trade_date: str, stock_codes: Optional[List[str]] = None) -> bool:
+    async def purge_tick_data(self, trade_date: str, stock_codes: Optional[List[str]] = None, force_all: bool = False) -> bool:
         """
-        [NEW] 物理清理异常分笔数据
-        :param stock_codes: 如果为 None，则清理该日期全天全市场数据
+        物理清理异常分笔数据
+        :param stock_codes: 如果为 None，则尝试清理该日期全天数据 (受阈值限制)
+        :param force_all: 是否强制执行全量清理 (跳过阈值检查)
         """
         if not self.clickhouse_pool:
             return False
@@ -186,17 +187,37 @@ class TickSyncService:
             # 动态选择目标表
             today_str = datetime.now(CST).strftime("%Y%m%d")
             target_table = TABLE_INTRADAY_LOCAL if trade_date_dt == today_str else TABLE_HISTORY_LOCAL
-
+            
+            # [Safety Valve V4.0] 风险控制：防止意外全表删除
             if stock_codes is None:
+                if not force_all:
+                    logger.error(f"❌ [Safety Valve] 拒绝全天全量清理 ({formatted_date})，必须显式指定 force_all=True")
+                    return False
+                
                 # 全天全量清理模式 (单次 Mutation，最高效)
                 sql = f"ALTER TABLE stock_data.{target_table} ON CLUSTER stock_cluster DELETE WHERE trade_date = '{formatted_date}'"
-                logger.warning(f"🚨 [Full Day Purge] 正在清空 {target_table} 的全天记录: {formatted_date}")
+                logger.warning(f"🚨 [CRITICAL] 正在清空 {target_table} 的全天记录: {formatted_date}")
                 async with self.clickhouse_pool.acquire() as conn:
                     async with conn.cursor() as cursor:
                         await cursor.execute(sql)
             else:
+                # 定向清理模式
+                if not stock_codes:
+                    logger.info(f"✅ 定向清理列表为空，无需操作 ({formatted_date})")
+                    return True
+                
+                # 检查删除比例 (如果超过市场 10% 且未强制，则拦截)
+                try:
+                    all_stocks = await self.stock_universe.get_all_a_stocks()
+                    if len(stock_codes) > len(all_stocks) * 0.1 and not force_all:
+                        logger.error(f"❌ [Safety Valve] 拒绝大范围清理 ({len(stock_codes)} 只股票)，超过市场 10% 阈值")
+                        return False
+                except Exception as e:
+                    logger.warning(f"⚠️ 无法获取市场总量，跳过安全阈值检查: {e}")
+
                 # 分批执行定向清理
                 batch_size = 500
+                logger.warning(f"🗑️ [Batch Purge] 正在从 {target_table} 清理 {len(stock_codes)} 只个股: {formatted_date}")
                 for i in range(0, len(stock_codes), batch_size):
                     batch = stock_codes[i:i+batch_size]
                     cleaned_batch = [clean_stock_code(c) for c in batch]
@@ -207,12 +228,11 @@ class TickSyncService:
                     DELETE WHERE trade_date = '{formatted_date}' 
                       AND stock_code IN ({codes_str})
                     """
-                    logger.warning(f"🗑️ [Batch Purge] 正在从 {target_table} 清理 {len(batch)} 只个股: {formatted_date}")
                     async with self.clickhouse_pool.acquire() as conn:
                         async with conn.cursor() as cursor:
                             await cursor.execute(sql)
             
-            logger.info(f"✅ 清理指令已同步至 ClickHouse.")
+            logger.info(f"✅ 清理指令已下发至 ClickHouse.")
             return True
 
         except Exception as e:
