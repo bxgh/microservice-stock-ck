@@ -50,7 +50,7 @@ async def main(mode: str = 'adaptive', shard_index: int = None, date: str = None
             logger.info(f"🔧 收到日期参数 {date}，使用智能自愈同步（自动检测并修复不一致数据）")
         
         # 统一使用智能增量同步（自带自愈功能）
-        stats = await service.sync_smart_incremental()
+        stats = await service.sync_smart_incremental(forced_date=date)
         
         # 同步复权因子
         await service.sync_adjust_factors()

@@ -1,6 +1,7 @@
 import logging
 import os
 import json
+import asyncio
 from contextlib import asynccontextmanager
 from typing import Optional, Dict, Any
 from fastapi import FastAPI
@@ -158,14 +159,42 @@ class GenericTaskRunner:
             raise
 
     @staticmethod
+    @staticmethod
+    async def watch_container(container, log_id: int, start_time: datetime):
+        """Asynchronously watch a container and log its outcome"""
+        try:
+            # Wait for container to exit
+            result = container.wait()
+            exit_code = result.get('StatusCode', -1)
+            duration = (datetime.now() - start_time).total_seconds()
+            
+            if exit_code == 0:
+                await task_logger.log_success(log_id, duration, exit_code, container.id)
+            else:
+                # Capture some logs for failure analysis
+                try:
+                    logs = container.logs(tail=50).decode('utf-8')
+                except:
+                    logs = "Could not retrieve logs"
+                await task_logger.log_failure(log_id, f"Container exited with code {exit_code}\nTail:\n{logs}", exit_code, container.id)
+                
+            logger.info(f"🏁 Docker Task finished: log_id={log_id} exit={exit_code} duration={duration:.1f}s")
+            
+        except Exception as e:
+            logger.error(f"❌ Error watching container {container.id}: {e}")
+            if log_id != -1:
+                await task_logger.log_failure(log_id, f"Watch error: {str(e)}", -1, container.id)
+
+    @staticmethod
     async def run_docker_task(task: TaskDefinition):
-        """Generic runner for Docker tasks"""
+        """Generic runner for Docker tasks with Log tracking"""
         if not docker_client:
             logger.error("❌ Docker client not connected")
             return
 
         image = task.target.get('image') or settings.WORKER_IMAGE
         command = task.target.get('command')
+        
         # Prepare Environment: Merge task-specific env with default worker settings
         env = {}
         # 1. Start with defaults from orchestrator settings
@@ -192,10 +221,7 @@ class GenericTaskRunner:
         network_mode = task.target.get('network_mode', 'host')
 
         # 3. Prepare Volumes
-        # 汇总全局默认挂载 + 任务特定挂载
         volumes_config = {}
-        
-        # A. 从 global.docker.default_volumes 获取 (如果有)
         if task_config and task_config.global_ and task_config.global_.docker:
             default_vols = task_config.global_.docker.get('default_volumes', [])
             for v in default_vols:
@@ -203,26 +229,32 @@ class GenericTaskRunner:
                 if len(parts) >= 2:
                     host_path = parts[0]
                     if host_path.startswith('.'):
-                        host_path = os.path.join(settings.BASE_DIR, host_path.lstrip('./'))
+                        host_path = os.path.join(settings.HOST_BASE_DIR, host_path.lstrip('./'))
                     volumes_config[host_path] = {'bind': parts[1], 'mode': parts[2] if len(parts) > 2 else 'rw'}
 
-        # B. 从任务 target.volumes 获取
         task_vols = task.target.get('volumes', [])
         for v in task_vols:
             parts = v.split(':')
             if len(parts) >= 2:
                 host_path = parts[0]
                 if host_path.startswith('.'):
-                    host_path = os.path.join(settings.BASE_DIR, host_path.lstrip('./'))
+                    host_path = os.path.join(settings.HOST_BASE_DIR, host_path.lstrip('./'))
                 volumes_config[host_path] = {'bind': parts[1], 'mode': parts[2] if len(parts) > 2 else 'rw'}
 
-        logger.info(f"▶️ Executing Docker task: {task.name} ({image}) net={network_mode} vols={len(volumes_config)}")
-        
         # Ensure gsd-agent is mounted if it exists on host
-        agent_path = os.path.join(settings.BASE_DIR, "libs/gsd-agent")
+        agent_path = os.path.join(settings.HOST_BASE_DIR, "libs/gsd-agent")
         if os.path.exists(agent_path):
             volumes_config[agent_path] = {'bind': '/app/libs/gsd-agent', 'mode': 'ro'}
 
+        start_time = datetime.now()
+        log_id = await task_logger.log_start(
+            task.id, 
+            task.name, 
+            {"image": image, "command": command, "network": network_mode}
+        )
+
+        logger.info(f"▶️ Executing Docker task: {task.name} ({image}) net={network_mode} vols={len(volumes_config)}")
+        
         try:
             container = docker_client.containers.run(
                 image=image,
@@ -233,9 +265,15 @@ class GenericTaskRunner:
                 network_mode=network_mode,
                 remove=False  # Keep container for debugging
             )
-            logger.info(f"✅ Docker Task started: {task.name} - CID {container.id[:12]}")
+            logger.info(f"✅ Docker Task started: {task.name} - CID {container.id[:12]} (log_id={log_id})")
+            
+            # Start watcher
+            asyncio.create_task(GenericTaskRunner.watch_container(container, log_id, start_time))
+            
         except Exception as e:
-            logger.error(f"❌ Docker Task failed: {task.name} - {e}")
+            logger.error(f"❌ Docker Task launch failed: {task.name} - {e}")
+            if log_id != -1:
+                await task_logger.log_failure(log_id, f"Launch error: {str(e)}")
             raise
 
     @staticmethod

@@ -204,7 +204,7 @@ class KLineSyncService:
             await self._update_status("failed", f"全量同步失败: {str(e)}", 0.0)
             raise e
     
-    async def sync_smart_incremental(self):
+    async def sync_smart_incremental(self, forced_date: str = None):
         """
         智能增量同步（自愈版）：
         1. 查询 ClickHouse 最大日期及其记录数
@@ -213,25 +213,34 @@ class KLineSyncService:
         """
         start_time = datetime.now()
         duration = 0.0
-        logger.info("开始智能增量同步（自愈模式）...")
+        logger.info(f"开始智能增量同步（模式={'强制同步' if forced_date else '自动增量'}, 日期={forced_date or 'latest'})...")
         await self._update_status("running", "正在检查数据完整性...", 0.0)
         
         try:
-            # 第1步：查询 ClickHouse 中的最大交易日期及其记录数
-            async with self.clickhouse_pool.acquire() as ch_conn:
-                async with ch_conn.cursor() as cursor:
-                    await cursor.execute("SELECT MAX(trade_date) as max_date FROM stock_kline_daily")
-                    result = await cursor.fetchone()
-                    clickhouse_max_date = result[0] if result and result[0] else None
-            
-            if not clickhouse_max_date:
-                logger.warning("ClickHouse 表为空，将执行全量同步")
-                await self.sync_full()
-                return
-            
-            logger.info(f"ClickHouse 最大日期: {clickhouse_max_date}")
-            
-            # 第2步：查询该日期在 ClickHouse 和 MySQL 中的记录数
+            re_sync_date = None
+            clickhouse_max_date = None
+
+            if forced_date:
+                # 如果指定了强制日期，直接跳过自动检测，标记为需要重采样
+                clickhouse_max_date = forced_date
+                re_sync_date = forced_date
+                logger.info(f"🔧 指定强制同步日期: {forced_date}，将执行删除后重采")
+            else:
+                # 第1步：查询 ClickHouse 中的最大交易日期
+                async with self.clickhouse_pool.acquire() as ch_conn:
+                    async with ch_conn.cursor() as cursor:
+                        await cursor.execute("SELECT MAX(trade_date) as max_date FROM stock_kline_daily")
+                        result = await cursor.fetchone()
+                        clickhouse_max_date = result[0] if result and result[0] else None
+                
+                if not clickhouse_max_date:
+                    logger.warning("ClickHouse 表为空，将执行全量同步")
+                    await self.sync_full()
+                    return
+                
+                logger.info(f"ClickHouse 自动检测最大日期: {clickhouse_max_date}")
+
+            # 第2步：查询该日期在 ClickHouse 和 MySQL 中的记录数对比（如果是 forced_date 则必须对比以决定是否删除）
             async with self.clickhouse_pool.acquire() as clickhouse_conn:
                 async with clickhouse_conn.cursor() as cursor:
                     await cursor.execute(
@@ -248,42 +257,66 @@ class KLineSyncService:
                     )
                     mysql_record_count = (await cursor.fetchone())[0]
             
-            logger.info(f"最大日期 {clickhouse_max_date} 记录数对比: ClickHouse={clickhouse_record_count}, MySQL={mysql_record_count}")
+            logger.info(f"日期 {clickhouse_max_date} 记录数对比: ClickHouse={clickhouse_record_count}, MySQL={mysql_record_count}")
             
-            # 第3步：如果不一致，删除 ClickHouse 中该日期的数据
-            if clickhouse_record_count != mysql_record_count:
-                logger.warning(f"⚠️ 数据不一致，删除 ClickHouse 中 {clickhouse_max_date} 的数据并重新同步")
+            # 第3步：如果不一致或强制指定了日期，删除 ClickHouse 中该日期的数据并重来
+            if forced_date or (clickhouse_record_count != mysql_record_count):
+                logger.warning(f"⚠️ {'强制同步' if forced_date else '数据不一致'}，执行删除重采: {clickhouse_max_date}")
                 await self.delete_kline_by_date(clickhouse_max_date)
+                re_sync_date = clickhouse_max_date
                 
-                # 重新查询最大日期（删除后可能变化）
+                # 记录需要额外补采的日期
+                re_sync_date = clickhouse_max_date
+                
+                # 重新查询最大日期（删除后可能变化，但由于 ClickHouse 异步删除，此处查询仅作日志参考）
                 async with self.clickhouse_pool.acquire() as clickhouse_conn:
                     async with clickhouse_conn.cursor() as cursor:
-                        await cursor.execute("SELECT MAX(trade_date) FROM stock_kline_daily")
+                        # 排除掉刚刚删除的日期，寻找真正的历史最大点
+                        await cursor.execute(
+                            "SELECT MAX(trade_date) FROM stock_kline_daily WHERE trade_date < %(date)s",
+                            {"date": re_sync_date}
+                        )
                         result = await cursor.fetchone()
                         clickhouse_max_date = result[0] if result and result[0] else None
                 
                 if clickhouse_max_date:
-                    logger.info(f"删除后新的最大日期: {clickhouse_max_date}")
+                    logger.info(f"删除后（不含目标日）新的历史最大日期: {clickhouse_max_date}")
                 else:
-                    logger.info("删除后表为空，将同步全部数据")
+                    logger.info("删除后表为空，将从头同步")
             
-            # 第4步：同步所有大于最大日期的数据
-            query = """
-                SELECT 
-                    code, trade_date, open, high, low, close,
-                    volume, amount, turnover, pct_chg
-                FROM stock_kline_daily
-                WHERE trade_date > %s
-                ORDER BY trade_date, code
-            """ if clickhouse_max_date else """
-                SELECT 
-                    code, trade_date, open, high, low, close,
-                    volume, amount, turnover, pct_chg
-                FROM stock_kline_daily
-                ORDER BY trade_date, code
-            """
-            
-            params = (clickhouse_max_date,) if clickhouse_max_date else ()
+            # 第4步：同步数据
+            # 如果有 re_sync_date，则必须包含该日（使用 >=）
+            # 否则从 clickhouse_max_date 之后开始（使用 >）
+            if re_sync_date:
+                query = """
+                    SELECT 
+                        code, trade_date, open, high, low, close,
+                        volume, amount, turnover, pct_chg
+                    FROM stock_kline_daily
+                    WHERE trade_date >= %s
+                    ORDER BY trade_date, code
+                """
+                params = (re_sync_date,)
+            elif clickhouse_max_date:
+                query = """
+                    SELECT 
+                        code, trade_date, open, high, low, close,
+                        volume, amount, turnover, pct_chg
+                    FROM stock_kline_daily
+                    WHERE trade_date > %s
+                    ORDER BY trade_date, code
+                """
+                params = (clickhouse_max_date,)
+            else:
+                query = """
+                    SELECT 
+                        code, trade_date, open, high, low, close,
+                        volume, amount, turnover, pct_chg
+                    FROM stock_kline_daily
+                    ORDER BY trade_date, code
+                """
+                params = ()
+
             rows = await self._fetch_from_mysql_with_retry(query, params)
             
             duration = (datetime.now() - start_time).total_seconds()
