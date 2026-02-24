@@ -342,16 +342,51 @@ class KLineSyncService:
             raise e
     
     async def delete_kline_by_date(self, trade_date):
-        """物理删除 ClickHouse 中指定日期的数据"""
+        """物理删除 ClickHouse 中指定日期的数据 (包含等待异步操作完成)"""
         logger.info(f"正在删除 ClickHouse 中的数据: {trade_date}")
         async with self.clickhouse_pool.acquire() as conn:
             async with conn.cursor() as cursor:
+                # 1. 发送删除指令
                 await cursor.execute(
                     "ALTER TABLE stock_kline_daily_local ON CLUSTER stock_cluster DELETE WHERE trade_date = %(date)s",
                     {'date': trade_date}
                 )
-                logger.info(f"✓ 已发送删除指令 (trade_date={trade_date})，等待异步处理...")
-                await asyncio.sleep(CLICKHOUSE_DELETE_WAIT_SECONDS)
+                logger.info(f"✓ 已发送删除指令 (trade_date={trade_date})，开始等待异步处理完成...")
+                
+                # 2. 等待变动完成
+                await self._wait_for_clickhouse_mutations("stock_kline_daily_local", f"trade_date = '{trade_date}'")
+
+    async def _wait_for_clickhouse_mutations(self, table_name: str, filter_str: str, timeout: int = 120):
+        """等待 ClickHouse 变动（如 DELETE）完成"""
+        start_time = datetime.now()
+        check_interval = 2
+        
+        logger.info(f"⏳ 等待表 {table_name} 的变动完成 (过滤条件: {filter_str})...")
+        
+        while (datetime.now() - start_time).total_seconds() < timeout:
+            async with self.clickhouse_pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    # 查询该表尚未完成的变动
+                    await cursor.execute(f"""
+                        SELECT count() 
+                        FROM system.mutations 
+                        WHERE table = '{table_name}' 
+                          AND command LIKE '%{filter_str}%' 
+                          AND is_done = 0
+                    """)
+                    row = await cursor.fetchone()
+                    unfinished_count = row[0] if row else 0
+                    
+                    if unfinished_count == 0:
+                        logger.info(f"✅ 所有相关变动已完成 (耗时: {(datetime.now() - start_time).total_seconds():.1f}s)")
+                        return True
+                    
+                    logger.info(f"... 尚有 {unfinished_count} 条变动在后台执行中，继续等待...")
+            
+            await asyncio.sleep(check_interval)
+            
+        logger.warning(f"⚠️ 等待超时 ({timeout}s)，变动可能仍在后台执行，但程序将继续")
+        return False
 
     async def sync_by_date(self, trade_date: str = None):
         """
