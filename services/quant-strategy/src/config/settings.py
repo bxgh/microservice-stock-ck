@@ -73,10 +73,11 @@ class Settings(BaseSettings):
 
     # ClickHouse 配置 (新增)
     QS_CLICKHOUSE_HOST: str = "127.0.0.1"
-    QS_CLICKHOUSE_PORT: int = 9000
+    QS_CLICKHOUSE_PORT: int = 8123
     QS_CLICKHOUSE_USER: str = "default"
     QS_CLICKHOUSE_PASSWORD: str = ""
     QS_CLICKHOUSE_DB: str = "stock_data"
+    QS_CLICKHOUSE_ALTDATA_DB: str = "altdata"
     QS_CLICKHOUSE_ANALYTICS_TABLE: str = "analysis_results"
 
     # Risk Filter Thresholds (EPIC-002)

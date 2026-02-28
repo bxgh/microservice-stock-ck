@@ -115,19 +115,40 @@ class CandidatePoolService:
             score_tasks = [score_with_limit(stock, semaphore) for stock in universe_stocks]
             scores = await asyncio.gather(*score_tasks, return_exceptions=True)
 
-            # 3. 筛选与分类
+            # 3. 提取另类数据生态红利 (Story 17.6)
+            eco_bonuses = await self._get_eco_bonuses(universe_stocks)
+            
+            # 3.5 提取硬件底层红利 (Story 18.3)
+            hw_bonuses = await self._get_hardware_bonuses(universe_stocks)
+
+            # 4. 筛选与分类
             for stock, score_result in zip(universe_stocks, scores, strict=False):
                 # Handle exceptions
                 if isinstance(score_result, Exception):
                     logger.warning(f"Scoring failed for {stock.code}: {score_result}")
                     continue
 
-                score = score_result
+                raw_score = score_result
 
                 # Filter: Only high-quality stocks (score >= 60)
-                if score is None or score < self.min_score_threshold:
-                    logger.debug(f"Filtered out {stock.code}: score={score}")
+                if raw_score is None or raw_score < self.min_score_threshold:
+                    logger.debug(f"Filtered out {stock.code}: score={raw_score}")
                     continue
+                    
+                score = raw_score
+                entry_reason = f"Scored {raw_score:.1f} in {pool_type} model"
+                
+                # Apply Eco Bonus
+                if stock.code in eco_bonuses:
+                    bonus, reason = eco_bonuses[stock.code]
+                    score = min(100.0, score + bonus)
+                    entry_reason += f" | {reason} (+{bonus})"
+
+                # Apply Hardware Bonus
+                if stock.code in hw_bonuses:
+                    bonus, reason = hw_bonuses[stock.code]
+                    score = min(100.0, score + bonus)
+                    entry_reason += f" | {reason} (+{bonus})"
 
                 # Classify into sub-pool
                 sub_pool = self._classify_stock(stock, pool_type, score)
@@ -136,7 +157,7 @@ class CandidatePoolService:
                     "code": stock.code,
                     "score": score,
                     "sub_pool": sub_pool,
-                    "entry_reason": f"Scored {score:.1f} in {pool_type} model"
+                    "entry_reason": entry_reason
                 })
 
             # 排序: 分数降序
@@ -238,13 +259,92 @@ class CandidatePoolService:
             elif pool_type == 'swing':
                 # Swing pool: Use mock scoring for now (TODO: implement smart money scoring)
                 logger.debug(f"Using mock scoring for swing pool: {stock.code}")
-                return self._calculate_mock_score(stock, pool_type)
-            else:
-                return None
-
         except Exception as e:
-            logger.error(f"Scoring error for {stock.code}: {e}", exc_info=True)
+            logger.error(f"Error fetching data for scoring {stock.code}: {e}")
             return None
+
+    async def _get_eco_bonuses(self, universe_stocks: list[UniverseStock]) -> dict[str, tuple[float, str]]:
+        """
+        Extracted logic for calculating ecosystem bonuses to allow easier testing.
+        """
+        eco_bonuses = {}  # type: dict[str, tuple[float, str]]  # code -> (bonus, reason)
+        try:
+            from dao.altdata import AltDataDAO
+            from config.altdata_mapping import get_concepts_for_label
+            
+            alt_dao = AltDataDAO()
+            signals_df = alt_dao.get_active_signals()
+            print(f"DEBUG signals_df empty: {signals_df.empty}")
+            if not signals_df.empty:
+                concept_to_level = {}
+                level_bonus = {"EXTREME": 15.0, "HOT": 10.0, "WARM": 5.0}
+                
+                for _, row in signals_df.iterrows():
+                    concepts = get_concepts_for_label(row["label"])
+                    print(f"DEBUG label: {row['label']}, concepts: {concepts}")
+                    bonus = level_bonus.get(row["signal_level"], 0.0)
+                    for c in concepts:
+                        if c not in concept_to_level or concept_to_level[c]["bonus"] < bonus:
+                            concept_to_level[c] = {
+                                "bonus": bonus, 
+                                "label": row["label"], 
+                                "level": row["signal_level"]
+                            }
+                
+                if concept_to_level:
+                    print(f"DEBUG concept_to_level dict: {list(concept_to_level.keys())}")
+                    from dao.industry import IndustryDAO
+                    ind_dao = IndustryDAO()
+                    # 批量查询 Universe 中的概念
+                    concept_df = await ind_dao.get_stock_concepts([s.code for s in universe_stocks])
+                    print(f"DEBUG concept_df empty: {concept_df.empty}")
+                    if not concept_df.empty:
+                        for _, row in concept_df.iterrows():
+                            code = row["ts_code"]
+                            c_name = row["sector_name"]
+                            print(f"DEBUG testing code: {code}, concept: {c_name}")
+                            if c_name in concept_to_level:
+                                print(f"DEBUG matched: {code} -> {c_name}")
+                                c_info = concept_to_level[c_name]
+                                if code not in eco_bonuses or eco_bonuses[code][0] < c_info["bonus"]:
+                                    eco_bonuses[code] = (
+                                        c_info["bonus"], 
+                                        f"Eco[{c_info['label']}({c_info['level']})->{c_name}]"
+                                    )
+                        print(f"DEBUG final eco_bonuses: {eco_bonuses}")
+        except Exception as e:
+            logger.error(f"Fallback: Failed to inject ecosystem signals, ignoring: {e}")
+        return eco_bonuses
+
+    async def _get_hardware_bonuses(self, universe_stocks: list[UniverseStock]) -> dict[str, tuple[float, str]]:
+        """
+        聚合硬件另类信号 (GPU 价格, 政企投资) 并映射到个股加分 (Story 18.3)
+        """
+        hw_bonuses = {} # type: dict[str, tuple[float, str]]
+        try:
+            from services.alpha.hardware_signal_service import HardwareSignalService
+            from dao.industry import IndustryDAO
+            
+            hw_service = HardwareSignalService()
+            # 获取有效的概念加分映射 (e.g., {"昇腾概念": (8.0, "Hardware[Premium:910B]")})
+            concept_bonuses = await hw_service.get_hardware_bonuses()
+            
+            if concept_bonuses:
+                ind_dao = IndustryDAO()
+                concept_df = await ind_dao.get_stock_concepts([s.code for s in universe_stocks])
+                
+                if not concept_df.empty:
+                    for _, row in concept_df.iterrows():
+                        code = row["ts_code"]
+                        c_name = row["sector_name"]
+                        if c_name in concept_bonuses:
+                            bonus, reason = concept_bonuses[c_name]
+                            if code not in hw_bonuses or hw_bonuses[code][0] < bonus:
+                                hw_bonuses[code] = (bonus, reason)
+        except Exception as e:
+            logger.error(f"Failed to inject hardware signals: {e}")
+            
+        return hw_bonuses
 
     def _calculate_mock_score(self, stock: UniverseStock, pool_type: str) -> float:
         """
