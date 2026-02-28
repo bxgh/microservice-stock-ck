@@ -286,3 +286,39 @@ class ClickHouseHandler:
         except Exception as e:
             logger.error(f"ClickHouse query error (stock_basic): {e}")
             return pd.DataFrame()
+
+    async def get_valuation(self, codes: List[str]) -> pd.DataFrame:
+        """
+        获取最新估值数据 (从本地 ClickHouse)
+        
+        Returns:
+            DataFrame: ts_code, trade_date, pe, pb, ps, market_cap, price
+        """
+        if not self.pool:
+            return pd.DataFrame()
+            
+        if not codes:
+            return pd.DataFrame()
+
+        # 获取每个股票最新日期的估值
+        query = """
+            SELECT stock_code as ts_code, trade_date, pe, pb, ps, market_cap, price
+            FROM stock_data.stock_valuation_local
+            WHERE stock_code IN %(codes)s
+            AND (stock_code, trade_date) IN (
+                SELECT stock_code, MAX(trade_date)
+                FROM stock_data.stock_valuation_local
+                WHERE stock_code IN %(codes)s
+                GROUP BY stock_code
+            )
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute(query, {'codes': tuple(codes)})
+                    result = await cursor.fetchall()
+                    cols = ['ts_code', 'trade_date', 'pe', 'pb', 'ps', 'market_cap', 'price']
+                    return pd.DataFrame(result, columns=cols)
+        except Exception as e:
+            logger.error(f"ClickHouse query error (valuation): {e}")
+            return pd.DataFrame()

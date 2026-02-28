@@ -79,3 +79,12 @@ workflow:
         mode: repair
         concurrency: 64
         stock_codes: "{{ ai_review.confirmed_bad_codes }}"
+
+    # 7. 量化选股 (策略引擎)
+    - id: strategy_selection
+      task_id: daily_strategy_scan
+      name: 量化选股
+      type: docker
+      depends_on: [final_repair]
+      max_attempts: 2
+      retry_policy: fixed

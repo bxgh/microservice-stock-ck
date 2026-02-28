@@ -1,8 +1,8 @@
 # Quant Strategy 项目任务进度
 
 **项目**: 量化策略微服务 (quant-strategy)  
-**更新时间**: 2025-12-12  
-**当前阶段**: EPIC-001 基础设施建设
+**更新时间**: 2026-02-27  
+**当前阶段**: EPIC 1~5 全引擎竣工，准备接入调度实盘验证
 
 ---
 
@@ -12,9 +12,9 @@
 |------|--------|------|------|--------|
 | EPIC-001 基础设施 | **P0** | - | ✅ 已完成 | 100% |
 | EPIC-005 股票池中台 | **P0** | EPIC-001 | ✅ 已完成 | 100% |
-| EPIC-002 长线配置 | **P1** | EPIC-005 | 🚧 进行中 | 60% |
-| EPIC-003 波段增强 | **P2** | EPIC-005 | 📅 待开始 | 0% |
-| EPIC-004 风控系统 | **P1** | - | 📅 待开始 | 0% |
+| EPIC-002 长线配置 | **P1** | EPIC-005 | ✅ 已完成 | 100% |
+| EPIC-003 核心技术分析 | **P0** | EPIC-001 | ✅ 已完成 | 100% |
+| EPIC-004 验证体系与日内增强 | **P1** | EPIC-003 | ✅ 已完成 | 100% |
 
 ---
 
@@ -57,19 +57,19 @@
 - [x] MySQL/SQLite双支持
 - [x] CRUD操作验证
 
-## 📅 EPIC-002: 长线资产配置系统 (P1 - 下一阶段)
+## ✅ EPIC-002: 长线资产配置系统 (P1 - 已完成)
 
 **优先级**: P1 (EPIC-001完成后立即启动)  
 **依赖**: EPIC-001 (需要BaseStrategy基类)  
 **目标**: 70%仓位，年化收益15-25%
 
-### Story 2.1: 风险否决过滤器 ⚠️ 
+### ✅ Story 2.1: 风险否决过滤器 ⚠️ 
 **依赖数据**: 需要get-stockdata提供财务风险数据
-- [ ] ST/退市风险检测
-- [ ] 商誉/净资产比例 > 30%
-- [ ] 大股东质押 > 50%
-- [ ] 监管黑名单过滤
-- [ ] 经营现金流/净利润 < 0.5
+- [x] ST/退市风险检测
+- [x] 商誉/净资产比例 > 30%
+- [x] 大股东质押 > 50%
+- [x] 监管黑名单过滤
+- [x] 经营现金流/净利润 < 0.5
 
 ### ✅ Story 1.7: 风险控制模块 (已完成)
 **依赖**: Story 1.6, EventBus
@@ -100,40 +100,67 @@
 ---
 
 
-- [ ] ST/退市风险检测
-- [ ] 商誉/净资产比例 > 30%
-- [ ] 大股东质押 > 50%
-- [ ] 监管黑名单过滤
-- [ ] 经营现金流/净利润 < 0.5
+- [x] ST/退市风险检测
+- [x] 商誉/净资产比例 > 30%
+- [x] 大股东质押 > 50%
+- [x] 监管黑名单过滤
+- [x] 经营现金流/净利润 < 0.5
 
-### Story 2.2: 估值安全边际评分
-- [ ] PE/PB历史分位数
-- [ ] PEG模型 (成长股)
-- [ ] 股息率差 (红利股)
+### ✅ Story 2.2: 估值安全边际评分
+- [x] PE/PB历史分位数
+- [x] PEG模型 (成长股)
+- [x] 股息率差 (红利股)
 
-### Story 2.3-2.6: Alpha 4D评分系统
-- [ ] 质量与护城河 (ROE稳定性)
-- [ ] 景气度与机构动向
-- [ ] 核心赛道选股
-- [ ] 组合构建与调仓
+### ✅ Story 2.3-2.6: Alpha 4D评分系统
+- [x] 质量与护城河 (ROE稳定性)
+- [x] 景气度与机构动向
+- [x] 核心赛道选股
+- [x] 组合构建与调仓
 
 ---
 
 ## � EPIC-003: 波段增强策略 (P2)
 
-**依赖**: EPIC-001  
-**目标**: 20%仓位，日内/波段交易
+**依赖**: EPIC-001
+**目标**: 提取主力资金异动群落，构建 DTW 特征空间下的关联标的模型。
 
-*(详细story待EPIC-001完成后展开)*
+### ✅ Story 3.1: 相似度匹配引擎
+- [x] 欧式距离高维空间粗排选股
+- [x] SC-Band 单点限宽动态时间规整引擎
+- [相关文档]: [技术方案](plans/stories/epic003/story_3.1_implementation_plan.md) | [验收演示](walkthroughs/story_3.1_walkthrough.md)
+
+### ✅ Story 3.2: 资金集群发现与剔除
+- [x] Leiden自适应稀疏网络探测
+- [x] 四层强效反噪音洗盘拦截网 (流动性陷阱/同质化宽基去除)
+- [相关文档]: [技术方案](plans/stories/epic003/story_3.2_implementation_plan.md) | [验收演示](walkthroughs/story_3.2_walkthrough.md)
+
+### ✅ Story 3.3: 盘口动量引领与阶段划分
+- [x] 时滞互相关 (TLCC) 推导老大归属
+- [x] 翻转流 PageRank (Reversal-PR)
+- [x] 资金群落生命周期标注 (Trend Deviation)
+- [相关文档]: [技术方案](plans/stories/epic003/story_3.3_implementation_plan.md) | [验收演示](walkthroughs/story_3.3_walkthrough.md)
 
 ---
 
-## 📅 EPIC-004: 风控与仓位管理 (P1)
+## ✅ EPIC-004: 验证体系与日内增强 (P1 - 已完成)
 
-**依赖**: EPIC-001  
-**关键**: 单股2%, 总回撤15%
+**依赖**: EPIC-003
+**核心**: 横截面 T+1 实盘回测与增量缓存算力框架
 
-*(详细story待EPIC-001完成后展开)*
+### ✅ Story 4.1: 全连接盘后回测验证
+- [x] `TickClusterStrategy` 防核策略外壳封装
+- [x] Multi-Asset 回测沙盒环境 (CrossSectionSimulator)
+- [相关文档]: [验收演示](walkthroughs/story_4.1_walkthrough.md)
+
+### ✅ Story 4.2: 缓存与熔断提速管线
+- [x] 增量序列特征比较树
+- [x] Redis 稀疏矩阵异步落地
+- [x] 集成式三态大盘熔断器
+
+### ✅ Story 4.3: 日界动量抢跑 
+- [x] T+0 日内买盘时滞追涨信号流
+- [x] Overnight 跳空爆量过滤
+- [相关文档]: [验收演示](walkthroughs/story_4.3_walkthrough.md)
 
 ---
 
@@ -144,8 +171,31 @@
    - 将 `FundamentalScoringService` 和 `ValuationService` 集成到 `CandidatePoolService`
    - 替换 Mock 评分逻辑为真实逻辑
    - 通过 单元测试验证 (test_candidate_pool.py)
+2. ✅ **Story 3.1: 两阶段相似度计算引擎 (SimilarityEngine)** (已完成)
+   - 实现 Euclidean 粗筛 (SciPy pdist加速)
+   - 实现 Numba Sakoe-Chiba DTW 算法
+   - 完成多进程并行编排与类型合规检查
+3. ✅ **Story 3.2: 社区发现与特征去噪引擎 (ClusteringEngine)** (已完成)
+   - 实现自适应稀疏图构建 (NetworkX)
+   - 集成 Leidenalg C++ 扩展进行高质量社区发现
+   - 实现 4 层严苛脱水噪音过滤规则 (规模、流动性、Beta、板块)
+4. ✅ **Story 3.3: 龙头识别与趋势判定 (LeadLagAnalyzer)** (已完成)
+   - 高速 Numpy 向量化计算极大 TLCC 时滞映射
+   - 翻转有向图执行权威选票汇聚的 PageRank 法
+   - 截面历史收益滚动方差实现 Trend Phase (形成期 / 瓦解期) 打标机制
+5. ✅ **Story 4.1: 横截面回测仿真器 (Cross-Sectional Simulator)** (已完成)
+   - 编写 `TickClusterStrategy` 门面策略外壳，封印并统筹底层微积分引擎
+   - 开发 `VirtualPortfolio` 和横向遍历回测器实现了对由于横向市场对比算法所产生的复杂模拟交易
+6. ✅ **Story 4.2: 工程鲁棒性与分布式加速 (EngineeringPlus)** (已完成)
+   - `IncrementalSimilarityEngine`: Euclidean 指纹比对，局部 DTW 重算，剩余配对从 Redis 无液复用
+   - `RedisSparseCacheManager`: 批量 Pipeline 污不变部分距离开销策略持久化
+   - `TickClusterCircuitBreaker`: 三态熔断器将陆续异常栏的资金安全与系统稳定性赋能全策略框架
+7. ✅ **Story 4.3: 日内动量与隔夜套利 (IntradayEngine)** (已完成)
+   - `analyze_overnight_gap`: 基于 VolumeRatio (前30分钟成交量比对前20日) 防止虚假跳空诱多/诱空。
+   - `analyze_momentum_transmission`: 追踪 9:30-10:00 的同簇内老大老二起步差额，产生 `MOMENTUM_LAG` 实盘抢帽信号。
+   - 扩充 `generate_intraday_signals` 独立支持日内 T+0 驱动引擎。
 
-### � 高优先级 (本月完成)
+### 🟡 高优先级 (本月完成)
 2. **Story 1.5: 回测引擎**
    - 用于验证策略逻辑
 3. **提升单元测试覆盖率** 到90%+

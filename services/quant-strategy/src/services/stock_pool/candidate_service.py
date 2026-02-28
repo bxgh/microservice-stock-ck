@@ -18,6 +18,7 @@ from database.session import get_session
 from database.stock_pool_models import UniverseStock
 from services.alpha.fundamental_scoring_service import FundamentalScoringService, ScoringMode
 from services.alpha.valuation_service import ValuationService
+from services.fundamental_filter import FundamentalFilter
 
 logger = logging.getLogger(__name__)
 
@@ -34,19 +35,22 @@ class CandidatePoolService:
         self,
         data_provider: StockDataProvider,
         fundamental_scoring: FundamentalScoringService | None = None,
-        valuation_service: ValuationService | None = None
+        valuation_service: ValuationService | None = None,
+        fundamental_filter: FundamentalFilter | None = None
     ):
         """
         Initialize with scoring services
 
         Args:
             data_provider: Data provider for fetching stock data
-            fundamental_scoring: Fundamental scoring service (optional for backward compatibility)
-            valuation_service: Valuation scoring service (optional for backward compatibility)
+            fundamental_scoring: Fundamental scoring service
+            valuation_service: Valuation scoring service
+            fundamental_filter: Hard-stop risk veto filter
         """
         self.data_provider = data_provider
         self.fundamental_scoring = fundamental_scoring
         self.valuation_service = valuation_service
+        self.fundamental_filter = fundamental_filter
 
         # Scoring weights (60% fundamental + 40% valuation)
         self.fundamental_weight = 0.6
@@ -57,7 +61,7 @@ class CandidatePoolService:
         self.high_quality_threshold = 80.0
         self.medium_quality_threshold = 70.0
 
-    async def refresh_pool(self, pool_type: str = 'long') -> int:
+    async def refresh_pool(self, pool_type: str = 'long', limit: int | None = None) -> int:
         """
         刷新候选池
         1. 从 Universe 获取合格股票
@@ -77,6 +81,24 @@ class CandidatePoolService:
                 logger.warning("Universe pool is empty, cannot refresh candidates.")
                 return 0
 
+            # 如果设置了快速选股限制
+            if limit and limit < len(universe_stocks):
+                import random
+                universe_stocks = random.sample(universe_stocks, limit)
+                logger.info(f"Randomly selected {limit} stocks from universe for quick test")
+
+            # 1.5 风险否决 (Fundamental Veto Filter)
+            if self.fundamental_filter:
+                logger.info(f"Running risk veto filter on {len(universe_stocks)} universe stocks...")
+                filter_result = await self.fundamental_filter.filter_stocks([s.code for s in universe_stocks])
+                passed_codes = set(filter_result['passed'])
+                universe_stocks = [s for s in universe_stocks if s.code in passed_codes]
+                logger.info(f"Stocks remaining after veto: {len(universe_stocks)}")
+
+            if not universe_stocks:
+                logger.warning("All stocks were vetoed. Candidate pool is empty.")
+                return 0
+
             candidates_data = []
 
             # 2. 并发评分 (Real Alpha Scoring)
@@ -85,12 +107,12 @@ class CandidatePoolService:
             # Rate limiting: Max 10 concurrent scoring tasks
             semaphore = asyncio.Semaphore(10)
 
-            async def score_with_limit(stock):
-                async with semaphore:
+            async def score_with_limit(stock, sem):
+                async with sem:
                     return await self._calculate_real_score(stock, pool_type)
 
             # Execute concurrent scoring
-            score_tasks = [score_with_limit(stock) for stock in universe_stocks]
+            score_tasks = [score_with_limit(stock, semaphore) for stock in universe_stocks]
             scores = await asyncio.gather(*score_tasks, return_exceptions=True)
 
             # 3. 筛选与分类
@@ -228,7 +250,12 @@ class CandidatePoolService:
         """
         Fallback mock scoring (for backward compatibility and swing pool)
         """
-        seed = int(stock.code)
+        try:
+            # handle '600000.SH' format
+            code_num = stock.code.split('.')[0] if '.' in stock.code else stock.code
+            seed = int(code_num)
+        except ValueError:
+            seed = hash(stock.code)
         import random
         r = random.Random(seed)
 

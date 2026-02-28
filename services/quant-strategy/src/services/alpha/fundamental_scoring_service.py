@@ -82,8 +82,11 @@ class FundamentalScoringService:
 
         # 3. Use determined mode (logic moved up)
 
+        # Retrieve History ROE Std (Mock or placeholder for MOAT penalty)
+        history_roe_std = 0.05 # placeholder for stability
+
         # 4. Calculate Dimension Scores
-        profitability = self._score_profitability(financials, industry_stats, mode)
+        profitability = self._score_profitability(financials, industry_stats, mode, history_roe_std)
         growth = self._score_growth(financials, industry_stats, mode)
         quality = self._score_quality(financials, industry_stats, mode)
 
@@ -108,9 +111,10 @@ class FundamentalScoringService:
         self,
         fin: FinancialIndicators,
         industry_stats: dict | None,
-        mode: ScoringMode
+        mode: ScoringMode,
+        history_roe_std: float | None = None
     ) -> DimensionScore:
-        """Score profitability dimension (ROE focus)"""
+        """Score profitability dimension (ROE focus with stability penalty)"""
         roe = fin.roe if fin.roe is not None else 0.0
 
         if mode == ScoringMode.RELATIVE and industry_stats and 'roe_stats' in industry_stats:
@@ -120,6 +124,16 @@ class FundamentalScoringService:
         else:
             raw_score = self._absolute_roe_score(roe)
             percentile = None
+
+        # ROE Stability Penalty (Moat)
+        penalty = 0.0
+        if history_roe_std is not None:
+            if history_roe_std > 0.15: # Highly unstable ROE (>15% std)
+                penalty = 30.0
+            elif history_roe_std > 0.08:
+                penalty = 15.0
+
+            raw_score = max(0.0, raw_score - penalty)
 
         detail = ScoreDetail(
             metric_name="ROE",

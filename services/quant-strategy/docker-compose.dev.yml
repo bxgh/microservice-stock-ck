@@ -72,6 +72,7 @@ services:
       - ./tests:/app/tests
       - ./unit_tests:/app/unit_tests
       - ./scripts:/app/scripts
+      - ./docs:/app/docs
       - ../../libs/gsd-shared:/app/gsd-shared
       - ../../libs/common:/app/common
       - ../../libs/gsd-agent:/app/gsd-agent

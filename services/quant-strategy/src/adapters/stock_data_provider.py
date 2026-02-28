@@ -523,6 +523,8 @@ class StockDataProvider:
         """
         from domain.models.financial_models import FinancialIndicators
 
+        # akshare 需要 6 位数字代码
+        code = code[:6] if isinstance(code, str) and len(code) >= 6 else code
         try:
             # Call the Verified Real API
             data = await self._make_request("GET", f"/api/v1/finance/indicators/{code}")
@@ -561,6 +563,8 @@ class StockDataProvider:
         Returns:
             估值数据字典
         """
+        # akshare 需要 6 位数字代码
+        code = code[:6] if isinstance(code, str) and len(code) >= 6 else code
         try:
             # Call the Verified Real API
             data = await self._make_request("GET", f"/api/v1/market/valuation/{code}")

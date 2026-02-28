@@ -7,13 +7,19 @@
 import logging
 from typing import Any
 
+from datetime import datetime
+import pytz
+
 from core.risk import RiskManager
-from models.signal import Signal
+from models.signal import Signal, SignalType, Priority
+from config.settings import settings
 from strategies.rules_fundamental import (
     CashflowQualityRule,
     FinancialFraudRule,
     GoodwillRiskRule,
     PledgeRiskRule,
+    RegulatoryBlacklistRule,
+    STRiskRule,
 )
 
 logger = logging.getLogger(__name__)
@@ -44,12 +50,14 @@ class FundamentalFilter:
         self._risk_manager.clear_rules()
 
         # 添加基本面风控规则
+        self._risk_manager.add_rule(STRiskRule())
+        self._risk_manager.add_rule(RegulatoryBlacklistRule())
         self._risk_manager.add_rule(GoodwillRiskRule(goodwill_threshold))
         self._risk_manager.add_rule(PledgeRiskRule(pledge_threshold))
         self._risk_manager.add_rule(CashflowQualityRule(cashflow_threshold))
         self._risk_manager.add_rule(FinancialFraudRule(cash_threshold, debt_threshold))
 
-        logger.info("FundamentalFilter initialized with 4 risk rules")
+        logger.info("FundamentalFilter initialized with 6 risk rules")
 
     async def filter_stocks(self, stock_codes: list[str]) -> dict[str, Any]:
         """
@@ -70,14 +78,15 @@ class FundamentalFilter:
         rejection_reasons = {}
 
         for code in stock_codes:
-            # 创建虚拟信号用于风控检查
             dummy_signal = Signal(
                 stock_code=code,
-                direction="BUY",
-                strength=0.5,  # 中等强度
-                price=10.0,    # 虚拟价格
+                signal_type=SignalType.LONG,
+                priority=Priority.MEDIUM,
+                timestamp=datetime.now(pytz.timezone(settings.timezone)),
+                strategy_name="fundamental_filter_service",
                 reason="fundamental_filter",
-                strategy_id="fundamental_filter_service"
+                score=50.0,
+                price=10.0
             )
 
             is_valid = await self._risk_manager.validate(dummy_signal)

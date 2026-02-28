@@ -115,8 +115,10 @@ class Settings(BaseSettings):
     ocf_quality_good: float = 0.8
 
     # Valuation Scoring (EPIC-002 Story 2.3)
-    weight_pe_score: float = 0.5
-    weight_pb_score: float = 0.5
+    weight_pe_score: float = 0.40
+    weight_pb_score: float = 0.40
+    weight_peg_score: float = 0.10
+    weight_div_score: float = 0.10
 
     # Percentile Thresholds (Lower is better/cheaper)
     val_undervalued_pct: float = 25.0   # < 25% = 100 pts

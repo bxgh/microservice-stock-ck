@@ -40,10 +40,14 @@ async def get_stock_info(
         if df.empty:
             raise HTTPException(status_code=404, detail=f"No info found for stock {stock_code}")
             
-        data = df.where(pd.notnull(df), None).to_dict(orient='records')[0]
+        import math
+        data = df.to_dict(orient='records')[0]
+        for k, v in data.items():
+            if isinstance(v, float) and math.isnan(v):
+                data[k] = None
         
         # 确保 code 格式
-        if 'code' in data:
+        if 'code' in data and data['code'] is not None:
             data['code'] = str(data['code']).zfill(6)
         else:
             data['code'] = stock_code.zfill(6)
@@ -69,12 +73,15 @@ async def list_stocks(
         if df.empty:
             return {"success": True, "data": [], "count": 0}
             
-        data_list = df.where(pd.notnull(df), None).to_dict(orient='records')
+        import math
+        data_list = df.to_dict(orient='records')
         
         for item in data_list:
-            if 'code' in item:
+            for k, v in item.items():
+                if isinstance(v, float) and math.isnan(v):
+                    item[k] = None
+            if 'code' in item and item['code'] is not None:
                 item['code'] = str(item['code']).zfill(6)
-                
         return {
             "success": True,
             "data": data_list,

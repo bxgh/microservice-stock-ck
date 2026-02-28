@@ -10,6 +10,7 @@ Candidate Pool Integration Tests
 import sys
 
 import pytest
+import pytest_asyncio
 from sqlalchemy import delete, select
 
 sys.path.insert(0, '/home/bxgh/microservice-stock/services/quant-strategy/src')
@@ -36,7 +37,9 @@ async def ensure_db_initialized():
         await init_database()
         _db_initialized = True
 
-@pytest.fixture(autouse=True)
+
+
+@pytest_asyncio.fixture(autouse=True)
 async def setup_database():
     """Setup temporary database for tests"""
     import os

@@ -57,8 +57,8 @@ class Signal:
             raise ValueError(f"score必须在0-100之间，当前: {self.score}")
 
         # 验证stock_code格式
-        if not self.stock_code or len(self.stock_code) != 6:
-            raise ValueError(f"stock_code必须是6位数字，当前: {self.stock_code}")
+        if not self.stock_code or len(self.stock_code) < 6:
+            raise ValueError(f"stock_code至少为6位字符，当前: {self.stock_code}")
 
         # 初始化metadata
         if self.metadata is None:

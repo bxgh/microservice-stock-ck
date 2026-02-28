@@ -353,8 +353,8 @@ class KLineSyncService:
                 )
                 logger.info(f"✓ 已发送删除指令 (trade_date={trade_date})，开始等待异步处理完成...")
                 
-                # 2. 等待变动完成
-                await self._wait_for_clickhouse_mutations("stock_kline_daily_local", f"trade_date = '{trade_date}'")
+        # 2. 等待变动完成 (移出连接池上下文以避免死锁)
+        await self._wait_for_clickhouse_mutations("stock_kline_daily_local", f"trade_date = \\'{trade_date}\\'")
 
     async def _wait_for_clickhouse_mutations(self, table_name: str, filter_str: str, timeout: int = 120):
         """等待 ClickHouse 变动（如 DELETE）完成"""
@@ -367,15 +367,24 @@ class KLineSyncService:
             async with self.clickhouse_pool.acquire() as conn:
                 async with conn.cursor() as cursor:
                     # 查询该表尚未完成的变动
-                    await cursor.execute(f"""
+                    query = f"""
                         SELECT count() 
                         FROM system.mutations 
                         WHERE table = '{table_name}' 
                           AND command LIKE '%{filter_str}%' 
                           AND is_done = 0
-                    """)
-                    row = await cursor.fetchone()
-                    unfinished_count = row[0] if row else 0
+                    """
+                    logger.debug(f"DEBUG: Executing mutation check query: {query.strip()}")
+                    try:
+                        await cursor.execute(query)
+                        logger.debug("DEBUG: Query executed successfully. Fetching results...")
+                        rows = await cursor.fetchall()
+                        logger.debug(f"DEBUG: Fetchall returned: {rows}")
+                    except Exception as ex:
+                        logger.error(f"DEBUG: Error computing mutations: {ex}")
+                        raise
+
+                    unfinished_count = rows[0][0] if rows and rows[0] else 0
                     
                     if unfinished_count == 0:
                         logger.info(f"✅ 所有相关变动已完成 (耗时: {(datetime.now() - start_time).total_seconds():.1f}s)")

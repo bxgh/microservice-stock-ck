@@ -24,5 +24,7 @@ class ValuationScore(BaseModel):
     total_score: float  # Weighted average of PE and PB scores
     pe_score: ValuationBandScore
     pb_score: ValuationBandScore
+    peg_score: float | None = None
+    dividend_score: float | None = None
     valuation_status: str  # Undervalued/Fair/Overvalued
     scored_at: str = str(datetime.now())

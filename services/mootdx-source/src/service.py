@@ -139,7 +139,9 @@ class MooTDXService(data_source_pb2_grpc.DataSourceServiceServicer):
         ),
         data_source_pb2.DATA_TYPE_VALUATION: RouteConfig(
             handler="_fetch_valuation_akshare",
-            source_name=DataSource.AKSHARE_API
+            source_name=DataSource.AKSHARE_API,
+            fallback_handler="_fetch_valuation_clickhouse",
+            fallback_source_name=DataSource.CLICKHOUSE
         ),
         data_source_pb2.DATA_TYPE_INDEX: RouteConfig(
             handler="_fetch_index_baostock",
@@ -764,6 +766,98 @@ class MooTDXService(data_source_pb2_grpc.DataSourceServiceServicer):
         code = codes[0]
         endpoint = f"/api/v1/valuation/{code}"
         return await self.cloud_client.fetch_akshare(endpoint)
+
+    async def _fetch_valuation_clickhouse(
+        self,
+        codes: List[str],
+        params: Dict[str, Any]
+    ) -> pd.DataFrame:
+        """ClickHouse: 估值数据 (降级用)"""
+        if not self.ch_handler:
+            logger.warning("ClickHouse handler not initialized")
+            return pd.DataFrame()
+        
+        # 兼容标准代码格式 (可能有 .SH/.SZ 后缀)
+        clean_codes = [c.split('.')[0] for c in codes]
+        # 但本地 ClickHouse 表可能保存的是带后缀的或不带的，我们需要检查
+        # 根据之前 DESCRIBE TABLE，stock_valuation 表结构的 stock_code 是 String
+        # 根据之前查询，stock_valuation_local 的 stock_code 似乎带有后缀，如 688676.SH
+        
+        logger.info(f"Fetching valuation from ClickHouse for: {codes}")
+        df = await self.ch_handler.get_valuation(codes)
+        
+        if df.empty:
+            logger.warning(f"ClickHouse valuation empty for {codes}, falling back to mootdx calculation")
+            return await self._fetch_valuation_mootdx(codes, params)
+            
+        return df
+
+    async def _fetch_valuation_mootdx(
+        self,
+        codes: List[str],
+        params: Dict[str, Any]
+    ) -> pd.DataFrame:
+        """mootdx: 通过行情和财务信息计算估值 (兜底)"""
+        if not self.mootdx_api_client:
+            logger.warning("Mootdx API client not initialized")
+            return pd.DataFrame()
+        
+        # 1. 获取实时行情 (价格)
+        quotes_df = await self.mootdx_api_client.get_quotes(codes, {})
+        if quotes_df.empty:
+            logger.warning(f"Mootdx API returned empty quotes for {codes}")
+            return pd.DataFrame()
+            
+        # 2. 获取财务信息 (总股本)
+        finance_df = await self.mootdx_api_client.get_finance_info(codes, {})
+        if finance_df.empty:
+            logger.warning(f"Mootdx API returned empty finance info for {codes}")
+            return pd.DataFrame()
+            
+        # 3. 合并并计算
+        try:
+            # 确保代码列格式一致
+            quotes_df['code'] = quotes_df['code'].astype(str)
+            finance_df['code'] = finance_df['code'].astype(str)
+            
+            merged = pd.merge(quotes_df, finance_df, on='code')
+            if merged.empty:
+                logger.warning(f"Failed to merge quotes and finance for {codes}")
+                return pd.DataFrame()
+                
+            # 计算总市值 (price * zongguben)
+            # 这里的 market_cap 假设单位是 "元"
+            merged['market_cap'] = merged['price'] * merged['zongguben']
+            merged['ts_code'] = merged['code']
+            merged['trade_date'] = datetime.now().strftime('%Y-%m-%d')
+            
+            # 计算 PE (Price / (NetProfit/TotalShares)) = (Price * TotalShares) / NetProfit
+            # 注意: jinglirun 可能是负数，pe 设为 None 或真实值
+            try:
+                merged['pe'] = merged.apply(
+                    lambda row: row['market_cap'] / row['jinglirun'] if row['jinglirun'] and row['jinglirun'] > 0 else None,
+                    axis=1
+                )
+            except:
+                merged['pe'] = None
+                
+            # 计算 PB (Price / (NetAssets/TotalShares)) = (Price * TotalShares) / NetAssets
+            try:
+                merged['pb'] = merged.apply(
+                    lambda row: row['market_cap'] / row['jingzichan'] if row['jingzichan'] and row['jingzichan'] > 0 else None,
+                    axis=1
+                )
+            except:
+                merged['pb'] = None
+            
+            merged['ps'] = None
+            
+            cols = ['ts_code', 'trade_date', 'pe', 'pb', 'ps', 'market_cap', 'price']
+            logger.info(f"Successfully calculated valuation for {codes} via mootdx-api (PE: {merged['pe'].iloc[0]}, PB: {merged['pb'].iloc[0]})")
+            return merged[cols]
+        except Exception as e:
+            logger.error(f"Error calculating valuation via mootdx-api: {e}")
+            return pd.DataFrame()
     
     async def _fetch_index_baostock(
         self,

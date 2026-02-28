@@ -273,8 +273,12 @@ class UniversePoolService:
         min_list_date = today - relativedelta(months=config.min_list_months)
 
         for stock in stocks:
-            code = stock.get('stock_code', '')
-            name = stock.get('stock_name', '')
+            code = stock.get('stock_code') or stock.get('code', '')
+            name = stock.get('stock_name') or stock.get('name', '')
+            
+            # 如果依然为空，直接过滤这条脏数据
+            if not code or not str(code).strip():
+                continue
 
             # 准备筛选数据
             stock_data = {

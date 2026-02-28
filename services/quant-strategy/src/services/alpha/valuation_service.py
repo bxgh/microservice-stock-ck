@@ -31,7 +31,8 @@ class ValuationService:
     async def score_stock(
         self,
         code: str,
-        current_valuation: dict | None = None
+        current_valuation: dict | None = None,
+        financials: Any | None = None
     ) -> ValuationScore | None:
         """
         Calculate valuation score based on historical PE/PB bands.
@@ -78,11 +79,49 @@ class ValuationService:
         pb_stats = stats.get('pb_ratio', {})
         pb_score = self._calculate_band_score("PB", current_pb, pb_stats)
 
-        # 5. Aggregate
+        # 5. Calculate PEG and Dividend Score
+        if not financials:
+            from adapters.stock_data_provider import data_provider as default_dp
+            financials = await default_dp.get_financial_indicators(code)
+
+        peg_score_val = 50.0
+        dividend_score_val = 50.0
+
+        if financials:
+            # PEG
+            growth = financials.net_profit_growth_yoy
+            if current_pe and current_pe > 0 and growth and growth > 0:
+                peg = current_pe / (growth * 100)
+                if peg <= 1.0:
+                    peg_score_val = 100.0
+                elif peg <= 1.5:
+                    peg_score_val = 80.0
+                elif peg <= 2.0:
+                    peg_score_val = 60.0
+                else:
+                    peg_score_val = 20.0
+            else:
+                peg_score_val = 40.0
+
+            # Dividend
+            dy = financials.dividend_yield
+            if dy is not None:
+                if dy >= 0.05:
+                    dividend_score_val = 100.0
+                elif dy >= 0.03:
+                    dividend_score_val = 80.0
+                elif dy >= 0.01:
+                    dividend_score_val = 60.0
+                else:
+                    dividend_score_val = 40.0
+
+        # 6. Aggregate
         if pe_score and pb_score:
             total_score = (
                 pe_score.band_score * settings.weight_pe_score +
-                pb_score.band_score * settings.weight_pb_score
+                pb_score.band_score * settings.weight_pb_score +
+                peg_score_val * settings.weight_peg_score +
+                dividend_score_val * settings.weight_div_score
             )
             # Determine Status
             if total_score >= 80:
@@ -97,6 +136,8 @@ class ValuationService:
                 total_score=total_score,
                 pe_score=pe_score,
                 pb_score=pb_score,
+                peg_score=peg_score_val,
+                dividend_score=dividend_score_val,
                 valuation_status=status
             )
 
