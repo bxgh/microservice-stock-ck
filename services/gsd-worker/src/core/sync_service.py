@@ -4,6 +4,7 @@ K线数据同步核心服务
 import asyncio
 import aiomysql
 import asynch
+from config.settings import settings
 import os
 import logging
 from collections import defaultdict
@@ -67,17 +68,26 @@ class KLineSyncService:
             db=db_name,
             charset='utf8mb4',
             minsize=1,
-            maxsize=5
+            maxsize=5,
+            connect_timeout=settings.db_connect_timeout
         )
         logger.info(f"✓ MySQL连接池已创建 ({db_host}:{db_port})")
         
         # ClickHouse连接池
-        self.clickhouse_pool = await asynch.create_pool(
-            host=os.getenv('CLICKHOUSE_HOST', 'localhost'),
-            port=int(os.getenv('CLICKHOUSE_PORT', 9000)),
-            user=os.getenv('CLICKHOUSE_USER', 'admin'),
-            password=os.getenv('CLICKHOUSE_PASSWORD', 'admin123'),
-            database=os.getenv('CLICKHOUSE_DB', 'stock_data')
+        self.clickhouse_pool = await asyncio.wait_for(
+            asynch.create_pool(
+                host=os.getenv('CLICKHOUSE_HOST', 'localhost'),
+                port=int(os.getenv('CLICKHOUSE_PORT', 9000)),
+                user=os.getenv('CLICKHOUSE_USER', 'admin'),
+                password=os.getenv('CLICKHOUSE_PASSWORD', 'admin123'),
+                database=os.getenv('CLICKHOUSE_DB', 'stock_data'),
+                minsize=1,
+                maxsize=10,
+                connect_timeout=settings.db_connect_timeout,
+                send_receive_timeout=settings.db_io_timeout,
+                sync_request_timeout=settings.db_io_timeout
+            ),
+            timeout=settings.db_connect_timeout + settings.db_connect_timeout_buffer
         )
         logger.info("✓ ClickHouse连接池已创建")
     

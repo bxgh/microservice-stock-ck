@@ -7,6 +7,7 @@ import aiomysql
 import asynch
 import os
 import logging
+from config.settings import settings
 from datetime import datetime, timedelta
 from typing import List, Dict, Any
 from zoneinfo import ZoneInfo
@@ -169,15 +170,22 @@ class MetadataSyncService:
 
         self.mysql_pool = await aiomysql.create_pool(
             host=db_host, port=db_port, user=db_user, password=db_password, db=db_name,
-            charset='utf8mb4', minsize=1, maxsize=5
+            charset='utf8mb4', minsize=1, maxsize=5,
+            connect_timeout=settings.db_connect_timeout
         )
         
-        self.clickhouse_pool = await asynch.create_pool(
-            host=os.getenv('CLICKHOUSE_HOST', 'localhost'),
-            port=int(os.getenv('CLICKHOUSE_PORT', 9000)),
-            user=os.getenv('CLICKHOUSE_USER', 'admin'),
-            password=os.getenv('CLICKHOUSE_PASSWORD', 'admin123'),
-            database=os.getenv('CLICKHOUSE_DB', 'stock_data')
+        self.clickhouse_pool = await asyncio.wait_for(
+            asynch.create_pool(
+                host=os.getenv('CLICKHOUSE_HOST', 'localhost'),
+                port=int(os.getenv('CLICKHOUSE_PORT', 9000)),
+                user=os.getenv('CLICKHOUSE_USER', 'admin'),
+                password=os.getenv('CLICKHOUSE_PASSWORD', 'admin123'),
+                database=os.getenv('CLICKHOUSE_DB', 'stock_data'),
+                connect_timeout=settings.db_connect_timeout,
+                send_receive_timeout=settings.db_io_timeout,
+                sync_request_timeout=settings.db_io_timeout
+            ),
+            timeout=settings.db_connect_timeout + settings.db_connect_timeout_buffer
         )
         logger.info(f"MetadataSyncService initialized with MySQL ({db_host}:{db_port}) and ClickHouse")
 

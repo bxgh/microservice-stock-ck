@@ -38,7 +38,8 @@ class MySQLPoolManager:
                             charset='utf8mb4',
                             minsize=1,
                             maxsize=settings.connection_pool_size,
-                            autocommit=True
+                            autocommit=True,
+                            connect_timeout=settings.db_connect_timeout
                         )
                         logger.info(f"✓ MySQL连接池已创建: {settings.db_host}:{settings.db_port}")
                     except Exception as e:

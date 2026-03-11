@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     db_password: str = ""
     db_name: str = "stock_data"
     
+    db_connect_timeout: int = 10
+    db_io_timeout: int = 30
+    db_connect_timeout_buffer: int = 2
+    
     connection_pool_size: int = 10
     
     @property

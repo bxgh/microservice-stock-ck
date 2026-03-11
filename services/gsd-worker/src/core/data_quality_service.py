@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, List, Any
 
 from data_access.mysql_pool import MySQLPoolManager
+from config.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -34,14 +35,20 @@ class DataQualityService:
         ch_password = os.getenv('CLICKHOUSE_PASSWORD', '')
         ch_database = os.getenv('CLICKHOUSE_DATABASE', 'stock_data')
         
-        self.clickhouse_pool = await asynch.create_pool(
-            host=ch_host,
-            port=ch_port,
-            user=ch_user,
-            password=ch_password,
-            database=ch_database,
-            minsize=1,
-            maxsize=3
+        self.clickhouse_pool = await asyncio.wait_for(
+            asynch.create_pool(
+                host=ch_host,
+                port=ch_port,
+                user=ch_user,
+                password=ch_password,
+                database=ch_database,
+                minsize=1,
+                maxsize=3,
+                connect_timeout=settings.db_connect_timeout,
+                send_receive_timeout=settings.db_io_timeout,
+                sync_request_timeout=settings.db_io_timeout
+            ),
+            timeout=settings.db_connect_timeout + settings.db_connect_timeout_buffer
         )
         logger.info("✓ DataQualityService 初始化完成")
         

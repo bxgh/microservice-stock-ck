@@ -5,6 +5,7 @@ from datetime import datetime
 import pytz
 import asynch
 import os
+from config.settings import settings
 
 from core.tick_sync_service import TickSyncService
 from core.sync_service import KLineSyncService
@@ -52,12 +53,18 @@ class DataSupplementEngine:
         logger.info("Initializing DataSupplementEngine...")
         
         # 0. Init Shared Pools
-        self.ch_pool = await asynch.create_pool(
-            host=os.getenv('CLICKHOUSE_HOST', 'localhost'),
-            port=int(os.getenv('CLICKHOUSE_PORT', 9000)),
-            user=os.getenv('CLICKHOUSE_USER', 'admin'),
-            password=os.getenv('CLICKHOUSE_PASSWORD', 'admin123'),
-            database=os.getenv('CLICKHOUSE_DB', 'stock_data')
+        self.ch_pool = await asyncio.wait_for(
+            asynch.create_pool(
+                host=os.getenv('CLICKHOUSE_HOST', 'localhost'),
+                port=int(os.getenv('CLICKHOUSE_PORT', 9000)),
+                user=os.getenv('CLICKHOUSE_USER', 'admin'),
+                password=os.getenv('CLICKHOUSE_PASSWORD', 'admin123'),
+                database=os.getenv('CLICKHOUSE_DB', 'stock_data'),
+                connect_timeout=settings.db_connect_timeout,
+                send_receive_timeout=settings.db_io_timeout,
+                sync_request_timeout=settings.db_io_timeout
+            ),
+            timeout=settings.db_connect_timeout + settings.db_connect_timeout_buffer
         )
         
         # 1. Init Tick Service (Local/TDX)

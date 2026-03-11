@@ -28,6 +28,7 @@ from gsd_shared.tick import TickFetcher, TickWriter
 from gsd_shared.tick.constants import TABLE_INTRADAY_LOCAL, TABLE_HISTORY_LOCAL
 from gsd_shared.tick.utils import clean_stock_code
 from core.sync_status import SyncStatusTracker
+from config.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -81,14 +82,20 @@ class TickSyncService:
         async with self._lock:
             # 1. Initialize Resources
             if self.clickhouse_pool is None:
-                self.clickhouse_pool = await asynch.create_pool(
-                    host=os.getenv("CLICKHOUSE_HOST", "clickhouse"),
-                    port=int(os.getenv("CLICKHOUSE_PORT", "9000")),
-                    database="stock_data",
-                    user=os.getenv("CLICKHOUSE_USER", "default"),
-                    password=os.getenv("CLICKHOUSE_PASSWORD", ""),
-                    minsize=5,
-                    maxsize=int(os.getenv("CLICKHOUSE_POOL_SIZE", "60"))
+                self.clickhouse_pool = await asyncio.wait_for(
+                    asynch.create_pool(
+                        host=os.getenv("CLICKHOUSE_HOST", "clickhouse"),
+                        port=int(os.getenv("CLICKHOUSE_PORT", "9000")),
+                        database="stock_data",
+                        user=os.getenv("CLICKHOUSE_USER", "default"),
+                        password=os.getenv("CLICKHOUSE_PASSWORD", ""),
+                        minsize=5,
+                        maxsize=int(os.getenv("CLICKHOUSE_POOL_SIZE", "60")),
+                        connect_timeout=settings.db_connect_timeout,
+                        send_receive_timeout=settings.db_io_timeout,
+                        sync_request_timeout=settings.db_io_timeout
+                    ),
+                    timeout=settings.db_connect_timeout + settings.db_connect_timeout_buffer
                 )
             
             if self.http_session is None:
