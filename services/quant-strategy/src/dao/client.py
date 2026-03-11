@@ -79,7 +79,7 @@ class DataSourceClient:
                 params=grpc_params
             )
             
-            response = await self.stub.FetchData(request, timeout=30)
+            response = await self.stub.FetchData(request, timeout=60)
             
             if not response.success:
                 logger.error(f"Data source error ({data_type} codes={codes[:3]}...): {response.error_message}")

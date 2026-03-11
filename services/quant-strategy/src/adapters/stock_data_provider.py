@@ -24,7 +24,7 @@ class StockDataProvider:
 
     def __init__(self):
         self.base_url = settings.stockdata_service_url.rstrip('/')
-        self.timeout = aiohttp.ClientTimeout(total=30)
+        self.timeout = aiohttp.ClientTimeout(total=2)
         self._session: aiohttp.ClientSession | None = None
         self._lock = asyncio.Lock()
         logger.info(f"StockDataProvider initialized with base URL: {self.base_url}")
@@ -63,11 +63,7 @@ class StockDataProvider:
         except Exception as e:
             logger.warning(f"Redis close error: {e}")
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        reraise=True
-    )
+
     async def _make_request(
         self,
         method: str,
@@ -115,7 +111,7 @@ class StockDataProvider:
 
                 return data
 
-        except aiohttp.ClientError as e:
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
             logger.error(f"HTTP request failed for {url}: {e}")
             raise Exception(f"Failed to fetch data from {endpoint}: {e}")
 

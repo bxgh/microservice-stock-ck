@@ -9,14 +9,18 @@ EPIC-002 Story 2.4: Integrated with real Alpha scoring services.
 import asyncio
 import logging
 from datetime import date
+from typing import Any
 
+import pandas as pd
 from sqlalchemy import delete, select
 
 from adapters.stock_data_provider import StockDataProvider
 from database.candidate_models import CandidateStock
 from database.session import get_session
 from database.stock_pool_models import UniverseStock
+from services.alpha.defense_factor_service import defense_factor_service
 from services.alpha.fundamental_scoring_service import FundamentalScoringService, ScoringMode
+from services.alpha.geopolitical_scoring_engine import geopolitical_scoring_engine
 from services.alpha.valuation_service import ValuationService
 from services.fundamental_filter import FundamentalFilter
 
@@ -36,7 +40,9 @@ class CandidatePoolService:
         data_provider: StockDataProvider,
         fundamental_scoring: FundamentalScoringService | None = None,
         valuation_service: ValuationService | None = None,
-        fundamental_filter: FundamentalFilter | None = None
+        fundamental_filter: FundamentalFilter | None = None,
+        geopolitical_scoring: Any | None = None,
+        scenario_detector: Any | None = None
     ):
         """
         Initialize with scoring services
@@ -51,6 +57,8 @@ class CandidatePoolService:
         self.fundamental_scoring = fundamental_scoring
         self.valuation_service = valuation_service
         self.fundamental_filter = fundamental_filter
+        self.geopolitical_scoring = geopolitical_scoring
+        self.scenario_detector = scenario_detector
 
         # Scoring weights (60% fundamental + 40% valuation)
         self.fundamental_weight = 0.6
@@ -71,6 +79,20 @@ class CandidatePoolService:
         5. 持久化
         """
         logger.info(f"Refreshing {pool_type} candidate pool...")
+
+        # 1. 检测当前地缘政治情景 (Story 19.3)
+        from datetime import datetime
+        scenario = None
+        if self.scenario_detector:
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            # 兼容模拟时间，如果是 T+1 脚本运行可能需要传入日期，此处默认用系统日期
+            scenario = await self.scenario_detector.detect_scenario(today_str)
+            logger.info(f"Geopolitical scenario detected: {scenario}")
+
+            # 根据情景动态调整初始权重
+            if self.geopolitical_scoring:
+                self.fundamental_weight, self.valuation_weight = self.geopolitical_scoring.get_dynamic_weights(scenario)
+                logger.info(f"Dynamic weights applied: Fundamental={self.fundamental_weight}, Valuation={self.valuation_weight}")
 
         async for session in get_session():
             # 1. 获取 Universe
@@ -105,9 +127,9 @@ class CandidatePoolService:
             logger.info(f"Scoring {len(universe_stocks)} stocks with real Alpha services...")
 
             # Rate limiting: Max 10 concurrent scoring tasks
-            semaphore = asyncio.Semaphore(10)
+            semaphore = asyncio.Semaphore(50)
 
-            async def score_with_limit(stock, sem):
+            async def score_with_limit(stock: UniverseStock, sem: asyncio.Semaphore) -> float | None:
                 async with sem:
                     return await self._calculate_real_score(stock, pool_type)
 
@@ -117,14 +139,21 @@ class CandidatePoolService:
 
             # 3. 提取另类数据生态红利 (Story 17.6)
             eco_bonuses = await self._get_eco_bonuses(universe_stocks)
-            
+
             # 3.5 提取硬件底层红利 (Story 18.3)
             hw_bonuses = await self._get_hardware_bonuses(universe_stocks)
+
+            # 3.6 提取地缘政治防御红利 (Story 19.3)
+            gp_bonuses = {}
+            if self.geopolitical_scoring and scenario:
+                gp_bonuses = await self.geopolitical_scoring.get_geopolitical_bonuses(
+                    [s.code for s in universe_stocks], scenario
+                )
 
             # 4. 筛选与分类
             for stock, score_result in zip(universe_stocks, scores, strict=False):
                 # Handle exceptions
-                if isinstance(score_result, Exception):
+                if isinstance(score_result, BaseException):
                     logger.warning(f"Scoring failed for {stock.code}: {score_result}")
                     continue
 
@@ -134,10 +163,10 @@ class CandidatePoolService:
                 if raw_score is None or raw_score < self.min_score_threshold:
                     logger.debug(f"Filtered out {stock.code}: score={raw_score}")
                     continue
-                    
+
                 score = raw_score
                 entry_reason = f"Scored {raw_score:.1f} in {pool_type} model"
-                
+
                 # Apply Eco Bonus
                 if stock.code in eco_bonuses:
                     bonus, reason = eco_bonuses[stock.code]
@@ -147,6 +176,12 @@ class CandidatePoolService:
                 # Apply Hardware Bonus
                 if stock.code in hw_bonuses:
                     bonus, reason = hw_bonuses[stock.code]
+                    score = min(100.0, score + bonus)
+                    entry_reason += f" | {reason} (+{bonus})"
+
+                # Apply Geopolitical Defense Bonus (Story 19.3)
+                if stock.code in gp_bonuses:
+                    bonus, reason = gp_bonuses[stock.code]
                     score = min(100.0, score + bonus)
                     entry_reason += f" | {reason} (+{bonus})"
 
@@ -197,6 +232,7 @@ class CandidatePoolService:
             count = len(new_entries)
             logger.info(f"Refreshed {pool_type} pool with {count} candidates.")
             return count
+        return 0
 
     async def _calculate_real_score(self, stock: UniverseStock, pool_type: str) -> float | None:
         """
@@ -269,16 +305,16 @@ class CandidatePoolService:
         """
         eco_bonuses = {}  # type: dict[str, tuple[float, str]]  # code -> (bonus, reason)
         try:
-            from dao.altdata import AltDataDAO
             from config.altdata_mapping import get_concepts_for_label
-            
+            from dao.altdata import AltDataDAO
+
             alt_dao = AltDataDAO()
             signals_df = alt_dao.get_active_signals()
             print(f"DEBUG signals_df empty: {signals_df.empty}")
             if not signals_df.empty:
                 concept_to_level = {}
                 level_bonus = {"EXTREME": 15.0, "HOT": 10.0, "WARM": 5.0}
-                
+
                 for _, row in signals_df.iterrows():
                     concepts = get_concepts_for_label(row["label"])
                     print(f"DEBUG label: {row['label']}, concepts: {concepts}")
@@ -286,11 +322,11 @@ class CandidatePoolService:
                     for c in concepts:
                         if c not in concept_to_level or concept_to_level[c]["bonus"] < bonus:
                             concept_to_level[c] = {
-                                "bonus": bonus, 
-                                "label": row["label"], 
+                                "bonus": bonus,
+                                "label": row["label"],
                                 "level": row["signal_level"]
                             }
-                
+
                 if concept_to_level:
                     print(f"DEBUG concept_to_level dict: {list(concept_to_level.keys())}")
                     from dao.industry import IndustryDAO
@@ -308,7 +344,7 @@ class CandidatePoolService:
                                 c_info = concept_to_level[c_name]
                                 if code not in eco_bonuses or eco_bonuses[code][0] < c_info["bonus"]:
                                     eco_bonuses[code] = (
-                                        c_info["bonus"], 
+                                        c_info["bonus"],
                                         f"Eco[{c_info['label']}({c_info['level']})->{c_name}]"
                                     )
                         print(f"DEBUG final eco_bonuses: {eco_bonuses}")
@@ -322,17 +358,17 @@ class CandidatePoolService:
         """
         hw_bonuses = {} # type: dict[str, tuple[float, str]]
         try:
-            from services.alpha.hardware_signal_service import HardwareSignalService
             from dao.industry import IndustryDAO
-            
+            from services.alpha.hardware_signal_service import HardwareSignalService
+
             hw_service = HardwareSignalService()
             # 获取有效的概念加分映射 (e.g., {"昇腾概念": (8.0, "Hardware[Premium:910B]")})
             concept_bonuses = await hw_service.get_hardware_bonuses()
-            
+
             if concept_bonuses:
                 ind_dao = IndustryDAO()
                 concept_df = await ind_dao.get_stock_concepts([s.code for s in universe_stocks])
-                
+
                 if not concept_df.empty:
                     for _, row in concept_df.iterrows():
                         code = row["ts_code"]
@@ -343,7 +379,7 @@ class CandidatePoolService:
                                 hw_bonuses[code] = (bonus, reason)
         except Exception as e:
             logger.error(f"Failed to inject hardware signals: {e}")
-            
+
         return hw_bonuses
 
     def _calculate_mock_score(self, stock: UniverseStock, pool_type: str) -> float:
@@ -436,6 +472,90 @@ class CandidatePoolService:
 
             result = await session.execute(stmt)
             return result.scalars().all()
+
+    async def refresh_geopolitical_pool(self, current_date: str | None = None) -> int:
+        """
+        [NEW] EPIC-019 Story 19.5: 刷新地缘冲突防御型股票池
+        """
+        pool_type = 'geopolitical'
+        logger.info("Refreshing Geopolitical Defense candidate pool...")
+
+        if not current_date:
+            current_date = date.today().strftime("%Y-%m-%d")
+
+        if not self.scenario_detector or not self.geopolitical_scoring:
+            logger.error("Geopolitical services not fully injected.")
+            return 0
+
+        # 1. 检测场景
+        scenario = await self.scenario_detector.detect_scenario(current_date)
+        logger.info(f"Targeting Scenario: {scenario} for date {current_date}")
+
+        async for session in get_session():
+            # 2. 获取 Universe
+            stmt = select(UniverseStock).where(UniverseStock.is_qualified.is_(True))
+            universe_stocks = (await session.execute(stmt)).scalars().all()
+            if not universe_stocks:
+                return 0
+
+            # 3. 计算基础 Alpha 评分 (借用现有的计算逻辑，不持久化)
+            logger.info(f"Scoring base alpha for {len(universe_stocks)} stocks...")
+            semaphore = asyncio.Semaphore(50)
+            async def score_task(stock: UniverseStock, sem: asyncio.Semaphore) -> float | None:
+                async with sem:
+                    return await self._calculate_real_score(stock, 'long')
+
+            base_scores = await asyncio.gather(*[score_task(s, semaphore) for s in universe_stocks])
+
+            # 4. 计算防御性特征指标 (Story 19.4)
+            defense_factors_df = await defense_factor_service.compute_factors(
+                [s.code for s in universe_stocks], current_date
+            )
+
+            # 5. 获取避险板块加分
+            bonuses = await self.geopolitical_scoring.get_geopolitical_bonuses(
+                [s.code for s in universe_stocks], scenario
+            )
+
+            # 6. 综合评分 (Story 19.5)
+            # 组装基础得分
+            base_df = pd.DataFrame([
+                {"code": s.code, "score": sc if sc else 60.0}
+                for s, sc in zip(universe_stocks, base_scores, strict=False)
+            ])
+
+            merged_df = pd.merge(base_df, defense_factors_df, on='code', how='inner')
+            final_df = geopolitical_scoring_engine.score_defense(merged_df, bonuses, scenario)
+
+            # 7. 持久化 (Top 20)
+            await session.execute(
+                delete(CandidateStock).where(CandidateStock.pool_type == pool_type)
+            )
+
+            rank = 1
+            new_entries = []
+            top_20 = final_df.head(20)
+
+            for _, row in top_20.iterrows():
+                entry = CandidateStock(
+                    code=row["code"],
+                    pool_type=pool_type,
+                    sub_pool=str(scenario),
+                    score=float(row["final_score"]),
+                    rank=rank,
+                    entry_date=date.today(),
+                    entry_reason=f"GeopoliticalDefense[{scenario}]-Score:{row['final_score']:.1f}",
+                    status='active'
+                )
+                new_entries.append(entry)
+                rank += 1
+
+            session.add_all(new_entries)
+            await session.commit()
+
+            logger.info(f"Successfully updated Geopolitical pool with {len(new_entries)} stocks.")
+            return len(new_entries)
+        return 0
 
 # NOTE: Global singleton initialization moved to main.py for proper dependency injection
 # The service now requires:
