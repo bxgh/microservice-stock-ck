@@ -20,6 +20,7 @@ enum DataType {
   DATA_TYPE_FEATURES = 13;       // 特征矩阵
   DATA_TYPE_THS_INDUSTRY = 14;   // 同花顺行业分类
   DATA_TYPE_THS_CONCEPTS = 15;   // 同花顺概念板块
+  DATA_TYPE_FUTURES_KLINE_DAILY = 16; // 原油/期货日K线
 }
 
 // 通用数据请求
