@@ -179,6 +179,10 @@ class MooTDXService(data_source_pb2_grpc.DataSourceServiceServicer):
             handler="_fetch_ths_concepts_clickhouse",
             source_name=DataSource.CLICKHOUSE
         ),
+        data_source_pb2.DATA_TYPE_FUTURES_KLINE_DAILY: RouteConfig(
+            handler="_fetch_futures_kline_akshare",
+            source_name=DataSource.AKSHARE_API
+        )
     }
     
     def __init__(self):
@@ -1001,3 +1005,86 @@ class MooTDXService(data_source_pb2_grpc.DataSourceServiceServicer):
             healthy=healthy,
             message=message
         )
+
+    async def _fetch_futures_kline_akshare(
+        self,
+        codes: List[str],
+        params: Dict[str, Any]
+    ) -> pd.DataFrame:
+        """
+        akshare: 国际原油期货历史 K 线数据
+        
+        Args:
+            codes: 必须提供一个品种代码，例如 "CL" (WTI) 或 "OIL" (Brent)
+            params: 额外参数
+        """
+        if not codes:
+            logger.warning("No code specified for FUTURES_KLINE_DAILY")
+            return pd.DataFrame()
+            
+        symbol = codes[0]
+        logger.info(f"Fetching futures kline for symbol: {symbol}")
+        
+        # 直接使用本地 akshare 调用替代 cloud_client
+        try:
+            import akshare as ak
+            import asyncio
+            import os
+            
+            # 临时移除代理环境变量
+            proxies_to_clear = ['http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY']
+            saved_proxies = {}
+            for p in proxies_to_clear:
+                if p in os.environ:
+                    saved_proxies[p] = os.environ[p]
+                    del os.environ[p]
+                    
+            try:
+                # 增加健壮的重试机制，应对 Sina/Akshare 不稳定的连接被重置反爬
+                df = None
+                for attempt in range(5):
+                    try:
+                        # 使用 asyncio.to_thread 避免阻塞主事件循环
+                        df = await asyncio.to_thread(ak.futures_foreign_hist, symbol=symbol)
+                        if df is not None and not df.empty:
+                            break
+                    except Exception as e:
+                        if attempt == 4:
+                            raise e
+                        logger.warning(f"Attempt {attempt+1} failed for {symbol}: {e}. Retrying in 2 seconds...")
+                        await asyncio.sleep(2)
+            finally:
+                # 恢复代理设置
+                for p, val in saved_proxies.items():
+                    os.environ[p] = val
+                    
+            # 返回的数据字段应该是 date, open, high, low, close, volume 等
+            # 为了契合 ClickHouse 表结构(futures_kline_daily), 在这里规范化列名
+            if df is not None and not df.empty:
+                df['symbol'] = symbol
+                
+                # 字段映射表
+                mapping = {
+                    'date': 'trade_date',
+                    '日期': 'trade_date',
+                    'open': 'open_price',
+                    '开盘': 'open_price',
+                    'high': 'high_price',
+                    '最高': 'high_price',
+                    'low': 'low_price',
+                    '最低': 'low_price',
+                    'close': 'close_price',
+                    '收盘': 'close_price',
+                    'volume': 'volume',
+                    '成交量': 'volume'
+                }
+                
+                # 仅重命名存在的列
+                cols_to_rename = {k: v for k, v in mapping.items() if k in df.columns}
+                if cols_to_rename:
+                    df = df.rename(columns=cols_to_rename)
+                
+            return df
+        except Exception as e:
+            logger.error(f"Error fetching futures kline for {symbol} via local akshare: {e}")
+            return pd.DataFrame()
