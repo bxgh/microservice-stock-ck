@@ -884,8 +884,19 @@ class KLineSyncService:
                     expected_amount = avg_price * volume
                     
                     if expected_amount > 0:
+                        ratio = amount / expected_amount
+                        
+                        # 检测单位差异 (100倍左右通常意味着 volume 是'手'，amount 是'元')
+                        # 允许 10% 的浮动误差
+                        if 90 <= ratio <= 110:
+                            # 自动归一化为'股'
+                            row['volume'] = int(volume * 100)
+                            logger.info(f"⚖️ L5检测到单位差异，已自动归一化 (Ratio={ratio:.1f}): {row.get('code')} {row.get('trade_date')}")
+                            return True, ""
+                        
+                        # 正常校验 (50% 误差阈值)
                         deviation = abs(amount - expected_amount) / expected_amount
-                        if deviation > 0.5:  # 50% 误差阈值
+                        if deviation > 0.5:
                             return False, f"L5-成交额异常 (实际={amount:.0f}, 预期={expected_amount:.0f}, 偏差={deviation*100:.1f}%)"
             
             # 规则 3: 换手率合理性

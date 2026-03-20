@@ -65,6 +65,7 @@ class Settings(BaseSettings):
     DEEPSEEK_API_KEY: Optional[str] = os.getenv("DEEPSEEK_API_KEY")
     SILICONFLOW_API_KEY: Optional[str] = os.getenv("SILICONFLOW_API_KEY")
     OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")
+    ENABLE_SILICONFLOW: bool = os.getenv("ORCHESTRATOR_ENABLE_SILICONFLOW", "true").lower() == "true"
     LLM_DEFAULT_PROVIDER: str = "deepseek"
     
     # Notifications

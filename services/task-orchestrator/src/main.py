@@ -555,9 +555,15 @@ async def lifespan(app: FastAPI):
     # 0. Initialize LLM Agent Engine
     api_keys = {
         "deepseek": settings.DEEPSEEK_API_KEY,
-        "siliconflow": settings.SILICONFLOW_API_KEY,
         "openai": settings.OPENAI_API_KEY
     }
+    
+    if settings.ENABLE_SILICONFLOW:
+        api_keys["siliconflow"] = settings.SILICONFLOW_API_KEY
+        logger.info("✓ SiliconFlow integration enabled")
+    else:
+        logger.info("⏭️ SiliconFlow integration disabled by configuration")
+    
     # Filter out None values
     api_keys = {k: v for k, v in api_keys.items() if v}
     
