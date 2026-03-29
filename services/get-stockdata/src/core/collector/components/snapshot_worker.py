@@ -192,7 +192,8 @@ class SnapshotWorker:
                 float(item.get('ask5', 0)), int(item.get('ask_vol5', 0)),
                 int(item.get('volume', 0)),
                 float(item.get('amount', 0)),
-                float(item.get('turnover', 0)) if item.get('turnover') else 0.0
+                float(item.get('turnover', 0)) if item.get('turnover') else 0.0,
+                float(item.get('iopv')) if item.get('iopv') is not None else None
             ) 
         except Exception:
             return None

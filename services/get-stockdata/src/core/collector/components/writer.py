@@ -77,7 +77,7 @@ class ClickHouseWriter:
                          bid_price5, bid_volume5, ask_price1, ask_volume1,
                          ask_price2, ask_volume2, ask_price3, ask_volume3,
                          ask_price4, ask_volume4, ask_price5, ask_volume5,
-                         total_volume, total_amount, turnover_rate) VALUES""",
+                         total_volume, total_amount, turnover_rate, iopv) VALUES""",
                         rows
                     )
             # logger.info(f"📸 Snapshot: {len(rows)} records written")

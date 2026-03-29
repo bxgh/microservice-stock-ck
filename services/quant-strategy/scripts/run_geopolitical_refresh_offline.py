@@ -26,7 +26,7 @@ async def main():
     logger = logging.getLogger("OfflineRefresh")
 
     settings = Settings()
-    current_date = "2026-03-05"
+    current_date = "2026-03-11"
 
     # 0. 初始化数据库
     await init_database()

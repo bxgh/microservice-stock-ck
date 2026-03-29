@@ -63,4 +63,22 @@ def standardize_mootdx_fields(df: pd.DataFrame, data_type: str = 'tick') -> pd.D
     if data_type == 'tick':
         return clean_tick_data(df)
     
+    if data_type == 'quotes':
+        df = df.copy()
+        # 识别 ETF 标的 (上海: 51, 56, 58; 深圳: 15)
+        # 这里的识别逻辑可以根据需要进一步精确
+        etf_prefixes = ('51', '56', '58', '15')
+        
+        if 'code' in df.columns:
+            # 提取 IOPV: 对于 ETF，last_close 字段实际传输的是 IOPV
+            # 增加 iopv 字段
+            df['iopv'] = None
+            
+            # 使用向量化操作为符合条件的行设置 iopv
+            is_etf = df['code'].str.startswith(etf_prefixes)
+            if 'last_close' in df.columns:
+                df.loc[is_etf, 'iopv'] = df.loc[is_etf, 'last_close']
+                
+        return df
+    
     return df

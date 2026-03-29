@@ -44,6 +44,7 @@ class SnapshotData:
     turnover_rate: float = 0.0
     data_source: str = 'mootdx'
     pool_level: str = 'L1'
+    iopv: Optional[float] = None
     created_at: Optional[datetime] = None
 
 class ClickHouseWriter:
@@ -105,7 +106,7 @@ class ClickHouseWriter:
                 "bid_price5", "bid_volume5", "ask_price1", "ask_volume1",
                 "ask_price2", "ask_volume2", "ask_price3", "ask_volume3",
                 "ask_price4", "ask_volume4", "ask_price5", "ask_volume5",
-                "total_volume", "total_amount", "turnover_rate", "data_source", "pool_level", "created_at"
+                "total_volume", "total_amount", "turnover_rate", "data_source", "pool_level", "iopv", "created_at"
             ]
             column_str = ", ".join(columns)
             self.client.execute(
