@@ -59,7 +59,7 @@ class TickFetcher:
         url = self.api_url + MOOTDX_TICK_ENDPOINT.format(code=code)
         try:
             params = {"start": start}
-            async with self.http.get(url, params=params, timeout=aiohttp.ClientTimeout(total=4)) as resp:
+            async with self.http.get(url, params=params, timeout=aiohttp.ClientTimeout(total=15)) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     # Apply deduplication

@@ -139,12 +139,20 @@ async def update_redis_cache(redis, items):
                     "type": s_type
                 }, ensure_ascii=False)
         
-        # 补充核心指数 (兜底防止 API 未返回)
+        # 补充核心指数与核心 ETF (兜底防止 API 未返回或被过滤)
+        CORE_ETFS = ["510300.SH", "510500.SH", "159915.SZ", "588090.SH", "512100.SH"]
+        
         for code in CORE_INDICES:
             if code not in stock_codes:
                 stock_codes.append(code)
                 if code not in stock_info_map:
                     stock_info_map[code] = json.dumps({"name": "基准指数", "type": "index"}, ensure_ascii=False)
+                    
+        for code in CORE_ETFS:
+            if code not in stock_codes:
+                stock_codes.append(code)
+                if code not in stock_info_map:
+                    stock_info_map[code] = json.dumps({"name": "核心ETF", "type": "etf"}, ensure_ascii=False)
 
         if not stock_codes or len(stock_codes) < 20:
             logger.error(f"❌ 数据解析后数量不足 (Count={len(stock_codes)} < 20)，可能有异常，中止更新")

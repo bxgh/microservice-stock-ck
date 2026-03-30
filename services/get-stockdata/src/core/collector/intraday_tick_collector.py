@@ -262,12 +262,17 @@ class IntradayTickCollector:
             # 格式化为 mootdx-api 需要的前缀格式
             self.stock_pool = []
             for code in raw_stocks:
+                # 彻底丢弃北交所 (BJ) 以及新三板股票
+                # 因为底层 PyTDX 不支持 8 / 4 / 9 开头的 A 股行情，强行请求会导致 Socket 线程堵塞 15s 从而拖垮整个服务。
+                if '.BJ' in code or code.startswith('8') or code.startswith('4') or code.startswith('9'):
+                    continue
+                    
                 if '.' in code:
-                    # TS 格式: 000001.SZ, 600519.SH, 899050.BJ
+                    # TS 格式: 000001.SZ, 600519.SH
                     prefix = code.split('.')[-1].lower()
                     pure_code = code.split('.')[0]
                     self.stock_pool.append(f"{prefix}{pure_code}")
-                elif code.startswith('6') or code.startswith('9'):
+                elif code.startswith('6'):
                     self.stock_pool.append(f"sh{code}")
                 else:
                     self.stock_pool.append(f"sz{code}")

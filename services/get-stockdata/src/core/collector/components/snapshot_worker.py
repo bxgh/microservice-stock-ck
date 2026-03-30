@@ -127,7 +127,7 @@ class SnapshotWorker:
         
         for attempt in range(self.max_retries + 1):
             try:
-                async with self.http_session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                async with self.http_session.get(url, timeout=aiohttp.ClientTimeout(total=60)) as resp:
                     if resp.status == 200:
                         data = await resp.json()
                         rows = []

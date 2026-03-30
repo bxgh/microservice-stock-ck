@@ -109,7 +109,7 @@ class MootdxHandler:
             if not client:
                 logger.warning("Mootdx client not initialized")
                 return pd.DataFrame()
-        
+
             loop = asyncio.get_event_loop()
             try:
                 data = await loop.run_in_executor(
@@ -122,7 +122,7 @@ class MootdxHandler:
                     # 修复 NaN 导致 JSON 序列化失败的问题
                     data = data.astype(object)
                     data = data.where(pd.notnull(data), None)
-                    
+
                 return data if data is not None else pd.DataFrame()
             except Exception as e:
                 logger.error(f"Mootdx get_quotes failed: {e}")

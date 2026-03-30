@@ -106,16 +106,59 @@ class RobustQuotes:
 
     def quotes(self, symbol=None):
         symbol = symbol or []
-        if isinstance(symbol, str): 
+        if isinstance(symbol, str):
              symbol = [symbol]
-        
+
         params = []
         for s in symbol:
              m, c = self._clean_symbol(s)
+             # PyTDX 在批量请求中如果遇到无法识别的市场 (如北交所的 2)，会导致整批请求崩溃并返回 None
+             if m not in (0, 1):
+                 continue
              params.append((m, c))
-        
-        data = self.client.get_security_quotes(params)
-        return to_data(data, symbol=symbol, client=self)
+
+        def _reboot_client() -> bool:
+            try:
+                ip, port = self.server
+                self.client.close()
+                self.client = type(self.client)(auto_retry=True, raise_exception=True)
+                # 使用短超时防止重连死节点造成的严重拥堵
+                if self.client.connect(ip, int(port), time_out=2):
+                    return True
+                return False
+            except Exception:
+                return False
+
+        # 通达信协议单次最多支持 80 只，超过需分批请求后合并
+        BATCH_LIMIT = 80
+        all_data = []
+        for i in range(0, len(params), BATCH_LIMIT):
+            batch = params[i:i + BATCH_LIMIT]
+            try:
+                batch_result = self.client.get_security_quotes(batch)
+            except Exception:
+                batch_result = None
+                
+            if batch_result:
+                all_data.extend(batch_result)
+            else:
+                if not _reboot_client():
+                    logger.warning(f"TDX Node {self.server} is dead, skipping poison pill fallback.")
+                    break
+                    
+                # Poison Pill 降级策略
+                sub_size = 6
+                for j in range(0, len(batch), sub_size):
+                    sub_batch = batch[j:j+sub_size]
+                    try:
+                        sub_res = self.client.get_security_quotes(sub_batch)
+                        if sub_res:
+                            all_data.extend(sub_res)
+                    except Exception:
+                        if not _reboot_client():
+                            break
+
+        return to_data(all_data, symbol=symbol, client=self)
         
     def _clean_symbol(self, symbol):
         s = str(symbol).upper()
@@ -294,7 +337,7 @@ class TDXClientPool:
                 # 'list' 或 'ranked' 策略：循环使用已知节点
                 server = self.target_servers[index % len(self.target_servers)]
                 client = await loop.run_in_executor(
-                    None, lambda: RobustQuotes(server=server, timeout=15)
+                    None, lambda: RobustQuotes(server=server, timeout=4)
                 )
             return client
         except Exception as e:
