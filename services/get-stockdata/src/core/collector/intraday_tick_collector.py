@@ -259,23 +259,23 @@ class IntradayTickCollector:
             if not raw_stocks:
                 logger.warning("⚠️ StockUniverse returned empty list!")
             
-            # 格式化为 mootdx-api 需要的前缀格式
+            # 格式化为 mootdx-api 需要的前缀格式 (sh/sz)
             self.stock_pool = []
-            for code in raw_stocks:
-                # 彻底丢弃北交所 (BJ) 以及新三板股票
-                # 因为底层 PyTDX 不支持 8 / 4 / 9 开头的 A 股行情，强行请求会导致 Socket 线程堵塞 15s 从而拖垮整个服务。
-                if '.BJ' in code or code.startswith('8') or code.startswith('4') or code.startswith('9'):
+            for code_in in raw_stocks:
+                # 归一化为 TS 格式 (如 600519.SH)
+                ts_code = clean_stock_code(code_in)
+                if not ts_code or '.BJ' in ts_code:
                     continue
-                    
-                if '.' in code:
-                    # TS 格式: 000001.SZ, 600519.SH
-                    prefix = code.split('.')[-1].lower()
-                    pure_code = code.split('.')[0]
-                    self.stock_pool.append(f"{prefix}{pure_code}")
-                elif code.startswith('6'):
-                    self.stock_pool.append(f"sh{code}")
-                else:
-                    self.stock_pool.append(f"sz{code}")
+                
+                pure_code, market = ts_code.split('.')
+                
+                # 彻底丢弃北交所及新三板股票
+                # 因为底层 PyTDX 不支持 8 / 4 / 9 开头的 A 股行情，强行请求会导致 Socket 线程堵塞 15s 从而拖垮整个服务。
+                if pure_code.startswith(('8', '4', '9')):
+                    continue
+                
+                # 统一使用归一化后的市场标识 (sh/sz) 作为前缀
+                self.stock_pool.append(f"{market.lower()}{pure_code}")
             
             # 初始化指纹
             for code in self.stock_pool:
