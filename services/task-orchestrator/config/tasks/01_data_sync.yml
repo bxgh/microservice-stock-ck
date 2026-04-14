@@ -148,18 +148,20 @@ tasks:
     retry:
       max_attempts: 3
   
-  # 估值数据更新 (P2)
-  - id: monthly_valuation_sync
-    name: 估值数据更新
+  # 每日估值指标同步 (P1) [NEW: Tushare-based]
+  - id: daily_valuation_sync
+    name: 每日估值指标同步 (Tushare)
     type: docker
-    enabled: false  # 待实现
+    enabled: true
     schedule:
-      type: cron
-      expression: "0 6 1 * *"  # 每月1号 06:00
+      type: trading_cron
+      expression: "25 18 * * *" # 交易日 18:25 (Tushare 数据就绪后)
     target:
-      command: ["jobs.sync_valuation"]
+      command: ["jobs.sync_valuation_tushare"]
+      network_mode: "host"
     retry:
       max_attempts: 2
+      backoff_seconds: 600
 
   # 每日元数据同步 (股东、估值、大宗等) (P1) [NEW]
   - id: daily_metadata_sync
@@ -168,7 +170,7 @@ tasks:
     enabled: true
     schedule:
       type: trading_cron
-      expression: "0 18 * * mon-fri" # 交易日 18:00
+      expression: "0 19 * * mon-fri" # 交易日 19:00 (在采集任务后)
     target:
       command: ["jobs.sync_metadata", "--table", "all", "--days", "7"]
     retry:

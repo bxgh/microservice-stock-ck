@@ -39,8 +39,8 @@ class MetadataSyncService:
             'daily_basic': {
                 'clickhouse': 'stock_valuation',
                 'date_col': 'trade_date',
-                'mysql_cols': ['ts_code', 'trade_date', 'pe', 'pb', 'ps', 'total_mv', 'close'],
-                'ch_cols': ['stock_code', 'trade_date', 'pe', 'pb', 'ps', 'market_cap', 'price']
+                'mysql_cols': ['ts_code', 'trade_date', 'turnover_rate', 'pe', 'pb', 'ps', 'total_mv', 'circ_mv', 'close'],
+                'ch_cols': ['stock_code', 'trade_date', 'turnover_rate', 'pe', 'pb', 'ps', 'market_cap', 'circ_mv', 'price']
             },
             'stock_block_trade': {
                 'clickhouse': 'stock_block_trade',

@@ -2,6 +2,7 @@ import asyncio
 import logging
 import hashlib
 import os
+import random
 import signal
 from datetime import datetime, time
 from collections import deque
@@ -46,7 +47,7 @@ REDIS_MAX_CONNECTIONS = 100 # Redis 连接池最大连接数
 
 # 快照采集配置
 SNAPSHOT_INTERVAL_SECONDS = 3.0  # 快照采集间隔
-SNAPSHOT_BATCH_SIZE = int(os.getenv("SNAPSHOT_BATCH_SIZE", "150"))  # 快照API单批大小(增大以减少请求数)
+SNAPSHOT_BATCH_SIZE = int(os.getenv("SNAPSHOT_BATCH_SIZE", "50"))  # 快照API单批大小(调小以增强稳定性)
 
 class CircuitBreaker:
     """简单的熔断器实现，对齐文档质量标准"""
@@ -208,6 +209,11 @@ class IntradayTickCollector:
             if filtered_count > 0:
                 logger.info(f"⚙️ Filtered {filtered_count} indices from stock pool.")
 
+            # --- 优化: 随机打散代码池，混合沪深标的，防止同质化批次触发 API 拒绝 ---
+            random.sample(tick_pool, len(tick_pool)) # 使用 sample 不改变原对象或直接 shuffle
+            random.shuffle(tick_pool)
+            logger.info(f"🎲 Stock pool shuffled (mixing SH/SZ batches)")
+
             # 初始化 SnapshotWorker
             if self.snapshot_worker is None:
                 self.snapshot_worker = SnapshotWorker(
@@ -242,19 +248,28 @@ class IntradayTickCollector:
         - SHARD_TOTAL>1: 加载对应分片
         """
         try:
-            raw_stocks = []
+            # 1. 同时合并 A 股全域与 YAML 核心池 (确保 ETF 被包含)
+            all_universe_stocks = await self.stock_universe.get_all_a_stocks()
+            
+            yaml_stocks = []
+            if os.path.exists(self.stock_pool_path):
+                with open(self.stock_pool_path, 'r') as f:
+                    config = yaml.safe_load(f)
+                    yaml_stocks = config.get('stocks', [])
+                    if yaml_stocks:
+                        logger.info(f"✅ Loaded {len(yaml_stocks)} core stocks from {self.stock_pool_path}")
+
+            # 合并并去重
+            combined_raw = sorted(list(set(all_universe_stocks + yaml_stocks)))
+            
+            # 2. 根据模式筛选当前节点负责的标的
             if self.shard_total > 1:
-                logger.info(f"Using Distributed Mode: Loading Shard {self.shard_index}/{self.shard_total}")
-                raw_stocks = await self.stock_universe.get_shard_stocks(self.shard_index, self.shard_total)
+                logger.info(f"Using Distributed Mode: Sharding {len(combined_raw)} stocks -> Shard {self.shard_index}/{self.shard_total}")
+                # 使用 StockUniverse 的稳定哈希分片算法
+                raw_stocks = self.stock_universe._shard_filter(combined_raw, self.shard_index, self.shard_total)
             else:
-                logger.info(f"Using Standalone Mode: Loading from {self.stock_pool_path}")
-                if os.path.exists(self.stock_pool_path):
-                    with open(self.stock_pool_path, 'r') as f:
-                        config = yaml.safe_load(f)
-                        raw_stocks = config.get('stocks', [])
-                else:
-                    logger.warning(f"⚠️ YAML not found at {self.stock_pool_path}, falling back to All A-Shares")
-                    raw_stocks = await self.stock_universe.get_all_a_stocks()
+                logger.info(f"Using Standalone Mode: Processing {len(combined_raw)} stocks")
+                raw_stocks = combined_raw
             
             if not raw_stocks:
                 logger.warning("⚠️ StockUniverse returned empty list!")

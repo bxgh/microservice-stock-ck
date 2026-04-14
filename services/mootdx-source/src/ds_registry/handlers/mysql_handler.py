@@ -107,3 +107,35 @@ class MySQLHandler:
         except Exception as e:
             logger.error(f"MySQL FETCH ERROR (sw_industry) [SQL: {query}]: {e}")
             return pd.DataFrame()
+
+    async def fetch_margin_data(self, start_date: str = None, end_date: str = None) -> pd.DataFrame:
+        """获取融资融券汇总数据 (VOL-02)"""
+        if not self.pool:
+            logger.error("MySQL pool not initialized")
+            return pd.DataFrame()
+
+        query = "SELECT trade_date, margin_buy, margin_balance FROM market_margin_summary"
+        conditions = []
+        params = []
+        
+        if start_date:
+            conditions.append("trade_date >= %s")
+            params.append(start_date)
+        if end_date:
+            conditions.append("trade_date <= %s")
+            params.append(end_date)
+            
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        
+        query += " ORDER BY trade_date ASC"
+        
+        try:
+            async with self.pool.acquire() as conn:
+                async with conn.cursor(aiomysql.DictCursor) as cur:
+                    await cur.execute(query, tuple(params) if params else None)
+                    result = await cur.fetchall()
+                    return pd.DataFrame(result)
+        except Exception as e:
+            logger.error(f"MySQL FETCH ERROR (margin_data) [SQL: {query}]: {e}")
+            return pd.DataFrame()

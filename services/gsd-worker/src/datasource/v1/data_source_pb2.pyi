@@ -20,6 +20,13 @@ class DataType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     DATA_TYPE_INDEX: _ClassVar[DataType]
     DATA_TYPE_INDUSTRY: _ClassVar[DataType]
     DATA_TYPE_META: _ClassVar[DataType]
+    DATA_TYPE_ISSUE_PRICE: _ClassVar[DataType]
+    DATA_TYPE_SW_INDUSTRY: _ClassVar[DataType]
+    DATA_TYPE_FEATURES: _ClassVar[DataType]
+    DATA_TYPE_THS_INDUSTRY: _ClassVar[DataType]
+    DATA_TYPE_THS_CONCEPTS: _ClassVar[DataType]
+    DATA_TYPE_FUTURES_KLINE_DAILY: _ClassVar[DataType]
+    DATA_TYPE_MARGIN: _ClassVar[DataType]
 DATA_TYPE_UNSPECIFIED: DataType
 DATA_TYPE_QUOTES: DataType
 DATA_TYPE_TICK: DataType
@@ -31,6 +38,13 @@ DATA_TYPE_VALUATION: DataType
 DATA_TYPE_INDEX: DataType
 DATA_TYPE_INDUSTRY: DataType
 DATA_TYPE_META: DataType
+DATA_TYPE_ISSUE_PRICE: DataType
+DATA_TYPE_SW_INDUSTRY: DataType
+DATA_TYPE_FEATURES: DataType
+DATA_TYPE_THS_INDUSTRY: DataType
+DATA_TYPE_THS_CONCEPTS: DataType
+DATA_TYPE_FUTURES_KLINE_DAILY: DataType
+DATA_TYPE_MARGIN: DataType
 
 class DataRequest(_message.Message):
     __slots__ = ("type", "codes", "params", "request_id")

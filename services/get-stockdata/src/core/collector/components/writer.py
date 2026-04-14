@@ -127,7 +127,7 @@ class ClickHouseWriter:
                 async with conn.cursor() as cursor:
                     await cursor.execute(
                         f"""INSERT INTO {self.table_name} 
-                        (stock_code, trade_date, tick_time, price, volume, amount, direction, num) VALUES""",
+                        (stock_code, trade_date, tick_time, price, iopv, volume, amount, direction, num) VALUES""",
                         rows_to_write
                     )
             logger.info(f"💾 Flushed {len(rows_to_write)} ticks to ClickHouse ({self.table_name})")

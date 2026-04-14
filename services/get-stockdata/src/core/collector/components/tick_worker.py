@@ -72,8 +72,22 @@ class TickWorker:
             round_start = asyncio.get_running_loop().time()
             
             # 并发轮询
-            tasks = [self.poll_stock(code) for code in self.stock_pool]
-            await asyncio.gather(*tasks, return_exceptions=True)
+            # 修复：分块执行以避免大量任务进入 Event Loop 导致拥塞
+            # 引导阶段调小批次并增加间隙，防止撑爆 mootdx-api 连接池
+            is_bootstrapping = len(self.bootstrapped_stocks) < len(self.stock_pool)
+            batch_size = 10 if is_bootstrapping else 50
+            
+            for i in range(0, len(self.stock_pool), batch_size):
+                chunk = self.stock_pool[i : i + batch_size]
+                tasks = [self.poll_stock(code) for code in chunk]
+                # 执行当前分块任务
+                await asyncio.gather(*tasks, return_exceptions=True)
+                
+                # 引导阶段增加延迟，防止抢占快照通道
+                if is_bootstrapping:
+                    await asyncio.sleep(0.5)
+                    if i % 100 == 0:
+                        logger.info(f"⚡ Tick Gathering Progress: {min(i + batch_size, len(self.stock_pool))}/{len(self.stock_pool)}")
 
             # 检查刷盘
             await self.writer.flush_if_needed()
@@ -162,16 +176,21 @@ class TickWorker:
                     batch_latest_fp = fp # 记录最新一条成功处理的指纹
                         
                     # 解析数据
-                    time_str = item.get('time', '')
-                    price = float(item.get('price', 0))
+                    # --- 价格纠偏逻辑: 针对基金类标的 (ETF/LOF) 的 10 倍偏移执行位移 ---
+                    is_fund = any(clean_code.startswith(p) for p in ['51', '52', '56', '58', '59', '15', '16', '18'])
+                    scale = 0.1 if is_fund else 1.0
+                    
+                    price = float(item.get('price', 0)) * scale
                     volume = int(item.get('volume', item.get('vol', 0)))
+                    time_str = item.get('time', '')
+                    iopv = float(item.get('iopv', 0)) * scale
                     direction_str = item.get('type', 'NEUTRAL')
                     direction = self._map_direction(direction_str)
                     
                     num = int(item.get('num', 0))
                     
                     new_rows.append((
-                        clean_code, today, time_str, price, volume, 
+                        clean_code, today, time_str, price, iopv, volume, 
                         price * volume, direction, num
                     ))
             

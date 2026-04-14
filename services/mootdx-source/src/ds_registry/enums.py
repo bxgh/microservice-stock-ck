@@ -38,6 +38,7 @@ class DataType(str, Enum):
     INDEX = "INDEX"             # 指数成分
     INDUSTRY = "INDUSTRY"       # 行业数据
     DRAGON_TIGER = "DRAGON_TIGER"  # 龙虎榜
+    MARGIN = "MARGIN"              # 融资融券
     
     # 扩展数据类型
     ISSUE_PRICE = "ISSUE_PRICE"     # 发行价

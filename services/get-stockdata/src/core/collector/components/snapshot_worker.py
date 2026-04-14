@@ -42,12 +42,15 @@ class SnapshotWorker:
         self.circuit_breaker = circuit_breaker
         self.max_retries = max_retries
         
+        # 强制调优: 限制最大批次为 40，以确保后端响应可靠 (忽略外部环境变量的 60/150)
+        actual_batch_size = min(batch_size, 40)
+        
         # 预计算批次
         self.batches = [
-            stock_pool[i:i + batch_size]
-            for i in range(0, len(stock_pool), batch_size)
+            stock_pool[i:i + actual_batch_size]
+            for i in range(0, len(stock_pool), actual_batch_size)
         ]
-        logger.info(f"📸 SnapshotWorker initialized: {len(self.batches)} batches (size={batch_size})")
+        logger.info(f"📸 SnapshotWorker initialized: {len(self.batches)} batches (size={actual_batch_size})")
         
         self.is_running = False
         
@@ -127,6 +130,7 @@ class SnapshotWorker:
         
         for attempt in range(self.max_retries + 1):
             try:
+                # 移除死锁风险：已经在外部 fetch_batch 中持有了信号量
                 async with self.http_session.get(url, timeout=aiohttp.ClientTimeout(total=60)) as resp:
                     if resp.status == 200:
                         data = await resp.json()
@@ -141,10 +145,13 @@ class SnapshotWorker:
                             self.circuit_breaker.record_success()
                             
                         if not rows:
-                            logger.info(f"ℹ️ Batch {batch_idx} returned 0 valid rows (API count: {len(data)})")
+                            # 采样前 3 个代码以便于排查是哪些代码导致的 0 返回
+                            sample_codes = batch[:3]
+                            logger.info(f"ℹ️ Batch {batch_idx} returned 0 valid rows (API count: {len(data)}, Sample: {sample_codes})")
                         return rows
                     else:
-                        logger.warning(f"⚠️ Snapshot API returned {resp.status} (Batch {batch_idx}, Attempt {attempt+1}/{self.max_retries+1})")
+                        sample_codes = batch[:3]
+                        logger.warning(f"⚠️ Snapshot API returned {resp.status} (Batch {batch_idx}, Attempt {attempt+1}/{self.max_retries+1}, Sample: {sample_codes})")
             except Exception as e:
                 logger.warning(f"⚠️ Batch {batch_idx} fetch exception: {repr(e)[:100]} (Attempt {attempt+1}/{self.max_retries+1})")
             
@@ -163,23 +170,38 @@ class SnapshotWorker:
             # 基础校验
             if not item or 'code' not in item:
                 return None
+            
+            clean_code = clean_stock_code(item['code'])
                 
             # 价格转换
             current_price = float(item.get('price', 0))
             if current_price <= 0:  # 过滤无效价格
                 return None
 
+            # 价格纠偏逻辑: 针对基金类标的 (ETF/LOF) 的 10 倍偏移执行位移
+            # 识别前缀: SH (51, 56, 58, 59), SZ (15, 16, 18)
+            is_fund = any(clean_code.startswith(p) for p in ['51', '52', '56', '58', '59', '15', '16', '18'])
+            scale = 0.1 if is_fund else 1.0
+            
+            # 价格与 IOPV 字段应用 Scale
+            current_price = float(item.get('price', 0)) * scale
+            iopv = float(item.get('iopv')) * scale if item.get('iopv') is not None else None
+            open_price = float(item.get('open', 0)) * scale
+            high_price = float(item.get('high', 0)) * scale
+            low_price = float(item.get('low', 0)) * scale
+            last_close = float(item.get('last_close', 0)) * scale
+
             return (
                 snapshot_time,
                 trade_date,
-                clean_stock_code(item['code']),
+                clean_code,
                 item.get('name', ''),
                 str(item.get('market', '')),  # market (Fixed: ClickHouse String column)
                 current_price,
-                float(item.get('open', 0)),
-                float(item.get('high', 0)),
-                float(item.get('low', 0)),
-                float(item.get('last_close', 0)),
+                open_price,
+                high_price,
+                low_price,
+                last_close,
                 float(item.get('bid1', 0)), int(item.get('bid_vol1', 0)),
                 float(item.get('bid2', 0)), int(item.get('bid_vol2', 0)),
                 float(item.get('bid3', 0)), int(item.get('bid_vol3', 0)),
@@ -193,7 +215,7 @@ class SnapshotWorker:
                 int(item.get('volume', 0)),
                 float(item.get('amount', 0)),
                 float(item.get('turnover', 0)) if item.get('turnover') else 0.0,
-                float(item.get('iopv')) if item.get('iopv') is not None else None
+                iopv
             ) 
         except Exception:
             return None

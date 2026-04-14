@@ -15,6 +15,13 @@ enum DataType {
   DATA_TYPE_INDEX = 8;           // 指数成分
   DATA_TYPE_INDUSTRY = 9;        // 行业数据
   DATA_TYPE_META = 10;           // 股票元数据
+  DATA_TYPE_ISSUE_PRICE = 11;    // 发行价
+  DATA_TYPE_SW_INDUSTRY = 12;    // 申万行业分类
+  DATA_TYPE_FEATURES = 13;       // 特征矩阵
+  DATA_TYPE_THS_INDUSTRY = 14;   // 同花顺行业分类
+  DATA_TYPE_THS_CONCEPTS = 15;   // 同花顺概念板块
+  DATA_TYPE_FUTURES_KLINE_DAILY = 16; // 原油/期货日K线
+  DATA_TYPE_MARGIN = 17;         // 融资融券数据
 }
 
 // 通用数据请求

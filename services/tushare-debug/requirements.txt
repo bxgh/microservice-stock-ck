@@ -1,0 +1,17 @@
+# Core Data Processing (Matching get-stockdata versions)
+pandas==2.1.3
+numpy==1.26.2
+
+# Tushare SDK
+tushare>=1.4.0
+
+# Database & Cache
+clickhouse-driver==0.2.6
+redis==5.0.1
+
+# Visualization
+matplotlib==3.8.2
+
+# Utilities
+python-dotenv==1.0.0
+requests==2.31.0

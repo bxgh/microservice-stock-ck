@@ -88,3 +88,12 @@ workflow:
       depends_on: [final_repair]
       max_attempts: 2
       retry_policy: fixed
+
+    # 8. 流动性复盘 (Market Review)
+    - id: review_liquidity
+      task_id: review_liquidity
+      name: 流动性复盘
+      type: docker
+      depends_on: [strategy_selection]
+      max_attempts: 3
+      retry_policy: fixed

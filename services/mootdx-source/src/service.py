@@ -95,6 +95,10 @@ VALIDATION_RULES = {
         "required_columns": ["code", "feature_vector"],
         "min_rows": 1
     },
+    "MARGIN": {
+        "required_columns": ["trade_date", "margin_buy"],
+        "min_rows": 1
+    },
     "META": {
         "required_columns": ["ts_code", "name"],
         "min_rows": 1
@@ -182,6 +186,10 @@ class MooTDXService(data_source_pb2_grpc.DataSourceServiceServicer):
         data_source_pb2.DATA_TYPE_FUTURES_KLINE_DAILY: RouteConfig(
             handler="_fetch_futures_kline_akshare",
             source_name=DataSource.AKSHARE_API
+        ),
+        data_source_pb2.DATA_TYPE_MARGIN: RouteConfig(
+            handler="_fetch_margin_mysql",
+            source_name=DataSource.MYSQL
         )
     }
     
@@ -1088,3 +1096,18 @@ class MooTDXService(data_source_pb2_grpc.DataSourceServiceServicer):
         except Exception as e:
             logger.error(f"Error fetching futures kline for {symbol} via local akshare: {e}")
             return pd.DataFrame()
+
+    async def _fetch_margin_mysql(
+        self,
+        codes: List[str],
+        params: Dict[str, Any]
+    ) -> pd.DataFrame:
+        """MySQL: 获取融资融券数据 (VOL-02)"""
+        if not self.mysql_handler:
+            logger.warning("MySQL handler not initialized")
+            return pd.DataFrame()
+            
+        start_date = params.get('start_date')
+        end_date = params.get('end_date')
+        
+        return await self.mysql_handler.fetch_margin_data(start_date, end_date)
