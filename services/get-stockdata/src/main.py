@@ -28,6 +28,7 @@ sys.path.append("/home/app/.local/lib/python3.12/site-packages")
 
 # Import gRPC client
 from grpc_client import get_datasource_client, close_datasource_client
+from data_access import MySQLPoolManager
 
 # Import API routes
 from api.quotes_routes import router as quotes_router
@@ -67,7 +68,15 @@ async def lifespan(app: FastAPI):
             
     except Exception as e:
         logger.error(f"Failed to initialize gRPC client: {e}")
-    
+
+    # Initialize MySQL Connection Pool (Direct for Static Data)
+    try:
+        await MySQLPoolManager.get_pool()
+        logger.info("✓ MySQL connection pool initialized for 41-node (Static Data)")
+    except Exception as e:
+        logger.error(f"⚠ Critical: MySQL connection pool failed to initialize: {e}")
+        logger.error("Static data endpoints may fail, but Real-time Tick system remains operational.")
+
     logger.info("=== Get Stock Data Service Ready ===")
     
     yield
@@ -75,6 +84,11 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("Shutting down Get Stock Data Service...")
     await close_datasource_client()
+    try:
+        await MySQLPoolManager.close_pool()
+        logger.info("✓ MySQL pool closed")
+    except Exception:
+        pass
     logger.info("✓ Cleanup complete")
 
 
