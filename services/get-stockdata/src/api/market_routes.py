@@ -1,156 +1,88 @@
 # -*- coding: utf-8 -*-
 """
-市场与行业数据 API Routes - 通过 gRPC 调用 mootdx-source
+市场与行业数据 API Routes - 直连 MySQL DAO 层
 """
 from fastapi import APIRouter, HTTPException, Depends, Path, Query
-from urllib.parse import unquote
-import pandas as pd
-from typing import Dict, Any, List
+import logging
 
-from grpc_client import get_datasource_client, DataSourceClient
+from data_access.mysql_pool import MySQLPoolManager
+from data_access.market_data_dao import MarketDataDAO
+from data_access.sector_dao import SectorDAO
 
 router = APIRouter(prefix="/api/v1/market", tags=["市场与行业"])
+logger = logging.getLogger(__name__)
 
-async def get_client() -> DataSourceClient:
-    """Dependency to get DataSourceClient"""
-    return await get_datasource_client()
-
-@router.get("/ranking")
-async def get_market_ranking(
-    ranking_type: str = Query("limit_up", description="榜单类型: limit_up (涨停), hot (人气), up (涨幅), volume (成交量)"),
-    client: DataSourceClient = Depends(get_client)
-):
-    """
-    获取市场榜单数据 (人气、涨停等) - 用于 Smart Money 策略
-    """
-    try:
-        # 汉字转拼音/标识符映射 (如果用户输入了汉字)
-        mapping = {
-            "人气": "hot",
-            "涨幅": "up",
-            "涨停": "limit_up",
-            "成交量": "volume"
-        }
-        actual_type = mapping.get(ranking_type, ranking_type)
-        
-        df = await client.fetch_ranking(actual_type)
-        
-        if df.empty:
-            return {"success": True, "data": [], "count": 0}
-            
-        data = df.where(pd.notnull(df), None).to_dict(orient='records')
-        
-        # 统一代码格式
-        for item in data:
-            if 'code' in item:
-                item['code'] = str(item['code']).zfill(6)
-                
-        return {
-            "success": True,
-            "type": ranking_type,
-            "data": data,
-            "count": len(data)
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching ranking: {str(e)}")
+async def get_mysql_pool():
+    return MySQLPoolManager.get_pool()
 
 @router.get("/sector/list")
-async def get_sector_list(
-    client: DataSourceClient = Depends(get_client)
-):
+async def get_sector_list(pool = Depends(get_mysql_pool)):
     """
-    获取全量板块/行业列表 (通过自然语言查询)
+    获取全量板块/行业列表 - 直连 MySQL
     """
     try:
-        # 使用 DATA_TYPE_SECTOR 配合通用查询
-        df = await client.fetch_sector("所有板块")
-        
-        if df.empty:
-            return {"success": True, "data": [], "count": 0}
-            
+        data_list = await SectorDAO().get_sector_list(pool)
         return {
             "success": True,
-            "data": df.where(pd.notnull(df), None).to_dict(orient='records'),
-            "count": len(df)
+            "data": data_list,
+            "count": len(data_list)
         }
     except Exception as e:
+        logger.error(f"Error fetching sector list: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error fetching sector list: {str(e)}")
 
 @router.get("/sector/{sector_code}/stocks")
 async def get_sector_stocks(
-    sector_code: str = Path(..., description="板块代码或名称"),
-    client: DataSourceClient = Depends(get_client)
+    sector_code: str = Path(..., description="板块名称或完整名称(如 同花顺_半导体)"),
+    pool = Depends(get_mysql_pool)
 ):
     """
-    获取指定板块的成分股
+    获取指定板块的成分股 - 直连 MySQL
     """
     try:
-        # 尝试解码
+        from urllib.parse import unquote
         try:
             sector_name = unquote(sector_code)
         except:
             sector_name = sector_code
+
+        data_list = await SectorDAO().get_sector_constituents(pool, sector_name)
+        if not data_list:
+            raise HTTPException(status_code=404, detail=f"No stocks found for sector {sector_name}")
             
-        df = await client.fetch_sector(f"{sector_name}的成分股")
-        
-        if df.empty:
-            raise HTTPException(status_code=404, detail=f"No stocks found for sector {sector_code}")
-            
-        data = df.where(pd.notnull(df), None).to_dict(orient='records')
-        for item in data:
-            if 'code' in item:
-                item['code'] = str(item['code']).zfill(6)
-                
         return {
             "success": True,
             "sector": sector_name,
-            "data": data,
-            "count": len(data)
+            "data": data_list,
+            "count": len(data_list)
         }
+    except HTTPException:
+        raise
     except Exception as e:
-        if isinstance(e, HTTPException): raise e
+        logger.error(f"Error fetching sector stocks: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error fetching sector stocks: {str(e)}")
 
-# 保留原有的 industry 接口重定向
-@router.get("/industry/{industry_code}/stats")
-async def get_industry_stats(
-    industry_code: str,
-    client: DataSourceClient = Depends(get_client)
-):
-    """兼容旧版本的行业统计接口"""
-    params = {"industry": industry_code}
-    df = await client.fetch_ranking("industry_stats", params=params)
-    if df.empty:
-        return {"industry": industry_code, "stats": {}, "message": "No stats found"}
-    return df.where(pd.notnull(df), None).to_dict(orient='records')
 @router.get("/dragon_tiger")
 async def get_dragon_tiger(
-    date: str = Query(None, description="日期 (YYYY-MM-DD)"),
-    client: DataSourceClient = Depends(get_client)
+    code: str = Query(..., description="股票代码"),
+    start_date: str = Query(None, description="开始日期 (YYYY-MM-DD)"),
+    end_date: str = Query(None, description="结束日期 (YYYY-MM-DD)"),
+    pool = Depends(get_mysql_pool)
 ):
     """
-    获取龙虎榜数据 - 识别主力投机动向
+    获取龙虎榜历史数据 - 直连 MySQL
+    注意: API 形态已根据 DAO 层调整，现在查询指定个股的龙虎榜
     """
     try:
-        from datasource.v1 import data_source_pb2
-        params = {}
-        if date:
-            params["date"] = date
-            
-        request = data_source_pb2.DataRequest(
-            type=data_source_pb2.DATA_TYPE_META,
-            params=params
-        )
-        # 路由到 META/DragonTiger
-        df = await client.fetch_meta("")
-        
+        df = await MarketDataDAO().get_lhb_data(pool, code, start_date, end_date)
         if df.empty:
             return {"success": True, "data": [], "count": 0}
             
-        data = df.where(pd.notnull(df), None).to_dict(orient='records')
+        data = df.to_dict(orient='records')
+        # 兼容日期序列化
         for item in data:
-            if 'code' in item:
-                item['code'] = str(item['code']).zfill(6)
+            if 'trade_date' in item and item['trade_date']:
+                item['trade_date'] = str(item['trade_date'])
                 
         return {
             "success": True,
@@ -158,27 +90,47 @@ async def get_dragon_tiger(
             "count": len(data)
         }
     except Exception as e:
+        logger.error(f"Error fetching dragon tiger data: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error fetching dragon tiger data: {str(e)}")
 
 @router.get("/capital_flow/{stock_code}")
 async def get_capital_flow(
     stock_code: str = Path(..., description="股票代码"),
-    client: DataSourceClient = Depends(get_client)
+    pool = Depends(get_mysql_pool)
 ):
     """
-    获取个股资金流向 - Smart Money 策略核心
+    获取资金流向 (此版本切替为获取北向资金流动历史) - 直连 MySQL
     """
     try:
-        df = await client.fetch_ranking("capital_flow", params={"code": stock_code})
-        
+        df = await MarketDataDAO().get_north_funds_data(pool, stock_code)
         if df.empty:
-            raise HTTPException(status_code=404, detail=f"No capital flow data for {stock_code}")
+            raise HTTPException(status_code=404, detail=f"No north funds capital data for {stock_code}")
             
+        data = df.to_dict(orient='records')
+        for item in data:
+            if 'trade_date' in item and item['trade_date']:
+                item['trade_date'] = str(item['trade_date'])
+                
         return {
             "success": True,
-            "code": stock_code.zfill(6),
-            "data": df.where(pd.notnull(df), None).to_dict(orient='records')[0]
+            "code": stock_code[:6],
+            "data": data,
+            "count": len(data)
         }
+    except HTTPException:
+        raise
     except Exception as e:
-        if isinstance(e, HTTPException): raise e
+        logger.error(f"Error fetching capital flow: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error fetching capital flow: {str(e)}")
+
+@router.get("/ranking")
+async def get_market_ranking(ranking_type: str = Query("limit_up")):
+    """
+    获取市场榜单数据 - 已废弃
+    """
+    raise HTTPException(status_code=410, detail="泛市场榜单实时计算功能已迁移至独立监控服务。")
+
+@router.get("/industry/{industry_code}/stats")
+async def get_industry_stats(industry_code: str):
+    """兼容旧版本的行业统计接口 - 已废弃"""
+    raise HTTPException(status_code=410, detail="基于宽泛行业维度的统计接口已废弃，推荐改用 /api/v1/market/sector/ 相关路由。")
