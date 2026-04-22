@@ -11,35 +11,35 @@ function App() {
         </header>
 
         <section className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <Card className="bg-bg-elev border-line border-l-4 border-l-accent">
+          <Card className="bg-bg-elev border-line border-l-4 border-l-accent shadow-none">
             <CardHeader>
               <CardTitle className="text-ink text-sm uppercase tracking-widest text-ink-soft">System Status</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-mono font-bold text-ink">1.24 <span className="text-xs font-normal text-ink-dim">CCI</span></div>
-              <p className="text-alert-warning text-xs mt-1">二阶警戒级</p>
+              <p className="text-alert-warning text-xs mt-1 font-mono">WARNING: LEVEL 2</p>
             </CardContent>
           </Card>
 
-          <Card className="bg-bg-elev border-line">
+          <Card className="bg-bg-elev border-line shadow-none">
             <CardHeader>
-              <CardTitle className="text-ink text-sm uppercase tracking-widest text-ink-soft">Configuration</CardTitle>
+              <CardTitle className="text-ink text-sm uppercase tracking-widest text-ink-soft">Actions</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="flex gap-2">
-                <Button variant="default" className="bg-accent hover:bg-accent/90 text-white">确认操作</Button>
-                <Button variant="outline" className="border-line text-ink hover:bg-bg-inner">取消</Button>
+                <Button variant="default" className="bg-accent hover:bg-accent/90 text-white rounded-none">Execute</Button>
+                <Button variant="outline" className="border-line text-ink hover:bg-bg-inner rounded-none">Cancel</Button>
               </div>
               <div className="flex gap-2">
-                <span className="px-2 py-1 text-xs font-mono bg-alert-safe/10 text-alert-safe border border-alert-safe">安全</span>
-                <span className="px-2 py-1 text-xs font-mono bg-alert-warning/10 text-alert-warning border border-alert-warning">警戒</span>
+                <span className="px-2 py-1 text-[10px] font-mono bg-alert-safe/10 text-alert-safe border border-alert-safe">SAFE</span>
+                <span className="px-2 py-1 text-[10px] font-mono bg-alert-warning/10 text-alert-warning border border-alert-warning">ALERT</span>
               </div>
             </CardContent>
           </Card>
         </section>
 
         <footer className="pt-8 border-t border-line text-center">
-          <p className="text-ink-soft text-sm">© 2026 Antigravity Financial Systems</p>
+          <p className="text-ink-soft text-xs font-mono">© 2026 ANTIGRAVITY FINANCIAL SYSTEMS</p>
         </footer>
       </div>
     </div>
