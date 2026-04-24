@@ -33,13 +33,12 @@ services:
       - PORT=8000
       
       # MySQL 配置
-      - MYSQL_HOST=127.0.0.1
-      - MYSQL_PORT=3306
-      - MYSQL_USER=stock_user
-      - MYSQL_PASSWORD=stock_password
-      - MYSQL_DATABASE=stock_data
-      - MYSQL_POOL_SIZE=10
-      - MYSQL_MAX_OVERFLOW=20
+      - GSD_DB_HOST=127.0.0.1
+      - GSD_DB_PORT=36301
+      - GSD_DB_USER=root
+      - GSD_DB_PASSWORD=alwaysup@888
+      - GSD_DB_NAME=alwaysup
+      - GSD_CONNECTION_POOL_SIZE=10
       
       # ClickHouse 配置
       - CLICKHOUSE_HOST=127.0.0.1

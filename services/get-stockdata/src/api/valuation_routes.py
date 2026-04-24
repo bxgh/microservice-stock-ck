@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 # 获取 MySQL 连接池的依赖
 async def get_mysql_pool():
-    return MySQLPoolManager.get_pool()
+    return await MySQLPoolManager.get_pool()
 
 @router.get("/{stock_code}")
 async def get_current_valuation(
@@ -30,12 +30,6 @@ async def get_current_valuation(
                 status_code=404, 
                 detail=f"No valuation data found for {stock_code}. 数据尚未同步或不存在。"
             )
-            
-        if 'code' in data:
-            # 兼容老前端格式，提取6位代码
-            parts = str(data['code']).split('.')
-            data['code'] = parts[0]
-            
         return data
         
     except HTTPException:
@@ -66,11 +60,6 @@ async def get_valuation_history(
                 detail=f"No valuation history found for {stock_code}"
             )
         
-        for item in data_list:
-            if 'code' in item:
-                parts = str(item['code']).split('.')
-                item['code'] = parts[0]
-                
         return {
             "code": stock_code,
             "data": data_list,

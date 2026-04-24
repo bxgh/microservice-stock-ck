@@ -172,11 +172,21 @@ async def get_historical_kline(
         
         # 统一代码格式
         for item in data:
+            # 优先从 stock_code 获取，如果不存在则尝试从 code 获取
             if 'stock_code' in item:
-                item['code'] = str(item['stock_code']).zfill(6)
-                del item['stock_code']
-            elif 'code' not in item:
-                item['code'] = stock_code.zfill(6)
+                code_str = str(item.pop('stock_code'))
+                if '.' in code_str:
+                    item['code'] = code_str.split('.')[0]
+                else:
+                    item['code'] = code_str.zfill(6)
+            elif 'code' in item:
+                code_str = str(item['code'])
+                if '.' in code_str:
+                    item['code'] = code_str.split('.')[0]
+                else:
+                    item['code'] = code_str.zfill(6)
+            else:
+                item['code'] = stock_code[:6].zfill(6)
                 
         return {
             "success": True,

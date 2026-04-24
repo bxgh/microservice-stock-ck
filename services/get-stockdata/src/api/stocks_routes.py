@@ -12,7 +12,7 @@ router = APIRouter(prefix="/api/v1/stocks", tags=["股票信息"])
 logger = logging.getLogger(__name__)
 
 async def get_mysql_pool():
-    return MySQLPoolManager.get_pool()
+    return await MySQLPoolManager.get_pool()
 
 @router.get("/list")
 async def list_stocks(pool = Depends(get_mysql_pool)):

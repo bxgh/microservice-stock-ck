@@ -41,13 +41,18 @@ class FinanceDAO:
     @staticmethod
     def get_ts_code(symbol: str) -> str:
         """从6位代码转换为TS代码格式"""
-        symbol = str(symbol).zfill(6)
-        if symbol.startswith(('6', '9')):
-            return f"{symbol}.SH"
-        elif symbol.startswith(('0', '3')):
-            return f"{symbol}.SZ"
-        elif symbol.startswith(('8', '4')):
-            return f"{symbol}.BJ"
+        symbol = str(symbol).strip().upper()
+        # 如果已经带有后缀，直接返回
+        if symbol.endswith(('.SH', '.SZ', '.BJ')):
+            return symbol
+            
+        code = symbol.zfill(6)
+        if code.startswith(('6', '9')):
+            return f"{code}.SH"
+        elif code.startswith(('0', '3')):
+            return f"{code}.SZ"
+        elif code.startswith(('8', '4')):
+            return f"{code}.BJ"
         return symbol
 
     def _map_fields(self, row: Dict[str, Any]) -> Dict[str, Any]:

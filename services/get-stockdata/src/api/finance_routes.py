@@ -12,7 +12,7 @@ router = APIRouter(prefix="/api/v1/finance", tags=["财务数据"])
 logger = logging.getLogger(__name__)
 
 async def get_mysql_pool():
-    return MySQLPoolManager.get_pool()
+    return await MySQLPoolManager.get_pool()
 
 @router.get("/indicators/{stock_code}")
 async def get_enhanced_indicators(

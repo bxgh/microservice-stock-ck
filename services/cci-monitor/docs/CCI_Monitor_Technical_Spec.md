@@ -6,6 +6,24 @@
 
 ---
 
+## ⭐ 核心基石:横截面相关性 ρ̄
+
+**横截面相关性 ρ̄ 是整个 CCI 监测体系的数学基石。** 在动手写代码前务必理解:
+
+- CCI 公式的 **α、β、γ、δ 四个分量全部依赖 ρ̄**
+- 六层分层监测每一层都需要计算该层的 ρ̄
+- 历史回测、仪表盘核心图表都基于 ρ̄ 序列
+
+**实现要求(不可妥协):**
+- 必须使用 **numpy 矢量化**,严禁 pandas.corr() 循环
+- 性能硬性达标: **300 股 × 250 天 < 3 秒**
+- 正确性硬性达标: 三种场景(独立/同步/混合)全部通过
+- 真实数据验证: 沪深300 ρ̄ 必须在 0.1-0.8 合理区间
+
+详细算法、测试规范、阶段性开发建议 → 见 `CCI_Monitor_Epic_Stories.md` 的 Story 2.4。
+
+---
+
 ## 📐 核心数学公式
 
 ### CCI 合成指数
@@ -155,35 +173,55 @@ class CCIRecord(Base):
 
 ---
 
-## 🔌 数据源接口规范 (MySQL API)
+## 🔌 数据源接口速查
 
-> **详细参考**: [data-layer.md](file:///home/bxgh/microservice-stock/docs/CCI_monitor/data-layer.md)
-
-### 核心接口映射
-
-| 数据需求 | 内部 API 路径 | 说明 |
-|---|---|---|
-| **指数行情** | `/api/v1/quotes/history/{symbol}` | symbol 如 `sh000300` |
-| **个股行情** | `/api/v1/quotes/history/{code}` | code 如 `600519` |
-| **成分股列表**| `/api/v1/market/sector/{name}/stocks` | name 如 `沪深300` |
-
-### 调用示例 (Python)
+### akshare 接口映射
 
 ```python
-import httpx
+import akshare as ak
 
-async def fetch_api_data(endpoint: str, params: dict):
-    base_url = "http://get-stockdata:8083"
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(f"{base_url}{endpoint}", params=params)
-        return resp.json()
+# ==== 指数日行情 ====
+# 指数代码速查:
+# sh000300(沪深300) / sh000905(中证500) / sh000852(中证1000)
+# sh932000(中证2000) / sh000922(中证红利) / sh000985(万得全A)
+# sh000688(科创50) / sz399006(创业板指)
+df = ak.stock_zh_index_daily_em(
+    symbol='sh000300',
+    start_date='20240101',
+    end_date='20260420'
+)
+# 返回列: date, open, close, high, low, volume
+
+# ==== 指数成分股(symbol 用纯代码) ====
+df = ak.index_stock_cons_sina(symbol='000300')
+# 返回: code, name, ...
+
+# ==== 个股日行情(注意返回中文列名!) ====
+df = ak.stock_zh_a_hist(
+    symbol='600519',
+    period='daily',
+    start_date='20240101',
+    end_date='20260420',
+    adjust='qfq'
+)
+# 返回(需要重命名): 
+#   日期→date, 开盘→open, 收盘→close, 最高→high, 最低→low,
+#   成交量→volume, 涨跌幅→change_pct
+
+# ==== 申万一级行业 ====
+# 申万一级行业代码: 801010(农林牧渔)~801980(综合),31 个
+df = ak.sw_index_daily(symbol='801010')
 ```
 
-### 常见处理逻辑
+### akshare 常见坑
 
-1. **日期转换**: API 返回 `trade_date` 字符串需转换为 `pd.Timestamp`。
-2. **复权处理**: 统一请求 `adjust=2` (后复权) 以保证指标连续性。
-3. **空值检查**: 显式检查 `success` 字段和 `data` 长度。
+| 坑 | 表现 | 解决 |
+|---|---|---|
+| 中文列名 | `stock_zh_a_hist` 返回"开盘"等 | 字段映射字典转换 |
+| 接口维护 | 突然返回 500 | 重试 + 降级到缓存 |
+| 限流 | 连续请求失败 | 请求间 sleep 或并发数限制 |
+| 返回空数据 | 无报错但 df.empty | 显式检查并抛异常 |
+| 日期格式 | 字符串 'YYYYMMDD' | 用 `strftime('%Y%m%d')` |
 
 ---
 

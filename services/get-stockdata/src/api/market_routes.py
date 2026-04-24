@@ -13,7 +13,7 @@ router = APIRouter(prefix="/api/v1/market", tags=["市场与行业"])
 logger = logging.getLogger(__name__)
 
 async def get_mysql_pool():
-    return MySQLPoolManager.get_pool()
+    return await MySQLPoolManager.get_pool()
 
 @router.get("/sector/list")
 async def get_sector_list(pool = Depends(get_mysql_pool)):
