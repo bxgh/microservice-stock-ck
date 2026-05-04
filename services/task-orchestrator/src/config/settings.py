@@ -1,6 +1,11 @@
 from pydantic_settings import BaseSettings
+from pydantic import Field, AliasChoices
 from typing import Optional
 import os
+from dotenv import load_dotenv
+
+# 显式加载根目录 .env (如果存在)
+load_dotenv(os.path.join(os.path.dirname(__file__), "../../../../.env"))
 
 class Settings(BaseSettings):
     """Orchestrator Configuration"""
@@ -71,6 +76,14 @@ class Settings(BaseSettings):
     # Notifications
     NOTIFIER_WEBHOOK_URL: Optional[str] = None
     NOTIFIER_FEEDBACK_BOT_URL: Optional[str] = None # For interactive feedback later
+    
+    # Email Settings
+    EMAIL_HOST: str = Field("smtp.qq.com", validation_alias=AliasChoices("ORCHESTRATOR_EMAIL_HOST", "SMTP_HOST"))
+    EMAIL_PORT: int = Field(465, validation_alias=AliasChoices("ORCHESTRATOR_EMAIL_PORT", "SMTP_PORT"))
+    EMAIL_USER: Optional[str] = Field(None, validation_alias=AliasChoices("ORCHESTRATOR_EMAIL_USER", "SMTP_USER"))
+    EMAIL_PASSWORD: Optional[str] = Field(None, validation_alias=AliasChoices("ORCHESTRATOR_EMAIL_PASSWORD", "SMTP_PASS"))
+    EMAIL_FROM: str = Field("system@alwaysup.com", validation_alias=AliasChoices("ORCHESTRATOR_EMAIL_FROM", "SMTP_USER"))
+    EMAIL_TO: str = Field("admin@alwaysup.com", validation_alias=AliasChoices("ORCHESTRATOR_EMAIL_TO", "ALERT_RECEIVER"))
     
     class Config:
         env_file = ".env"

@@ -655,6 +655,21 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"❌ Failed to start FlowController: {e}")
 
+    # 8. Start DQ Inspector (E3) if enabled
+    if os.getenv("APP_MODE") == "INSPECTOR":
+        logger.info("🕵️ Running in INSPECTOR mode, registering DQ jobs...")
+        from core.dq_inspector_service import DQInspectorService
+        dq_service = DQInspectorService()
+        # 每天凌晨 2:00 执行
+        scheduler.add_job(
+            dq_service.run_full_inspection,
+            CronTrigger(hour=2, minute=0, timezone=settings.TIMEZONE),
+            id="daily_dq_inspection",
+            name="Daily Data Quality Inspection",
+            replace_existing=True
+        )
+        logger.info("✓ Daily DQ Inspection job registered (02:00 AM)")
+
     # 6. Start Command Poller (Cloud -> Local)
     # 只有当配置了云端 MySQL 时才启动，或者默认启动因为 alwaysup 库在云端
     try:
@@ -700,7 +715,9 @@ app = FastAPI(
 
 # Mount API routes
 from api.tasks import router as tasks_router
+from api.dq import router as dq_router
 app.include_router(tasks_router, prefix="/api/v1", tags=["tasks"])
+app.include_router(dq_router, prefix="/api/v1/dq", tags=["dq"])
 
 # Prometheus metrics
 from prometheus_client import make_asgi_app

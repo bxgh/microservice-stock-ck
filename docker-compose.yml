@@ -68,6 +68,51 @@ services:
     networks:
       - microservice-stock
 
+  # 任务编排器 (核心调度)
+  task-orchestrator:
+    build:
+      context: .
+      dockerfile: services/task-orchestrator/Dockerfile
+    container_name: microservice-stock-orchestrator
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./services/task-orchestrator/config:/app/config
+    environment:
+      - APP_MODE=SERVER
+      - ORCHESTRATOR_MYSQL_HOST=${MYSQL_HOST}
+      - ORCHESTRATOR_MYSQL_PORT=${MYSQL_PORT}
+      - ORCHESTRATOR_MYSQL_USER=${MYSQL_USER}
+      - ORCHESTRATOR_MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      - ORCHESTRATOR_MYSQL_DATABASE=${MYSQL_DATABASE}
+      - ORCHESTRATOR_HOST_BASE_DIR=${PWD}
+    ports:
+      - "18000:18000"
+    networks:
+      - microservice-stock
+
+  # 巡检服务 (E3) - 独立部署
+  stock-inspector:
+    build:
+      context: .
+      dockerfile: services/task-orchestrator/Dockerfile
+    container_name: microservice-stock-inspector
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - APP_MODE=INSPECTOR
+      - ORCHESTRATOR_MYSQL_HOST=${MYSQL_HOST}
+      - ORCHESTRATOR_MYSQL_PORT=${MYSQL_PORT}
+      - ORCHESTRATOR_MYSQL_USER=${MYSQL_USER}
+      - ORCHESTRATOR_MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      - ORCHESTRATOR_MYSQL_DATABASE=${MYSQL_DATABASE}
+      - GOST_CONTAINER_NAME=gost
+      - HTTP_PROXY=http://192.168.151.18:3128
+      - HTTPS_PROXY=http://192.168.151.18:3128
+    networks:
+      - microservice-stock
+
 volumes:
   consul_data:
     driver: local
