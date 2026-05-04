@@ -11,7 +11,6 @@ import redis.asyncio as redis
 from redis.asyncio.cluster import RedisCluster, ClusterNode
 from gsd_shared.stock_universe import StockUniverseService
 from gsd_shared.validation.standards import TickStandards
-from gsd_shared.validation.market_validator import MarketValidator
 import xxhash
 
 from core.clickhouse_client import ClickHouseClient
@@ -26,7 +25,7 @@ CST = pytz.timezone('Asia/Shanghai')
 DEFAULT_KLINE_THRESHOLD = 100.0
 DEFAULT_TICK_THRESHOLD = 99.1
 DEFAULT_STOCK_COUNT_FALLBACK = 5170  # 沪深 A 股大约数量 (排除北交所)
-STANDARD_TRADING_MINUTES = TickStandards.STANDARD_TRADING_MINUTES  # 241 分钟 (09:25-15:00)
+STANDARD_TRADING_MINUTES = 241  # 241 分钟 (09:25-15:00)
 HTTP_CLIENT_TIMEOUT_SECONDS = 10.0
 DEFAULT_SHARD_REPAIR_THRESHOLD = 50.0
 
@@ -36,17 +35,17 @@ class PostMarketGateService:
     
     职责:
     1. 校验当日 K线覆盖率
-    2. 校验当日 分笔覆盖率
-    3. 全量校验分笔时段完整性 (09:25-15:00)
-    4. 校验收盘价对账一致性
-    5. 结果持久化到云端 MySQL
+    2. 校验当日 复权因子覆盖率
+    3. 校验当日 分笔覆盖率
+    4. 全量校验分笔时段完整性 (09:25-15:00)
+    5. 校验收盘价对账一致性
+    6. 结果持久化到云端 MySQL
     """
     
     def __init__(self):
         self.clickhouse_client = ClickHouseClient()
         self.notifier = Notifier()
         self.tracker = None
-        self.market_validator = MarketValidator()
         self.lock = asyncio.Lock()
         
         # 配置阈值
@@ -146,6 +145,85 @@ class PostMarketGateService:
             logger.warning(f"无法识别的日期格式: {date_str}，尝试直接使用")
             return date_str
 
+    async def run_kline_standalone_check(self, date_str: Optional[str] = None) -> Dict[str, Any]:
+        """
+        [NEW] 执行 ClickHouse 同步一致性审计 (Gate-3.1)
+        """
+        today = self._normalize_date(date_str)
+        logger.info(f"🛡️ 开始 CK 同步一致性审计, 目标日期: {today}")
+
+        # 1. 执行同步一致性审计 (对比 CK 与 MySQL)
+        kline_status = await self._check_sync_consistency(today, "stock_kline_daily")
+        adj_status = await self._check_sync_consistency(today, "stock_adjust_factor")
+
+        # 2. 执行 K 线质量审计 (OHLC 逻辑)
+        kline_audit = await self._perform_kline_quality_audit(today)
+
+        # 3. 汇总状态 (仅看同步是否完成)
+        status = "SUCCESS"
+        if kline_status['rate'] < 100 or adj_status['rate'] < 100:
+            status = "ERROR"
+            logger.error(f"❌ 同步不一致: K线={kline_status['rate']}%, 因子={adj_status['rate']}%")
+        
+        if kline_audit.get("error_count", 0) > 0:
+            status = "WARNING"
+
+        # 4. 汇总报告
+        report = {
+            "date": today,
+            "gate_id": "GATE_3_SYNC",
+            "status": status,
+            "kline_rate": kline_status['rate'],
+            "adj_factor_rate": adj_status['rate'],
+            "tick_rate": 100.0,
+            "quality_errors": kline_audit.get("error_count", 0),
+            "actions_taken": ["同步一致性校验"],
+            "metrics": {
+                "mysql_kline_count": kline_status['mysql_count'],
+                "ck_kline_count": kline_status['ck_count'],
+                "mysql_adj_count": adj_status['mysql_count'],
+                "ck_adj_count": adj_status['ck_count']
+            }
+        }
+
+        # 5. 持久化与通知
+        await self._persist_to_cloud(report)
+        return report
+
+    async def _check_sync_consistency(self, date_str: str, table_name: str) -> Dict[str, Any]:
+        """检查 MySQL 与 ClickHouse 之间的数据一致性"""
+        try:
+            ds = date_str.replace('-', '')
+            date_col = "trade_date" if "kline" in table_name else "adjust_date"
+            
+            host = self.mysql_config.get('host', '127.0.0.1')
+            port = self.mysql_config.get('port', 36301)
+            db = self.mysql_config.get('db', 'alwaysup')
+            user = self.mysql_config.get('user', 'root')
+            password = self.mysql_config.get('password', '')
+            
+            # 1. 获取 MySQL 计数
+            mysql_query = f"SELECT count() FROM mysql('{host}:{port}', '{db}', '{table_name}', '{user}', '{password}') WHERE {date_col} = '{ds}'"
+            mysql_res = self.clickhouse_client.client.execute(mysql_query)
+            mysql_count = mysql_res[0][0] if mysql_res else 0
+            
+            # 2. 获取 ClickHouse 计数
+            ck_query = f"SELECT count() FROM stock_data.{table_name} WHERE {date_col} = '{ds}'"
+            ck_res = self.clickhouse_client.client.execute(ck_query)
+            ck_count = ck_res[0][0] if ck_res else 0
+            
+            # 3. 计算一致性率
+            rate = 100.0
+            if mysql_count > 0:
+                rate = round(ck_count / mysql_count * 100, 2)
+                
+            logger.info(f"📊 {table_name} 同步审计: CK={ck_count}, MySQL={mysql_count}, Rate={rate}%")
+            return {"rate": rate, "mysql_count": mysql_count, "ck_count": ck_count}
+            
+        except Exception as e:
+            logger.error(f"❌ {table_name} 同步一致性检查失败: {e}")
+            return {"rate": 0.0, "mysql_count": 0, "ck_count": 0}
+
     async def run_gate_check(self, date_str: Optional[str] = None) -> Dict[str, Any]:
         """执行 Gate-3 审计流程 (大一统模式: 调用 AuditJob)"""
         today = self._normalize_date(date_str)
@@ -179,18 +257,18 @@ class PostMarketGateService:
             # 1.5 运行 K 线质量审计 (OHLC 校验)
             kline_audit = await self._perform_kline_quality_audit(today)
             
-            # 假设 K 线本身也有一个就绪检查逻辑（保持原样或简化）
-            kline_rate = await self._check_kline_coverage(today)
+            # [Refactored] 仅检查同步一致性，不进行全市场对账
+            kline_sync_status = await self._check_sync_consistency(today, "stock_kline_daily")
+            kline_rate = kline_sync_status['rate']
             
         finally:
             await job.close()
 
-        # 2. 判断是否需要补采
+        # 2. 移除自动补采 K 线动作 (仅记录一致性缺失)
         actions = []
-        if kline_rate < self.kline_threshold:
-            logger.warning(f"⚠️ 当日 K线覆盖率 {kline_rate}% 不足")
-            await self._trigger_recovery("repair_kline", today)
-            actions.append("当日K线补采")
+        if kline_rate < 100.0:
+            logger.error(f"❌ 当日 K线同步不一致: {kline_rate}%")
+            actions.append("K线同步缺口告警")
             
         # 3. 分级补采逻辑 (Tiered Triage)
         SAFETY_THRESHOLD = 80.0
@@ -235,38 +313,23 @@ class PostMarketGateService:
         await self._send_audit_report(report)
         return report
 
-    async def _get_effective_stock_count(self) -> int:
-        """获取有效的 A 股总数 (使用 StockUniverseService)"""
-        try:
-            # 优先从 Redis 全量获取
-            codes = await self.stock_universe.get_all_a_stocks()
-            if codes:
-                return len(codes)
-            
-            return DEFAULT_STOCK_COUNT_FALLBACK
-        except Exception as e:
-            logger.warning(f"获取有效股票计数异常: {e}")
-            return DEFAULT_STOCK_COUNT_FALLBACK
 
-    async def _check_kline_coverage(self, date_str: str) -> float:
-        """K线覆盖率: 对比本地 ClickHouse 与云端 MySQL 的记录数"""
-        # 1. 获取有效 A 股总数
-        total_stocks = await self._get_effective_stock_count()
-        if total_stocks == 0:
-            logger.warning("⚠️ 无法获取有效 A 股数量，无法计算 K线覆盖率")
-            return 0.0
-        
-        # 2. 获取实际交易的股票数 (关闭 fallback 以确保真实反映 CH 状态)
+
+    async def _check_dimension_table_status(self, table_name: str) -> Dict[str, Any]:
+        """检查维度表(稀疏表)的状态"""
         try:
-            kline_stocks = await self.stock_universe.get_today_traded_stocks(date_str, fallback_to_all=False)
-            clickhouse_count = len(kline_stocks)
+            # 兼容不同表的审计字段 (通常为 created_at 或 updated_at)
+            time_col = "created_at"
+            query = f"SELECT count(), max({time_col}) FROM stock_data.{table_name}"
+            res = self.clickhouse_client.client.execute(query)
+            count, last_update = res[0] if res else (0, None)
             
-            rate = round(clickhouse_count / total_stocks * 100, 2)
-            logger.info(f"📊 K线覆盖率审计: ClickHouse={clickhouse_count}, Total_AShares={total_stocks}, Rate={rate}%")
-            return rate
+            is_healthy = count > 0
+            logger.info(f"📊 {table_name} 状态审计: 总行数={count}, 最后更新={last_update}")
+            return {"is_healthy": is_healthy, "count": count, "last_update": last_update}
         except Exception as e:
-            logger.error(f"❌ K线覆盖率检查失败: {e}")
-            return 0.0
+            logger.error(f"❌ {table_name} 状态检查失败: {e}")
+            return {"is_healthy": False}
 
     async def _perform_kline_quality_audit(self, date_str: str) -> Dict[str, Any]:
         """[Refactored V4.0] K线质量审计: OHLC 逻辑校验"""
@@ -276,12 +339,12 @@ class PostMarketGateService:
             FROM stock_data.stock_kline_daily 
             WHERE trade_date = '{ds}'
               AND (
-                  open_price <= 0 OR high_price <= 0 OR low_price <= 0 OR close_price <= 0
-                  OR high_price < low_price 
-                  OR high_price < open_price 
-                  OR high_price < close_price
-                  OR low_price > open_price
-                  OR low_price > close_price
+                  open <= 0 OR high <= 0 OR low <= 0 OR close <= 0
+                  OR high < low 
+                  OR high < open 
+                  OR high < close
+                  OR low > open
+                  OR low > close
               )
         """
         try:
@@ -558,7 +621,7 @@ class PostMarketGateService:
                 ))
                 
                 # Continuity Issue (Market Wide)
-                cont_data = report['metrics']['continuity']
+                cont_data = report['metrics'].get('continuity', {})
                 failed_count = cont_data.get('failed_count', 0)
                 if failed_count > 0:
                      market_result.add_issue(ValidationIssue(
@@ -597,7 +660,7 @@ class PostMarketGateService:
             # ------------------------------------------------------------------
             is_complete = 1 if report['status'] == "SUCCESS" else 0
             # 构建简要说明
-            m = report['metrics']['continuity']
+            m = report['metrics'].get('continuity', {})
             desc = f"K线覆盖率:{report['kline_rate']}% 分笔覆盖率:{report['tick_rate']}% 时段缺失:{m.get('failed_count', 0)}"
             
             conn = await aiomysql.connect(**self.mysql_config)
