@@ -1,0 +1,107 @@
+"""
+mootdx-source 扩展快速参考卡片
+=================================
+
+场景 1: 添加新数据类型（使用现有数据源）
+------------------------------------------
+时间: 30分钟 | 难度: ⭐
+
+步骤:
+1. 编辑 service.py -> ROUTING_TABLE 添加路由
+   
+   data_source_pb2.DATA_TYPE_XXX: RouteConfig(
+       handler="_fetch_xxx_akshare",
+       source_name=DataSource.AKSHARE_API
+   )
+
+2. 实现处理方法
+   
+   async def _fetch_xxx_akshare(self, codes, params) -> pd.DataFrame:
+       endpoint = f"/api/v1/xxx"
+       return await self.cloud_client.fetch_akshare(endpoint, params)
+
+3. 添加测试 (tests/test_service.py)
+
+完成✅
+
+
+场景 2: 添加新数据源
+---------------------
+时间: 2-4小时 | 难度: ⭐⭐⭐
+
+步骤:
+1. requirements.txt 添加依赖
+2. config.py 添加 DataSource 枚举
+3. cloud_client.py 添加 fetch_xxx() 方法，或创建新 xxx_client.py
+4. service.py -> initialize() 初始化客户端
+5. service.py -> ROUTING_TABLE 添加路由
+6. 实现 _fetch_xxx_yyy() 方法
+7. docker-compose.yml 添加环境变量
+
+完成✅
+
+
+场景 3: 添加降级策略
+---------------------
+时间: 1小时 | 难度: ⭐⭐
+
+步骤:
+1. 实现降级处理方法
+   
+   async def _fetch_xxx_fallback(self, codes, params) -> pd.DataFrame:
+       # 降级逻辑
+
+2. 路由表添加 fallback_handler
+   
+   RouteConfig(
+       handler="_fetch_xxx_primary",
+       source_name=DataSource.PRIMARY,
+       fallback_handler="_fetch_xxx_fallback"  # 新增这行
+   )
+
+完成✅
+
+
+常用命令
+--------
+# 重建容器
+docker compose -f docker-compose.microservices.yml build mootdx-source
+
+# 运行测试
+cd services/mootdx-source && pytest tests/ -v
+
+# 检查健康
+docker inspect microservice-stock-mootdx-source --format='{{.State.Health.Status}}'
+
+# 查看日志
+docker logs microservice-stock-mootdx-source -f
+
+
+代码规范检查表
+--------------
+[ ] 方法命名遵循 _fetch_{data_type}_{source} 模式
+[ ] 使用配置常量，无硬编码魔法值
+[ ] 完善的 docstring（参数、返回值、异常）
+[ ] 完整的类型提示 (codes: List[str], params: Dict[str, Any])
+[ ] 参数验证 (if not codes: raise ValueError(...))
+[ ] 异常处理 + 日志记录
+[ ] 单元测试覆盖（成功、失败、降级场景）
+[ ] 更新文档（支持的数据类型列表）
+
+
+架构原则
+--------
+✓ 声明式配置 > 命令式代码
+✓ 表驱动编程 > if-else 链
+✓ 异步优先 (run_in_executor 包装同步调用)
+✓ 降级优于失败
+✓ 日志充分但不冗余
+✓ 类型安全 + 自解释
+
+
+参考资料
+--------
+- 详细扩展指南: docs/development/mootdx-source-extension-guide.md
+- 架构说明: docs/epics/epic008-hybrid-architecture/
+- 测试示例: services/mootdx-source/tests/test_service.py
+"""

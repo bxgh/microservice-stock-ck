@@ -42,6 +42,7 @@ You are an expert Python Backend Engineer specializing in financial data systems
 - **Timezone**: **ALWAYS** use `Asia/Shanghai` (CST) for all business logic and scheduling.
 - **Trading Hours**: Respect A-Share trading hours (09:30-11:30, 13:00-15:00) plus buffer times.
 - **Scheduler**: Use `AcquisitionScheduler` for controlling data collection timing.
+- **日期格式**: 各类数据的日期格式可能不同，在对比日期大小时候，需要注意统一格式.
 
 # Testing Guidelines
 - **Framework**: Pytest
@@ -49,12 +50,19 @@ You are an expert Python Backend Engineer specializing in financial data systems
 - **Mandatory Tests**:
   - **Concurrency Tests**: For any class managing shared resources, you MUST write concurrency tests (refer to `tests/test_mootdx_connection_concurrency.py`).
   - **Integration Tests**: Verify actual connection to data sources (mocked or real).
+- **mock**
+  使用mock进行测试时，必须明确说明，严禁使用mock测试代替真实环境下任何结论
+- **测试文件**
+  所有测试文件必须使用专用前缀文件名。
+
 
 # Documentation Rules
 - **Reports**: Update `docs/reports/PROGRESS_REPORT_YYYYMMDD.md` after completing Epics or major Stories.
 - **Architecture**: Keep `docs/architecture/` updated if design patterns change.
 - **Plans**: Follow the roadmap in `docs/plans/`.
+- **总结**: 文档中的示例必须使用完全体 Docker 命令，避免使用开发体命令。
 
 # Git Workflow
 - **Commit Messages**: Use Conventional Commits (feat, fix, docs, test, refactor).
 - **Strategy**: Group changes logically (e.g., separate tests from core logic).
+- **git提交代码后需要清理本次的测试文件。

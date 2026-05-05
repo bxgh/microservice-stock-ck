@@ -1,0 +1,10 @@
+services:
+  frontend:
+    build: .
+    ports:
+      - "6688:80"
+    volumes:
+      - .:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=production

@@ -1,0 +1,115 @@
+services:
+  # Mootdx API 服务 (通达信数据源)
+  mootdx-api:
+    build:
+      context: .
+      dockerfile: services/mootdx-api/Dockerfile
+      network: host
+    container_name: microservice-stock-mootdx-api
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - LOG_LEVEL=INFO
+      - TDX_POOL_SIZE=3
+      # Dynamic Configuration:
+      - TDX_HOSTS=${TDX_HOSTS:-59.36.5.11:7709}
+      - TDX_BIND_IP=${TDX_BIND_IP:-}
+      - REDIS_PASSWORD=redis123
+    # ports:  # host模式不需要端口映射
+    #   - "8003:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health')"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
+    volumes:
+      - mootdx_config:/root/.mootdx
+      - ./services/mootdx-api/src:/app/src  # 开发模式挂载源码
+
+  # MooTDX Source 服务 (gRPC + 路由)
+  mootdx-source:
+    build:
+      context: .
+      dockerfile: services/mootdx-source/Dockerfile
+      args:
+        - ENABLE_PROXY=true
+        - PROXY_URL=http://192.168.151.18:3128
+      network: host
+    container_name: microservice-stock-mootdx-source
+    restart: unless-stopped
+    depends_on:
+      mootdx-api:
+        condition: service_healthy
+    environment:
+      - SERVICE_NAME=mootdx-source
+      - SERVICE_HOST=127.0.0.1
+      - SERVICE_PORT=50051
+      - NACOS_SERVER_ADDR=127.0.0.1:8848
+      - LOG_LEVEL=INFO
+      # mootdx-api URL (由于使用了 host 模式，可以使用 localhost 或 127.0.0.1)
+      - MOOTDX_API_URL=http://127.0.0.1:8003
+      # easyquotation: HTTP 需要代理
+      - HTTP_PROXY=http://192.168.151.18:3128
+      - HTTPS_PROXY=http://192.168.151.18:3128
+      - NO_PROXY=localhost,127.0.0.1,0.0.0.0,::1,microservice-stock-nacos
+      # 云端 API URLs
+      - AKSHARE_API_URL=http://124.221.80.250:8003
+      - BAOSTOCK_API_URL=http://124.221.80.250:8001
+      - PYWENCAI_API_URL=http://124.221.80.250:8002
+      - REDIS_PASSWORD=redis123
+      # MySQL Config
+      - GSD_DB_HOST=127.0.0.1
+      - GSD_DB_PORT=36301
+      - GSD_DB_USER=root
+      - GSD_DB_PASSWORD=alwaysup@888
+      - GSD_DB_NAME=alwaysup
+      # ClickHouse Config
+      - CLICKHOUSE_HOST=127.0.0.1
+      - CLICKHOUSE_PORT=9000
+      - CLICKHOUSE_USER=admin
+      - CLICKHOUSE_PASSWORD=admin123
+      - CLICKHOUSE_DATABASE=stock_data
+    network_mode: host
+    volumes:
+      - ./services/mootdx-source/src:/app/src  # 开发模式挂载源码
+
+
+  # Snapshot Recorder Service (Daemon)
+  snapshot-recorder:
+    image: get-stockdata:latest
+    container_name: microservice-stock-snapshot-recorder
+    restart: unless-stopped
+    # 脚本未打包进镜像，直接运行 Python 模块
+    # 使用 ; 允许 bestip 失败而不退出容器
+    command: python -u -m src.core.recorder.snapshot_recorder
+    network_mode: host
+    environment:
+      - LOG_LEVEL=INFO
+      - PYTHONPATH=/app
+      # ClickHouse Config (Host Mode)
+      - CLICKHOUSE_HOST=127.0.0.1
+      - CLICKHOUSE_PORT=9000
+      - CLICKHOUSE_DB=stock_data
+      # Network Proxy
+      - HTTP_PROXY=http://192.168.151.18:3128
+      - HTTPS_PROXY=http://192.168.151.18:3128
+      - NO_PROXY=localhost,127.0.0.1,0.0.0.0,::1,microservice-stock-nacos
+      - SNAPSHOT_STORAGE_PATH=/app/data/snapshots
+    volumes:
+      - ./services/get-stockdata/data:/app/data   # Persist local parquet
+      - ./services/get-stockdata/src:/app/src     # Hot-reload source
+      - ./services/get-stockdata/config:/app/config # Config files
+      - mootdx_config:/home/app/.mootdx           # Shared config
+
+
+networks:
+  default:
+    name: microservice-stock-network
+
+
+volumes:
+  nacos_logs:
+  nacos_data:
+  mootdx_config:
+

@@ -1,0 +1,23 @@
+# altdata-source/src/config/repositories.yaml
+# 另类数据源：待监控的 GitHub 仓库及其生态归类标签 (label)
+
+repositories:
+  - org: PaddlePaddle
+    repos: [Paddle, PaddleNLP, PaddleOCR]
+    label: paddle
+    
+  - org: mindspore-ai
+    repos: [mindspore]
+    label: mindspore
+    
+  - org: deepseek-ai
+    repos: [DeepSeek-V3, DeepSeek-Coder-V2]
+    label: deepseek
+
+  - org: vllm-project
+    repos: [vllm]
+    label: vllm
+
+  - org: sgl-project
+    repos: [sglang]
+    label: sglang

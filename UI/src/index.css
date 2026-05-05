@@ -1,0 +1,50 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Noto Serif SC", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Cormorant Garamond", serif;
+  --font-mono: "JetBrains Mono", ui-monospace, sfmono-regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+
+  /* 背景系(深色) */
+  --color-bg: #0a0906;
+  --color-bg-elev: #13100b;
+  --color-bg-deep: #1a1610;
+  --color-bg-inner: #1f1a12;
+
+  /* 文字(高对比度亮色) */
+  --color-ink: #f2ead8;
+  --color-ink-dim: #c9bfa8;
+  --color-ink-soft: #8d8575;
+  --color-muted: #5c564a;
+
+  /* 强调色 */
+  --color-accent: #d65d43;
+  --color-accent-2: #7fbba3;
+  --color-gold: #e0b663;
+  --color-blue: #6fa8d0;
+  --color-purple: #b88cd0;
+
+  /* 警报色 */
+  --color-alert-safe: #7fbba3;
+  --color-alert-attention: #e0b663;
+  --color-alert-warning: #d65d43;
+  --color-alert-critical: #e87060;
+
+  /* 线条 */
+  --color-line: #332d22;
+  --color-line-soft: #241f17;
+
+  /* 圆角 */
+  --radius-lg: 0.5rem;
+  --radius-md: calc(0.5rem - 2px);
+  --radius-sm: calc(0.5rem - 4px);
+}
+
+@layer base {
+  * {
+    @apply border-line;
+  }
+  body {
+    @apply bg-bg text-ink;
+  }
+}

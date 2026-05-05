@@ -4,7 +4,11 @@
 
 import os
 from typing import Optional
-from pydantic import BaseModel as BaseSettings
+try:
+    from pydantic_settings import BaseSettings
+except ImportError:
+    # Fallback for older Pydantic V1 or if pydantic-settings missing
+    from pydantic import BaseSettings
 
 
 class Settings(BaseSettings):
@@ -27,9 +31,36 @@ class Settings(BaseSettings):
     token_expire_hours: int = 24
 
     # 数据库配置
-    database_type: str = "sqlite"
+    database_type: str = "sqlite"  # sqlite, mysql
     database_path: str = "data/getstockdata.db"
+    
+    # MySQL配置
+    db_host: str = "localhost"
+    db_port: int = 3306
+    db_user: str = "root"
+    db_password: str = ""
+    db_name: str = "stock_data"
+    
     connection_pool_size: int = 10
+    
+    @property
+    def database_url(self) -> str:
+        """获取数据库连接URL"""
+        if self.database_type == "mysql":
+            from urllib.parse import quote_plus
+            # 构建 MySQL 异步连接 URL (使用 aiomysql 或 asyncmy)
+            # 必须对密码进行 URL 编码，防止特殊字符（如 @）破坏连接字符串
+            encoded_user = quote_plus(self.db_user)
+            encoded_password = quote_plus(self.db_password)
+            
+            return (
+                f"mysql+aiomysql://{encoded_user}:{encoded_password}"
+                f"@{self.db_host}:{self.db_port}/{self.db_name}"
+                "?charset=utf8mb4"
+            )
+        else:
+            # 默认 SQLite 异步连接
+            return f"sqlite+aiosqlite:///{self.database_path}"
 
     # Redis配置
     redis_url: str = "redis://localhost:6379"
@@ -61,6 +92,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_prefix = "GSD_"
+        extra = "ignore"
 
 
 # 全局配置实例

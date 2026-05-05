@@ -3,7 +3,6 @@ API中间件
 """
 
 import logging
-from typing import Optional
 
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -14,7 +13,7 @@ logger = logging.getLogger(__name__)
 security = HTTPBearer(auto_error=False)
 
 
-async def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)):
+async def get_current_user(credentials: HTTPAuthorizationCredentials | None = Depends(security)):
     """
     验证API Token
     """

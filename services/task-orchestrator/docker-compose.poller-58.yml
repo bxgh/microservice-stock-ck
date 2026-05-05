@@ -1,0 +1,29 @@
+services:
+  shard-poller:
+    build:
+      context: ../../
+      dockerfile: services/task-orchestrator/Dockerfile
+    image: task-orchestrator:latest
+    container_name: gsd-shard-poller
+    command: ["python", "-m", "shard_poller", "--shard", "1"]
+    environment:
+      - MYSQL_HOST=127.0.0.1
+      - MYSQL_PORT=36301
+      - MYSQL_USER=${MYSQL_USER:-root}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-alwaysup@888}
+      - MYSQL_DATABASE=alwaysup
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - TZ=Asia/Shanghai
+      - ORCHESTRATOR_BASE_DIR=/home/bxgh/microservice-stock
+      - ORCHESTRATOR_WORKER_NETWORK=host
+      - ORCHESTRATOR_WORKER_MOOTDX_API_URL=http://127.0.0.1:8003
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./config/tasks.yml:/app/config/tasks.yml:ro
+    network_mode: host
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

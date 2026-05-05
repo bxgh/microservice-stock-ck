@@ -2,7 +2,7 @@ from typing import Dict, Any, Optional
 from datetime import datetime
 import logging
 
-from ...models.monitor_models import ConnectionStats
+from models.monitor_models import ConnectionStats
 from ...core.interfaces import ConnectionManagerInterface
 
 logger = logging.getLogger(__name__)

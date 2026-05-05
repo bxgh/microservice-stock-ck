@@ -21,6 +21,7 @@ class TickData(BaseModel):
     direction: str = Field(..., description="买卖方向", pattern="^(B|S|N)$")  # B=买盘 S=卖盘 N=中性
     code: str = Field(..., description="股票代码")
     date: datetime = Field(..., description="交易日期")
+    iopv: Optional[float] = Field(None, description="参考净值(IOPV)")
 
     class Config:
         json_encoders = {

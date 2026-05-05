@@ -1,0 +1,186 @@
+tasks:
+  # 每日股票代码采集 (P0)
+  # 09:05 执行，从云端拉取并分片缓存
+  - id: daily_stock_collection
+    name: 每日股票代码采集 (Workflow Managed)
+    type: docker
+    target:
+      command: ["jobs.daily_stock_collection"]
+      network_mode: "host"
+      environment:
+        REDIS_HOST: "127.0.0.1"
+        REDIS_PORT: "6379"
+        REDIS_PASSWORD: "redis123"
+        REDIS_CLUSTER: "false"
+        HTTP_PROXY: "http://192.168.151.18:3128"
+        CLOUD_API_URL: "http://124.221.80.250:8000/api/v1/stocks/all"
+    retry:
+      max_attempts: 3
+      backoff_seconds: 300
+
+  # 盘前数据门禁 (Gate-1)
+  - id: pre_market_gate
+    name: 盘前数据门禁 (Workflow Managed)
+    type: docker
+    target:
+      command: ["jobs.pre_market_gate"]
+      environment:
+        STRICT_MODE: "true"
+    retry:
+      max_attempts: 2
+      backoff_seconds: 60
+
+  # K线每日同步 (P0)
+  # 17:30 执行，单节点全量同步 (由于上游数据源限制，必须 17:30 后启动)
+  - id: daily_kline_sync
+    name: K线每日同步
+    type: docker
+    enabled: true
+    schedule:
+      type: trading_cron
+      expression: "30 18 * * *"
+    target:
+      command: ["jobs.sync_kline", "--mode", "adaptive"]
+    retry:
+      max_attempts: 2
+      backoff_seconds: 600
+  
+  # 盘后分笔数据全量采集 (P1)
+  # 单节点高并发采集 (Server 41) - 写入分布式表
+  - id: daily_tick_sync_standalone
+    name: 盘后分笔全量采集 (Standalone)
+    type: workflow
+    enabled: true
+    schedule:
+      type: trading_cron
+      expression: "0 18 * * mon-fri"
+    target:
+      environment:
+        CLICKHOUSE_USE_DISTRIBUTED: "true"
+        CLICKHOUSE_POOL_SIZE: "60"
+    workflow:
+      - id: collect
+        name: 全量采集
+        command: ["jobs.sync_tick", "--scope", "all", "--concurrency", "60"]
+      - id: retry
+        name: 自动补采
+        command: ["jobs.retry_tick", "--concurrency", "60"]
+        depends_on: [collect]
+    retry:
+      max_attempts: 2
+      backoff_seconds: 600
+
+  # 集群分片采集指令发射器 (P0) - 架构 3.0 核心 (Deprecated)
+  # 已停用，改用单机高并发采集
+  - id: distributed_tick_sync
+    name: 集群分笔分片采集指令
+    type: command_emitter
+    enabled: false
+    schedule:
+      type: trading_cron
+      expression: "0 18 * * mon-fri"
+    target:
+      task_template: "collect_tick_sharded"
+      params:
+        scope: "all"
+        distributed_source: "none"
+      shards: [0, 1, 2]
+    retry:
+      max_attempts: 1
+
+  # 盘中分笔午休校验与补采 (P1)
+  # 11:35 执行，检查上午采集覆盖率并补采缺失股票
+  - id: intraday_tick_validation_noon
+    name: 盘中分笔午休校验与补采 (Deprecated)
+    type: docker
+    enabled: false
+    schedule:
+      type: trading_cron
+      expression: "35 11 * * mon-fri"
+    target:
+      image: gsd-worker:latest
+      command: ["jobs.intraday_tick_validation", "--session", "noon"]
+      network_mode: "host"
+    retry:
+      max_attempts: 1
+
+  # 盘中分笔盘后校验与补采 (P0)
+  # 15:05 执行，检查全天采集覆盖率并补采缺失股票
+  - id: intraday_tick_validation_close
+    name: 盘中分笔盘后校验与补采 (Deprecated)
+    type: docker
+    enabled: false
+    schedule:
+      type: trading_cron
+      expression: "5 15 * * mon-fri"
+    target:
+      image: gsd-worker:latest
+      command: ["jobs.intraday_tick_validation", "--session", "close"]
+      network_mode: "host"
+    retry:
+      max_attempts: 1
+
+  # 分笔数据每日归档 (P0)
+  # 已整合进 pre_market_prep_4.0 工作流，独立调度已禁用
+  - id: tick_data_migrate
+    name: 分笔数据归档
+    type: docker
+    enabled: true
+    schedule:
+      type: cron
+      expression: "0 0 1 1 *" # Dummy schedule
+    target:
+      command: ["jobs.tick_data_migration"]
+    retry:
+      max_attempts: 3
+      backoff_seconds: 60
+  
+  # 财务数据更新 (P1)
+  - id: weekly_financial_sync
+    name: 财务数据更新
+    type: docker
+    enabled: false  # 待实现
+    schedule:
+      type: cron
+      expression: "0 6 * * 6"  # 周六 06:00
+    target:
+      command: ["jobs.sync_financial"]
+    retry:
+      max_attempts: 3
+  
+  # 每日估值指标同步 (P1) [NEW: Tushare-based]
+  - id: daily_valuation_sync
+    name: 每日估值指标同步 (Tushare)
+    type: docker
+    enabled: true
+    schedule:
+      type: trading_cron
+      expression: "25 18 * * *" # 交易日 18:25 (Tushare 数据就绪后)
+    target:
+      command: ["jobs.sync_valuation_tushare"]
+      network_mode: "host"
+    retry:
+      max_attempts: 2
+      backoff_seconds: 600
+
+  # 每日元数据同步 (股东、估值、大宗等) (P1) [NEW]
+  - id: daily_metadata_sync
+    name: 每日元数据同步 (股东/估值/大宗)
+    type: docker
+    enabled: true
+    schedule:
+      type: trading_cron
+      expression: "0 19 * * mon-fri" # 交易日 19:00 (在采集任务后)
+    target:
+      command: ["jobs.sync_metadata", "--table", "all", "--days", "7"]
+    retry:
+      max_attempts: 2
+      backoff_seconds: 600
+      
+  # [NEW] 1. K线就绪探测 (Barrier)
+  - id: wait_for_kline
+    name: K线就绪探测
+    type: docker
+    enabled: true
+    target:
+      command: ["jobs.wait_for_kline"]

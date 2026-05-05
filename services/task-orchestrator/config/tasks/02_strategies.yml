@@ -1,0 +1,31 @@
+tasks:
+  # 每日策略扫描 (P1)
+  # 改为由 post_market_audit 工作流驱动，禁用独立调度
+  - id: daily_strategy_scan
+    name: 每日量化选股 (长线候选池刷新)
+    type: docker
+    enabled: true
+    schedule:
+      type: trading_cron
+      expression: "0 21 * * mon-fri"  # 每个交易日 21:00 (数据就绪后)
+    target:
+      image: quant-strategy:dev
+      command: ["python", "-m", "jobs.daily_scan"]
+      network_mode: "host"
+    retry:
+      max_attempts: 2
+      backoff_seconds: 300
+  
+  # 周末策略回测 (P2)
+  - id: weekly_backtest
+    name: 周末策略回测
+    type: docker
+    enabled: false  # 待实现
+    schedule:
+      type: cron
+      expression: "0 8 * * 0"  # 周日 08:00
+    target:
+      image: quant-strategy:latest
+      command: ["jobs.weekly_backtest"]
+    retry:
+      max_attempts: 1

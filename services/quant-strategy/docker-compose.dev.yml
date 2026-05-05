@@ -1,0 +1,93 @@
+services:
+  quant-strategy:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - ENABLE_PROXY=true
+        - PROXY_URL=http://192.168.151.18:3128
+    image: quant-strategy:dev
+    container_name: quant-strategy-dev
+    restart: unless-stopped
+    environment:
+      # Nacos 配置
+      - NACOS_SERVER_URL=${NACOS_SERVER_URL:-http://127.0.0.1:8848}
+      - SERVICE_NAME=quant-strategy
+      - SERVICE_GROUP=DEFAULT_GROUP
+      - SERVICE_PORT=8084
+      - HEARTBEAT_INTERVAL=30
+      - ENVIRONMENT=development
+      
+      # Python 环境
+      - PYTHONPATH=/app/src:/app/gsd-shared:/app/common:/app/gsd-agent/src
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
+      - TZ=Asia/Shanghai
+      
+      # 代理配置（统一使用宿主机代理）
+      #- PROXY_URL=http://192.168.151.18:3128
+      #- HTTP_PROXY=http://192.168.151.18:3128
+      #- HTTPS_PROXY=http://192.168.151.18:3128
+      
+      # MySQL 配置（腾讯云外网数据库）
+      - QS_DATABASE_TYPE=${QS_DATABASE_TYPE:-mysql}
+      - QS_DB_HOST=${QS_DB_HOST:-sh-cdb-h7flpxu4.sql.tencentcdb.com}
+      - QS_DB_PORT=${QS_DB_PORT:-26300}
+      - QS_DB_NAME=${QS_DB_NAME:-alwaysup}
+      - QS_DB_USER=${QS_DB_USER:-root}
+      - QS_DB_PASSWORD=${QS_DB_PASSWORD}
+      
+      # Redis 配置
+      - QS_REDIS_HOST=${QS_REDIS_HOST:-127.0.0.1}
+      - QS_REDIS_PORT=${QS_REDIS_PORT:-6379}
+      - QS_REDIS_MAX_CONNECTIONS=20
+      
+      # 数据源配置
+      - QS_STOCKDATA_SERVICE_URL=${QS_STOCKDATA_SERVICE_URL:-http://127.0.0.1:8086}
+      
+      # 策略引擎配置
+      - QS_MAX_CONCURRENT_STRATEGIES=20
+      - QS_SIGNAL_WINDOW_SECONDS=60
+      - QS_BACKTEST_ENABLED=true
+      
+      # AI 接口配置
+      - SILICONFLOW_API_KEY=${SILICONFLOW_API_KEY}
+    
+    # 🔥 开发模式启动命令 - 启用热加载
+    command: >
+      uvicorn src.main:app
+      --host 0.0.0.0
+      --port 8084
+      --reload
+      --reload-dir /app/src
+      --log-level debug
+    
+    # 使用 host 网络模式（简化开发，可访问外网数据库）
+    network_mode: host
+    
+    volumes:
+      # ✅ 源码热加载 - 读写模式
+      - ./src:/app/src
+      - ./config:/app/config
+      - ./tests:/app/tests
+      - ./unit_tests:/app/unit_tests
+      - ./scripts:/app/scripts
+      - ./docs:/app/docs
+      - ../../libs/gsd-shared:/app/gsd-shared
+      - ../../libs/common:/app/common
+      - ../../libs/gsd-agent:/app/gsd-agent
+      - quant-strategy-logs:/app/logs
+      - quant-strategy-data:/app/data
+    
+    healthcheck:
+      test: ["CMD", "curl", "--noproxy", "*", "-f", "http://localhost:8084/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  quant-strategy-logs:
+    driver: local
+  quant-strategy-data:
+    driver: local

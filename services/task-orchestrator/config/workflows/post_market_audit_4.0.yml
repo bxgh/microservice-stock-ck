@@ -1,0 +1,99 @@
+workflow:
+  id: post_market_audit_4.0
+  name: post_market_audit
+  version: "4.0"
+  description: 盘后数据治理驱动管线 (Probe -> Audit & Purge -> Repair -> Strategy) - RECOVERED
+  steps:
+    # 1. K线阻塞探测 (发令枪)
+    - id: kline_barrier
+      task_id: wait_for_kline
+      name: K线阻塞探测
+      type: docker
+      max_attempts: 3
+      retry_policy: fixed
+      params:
+        threshold: 99
+        timeout: 7200
+
+    # 2. 初步审计 (L1)
+    - id: first_audit
+      task_id: calculate_data_quality
+      name: 初步审计
+      type: docker
+      depends_on: [kline_barrier]
+      max_attempts: 3
+      retry_policy: fixed
+      params:
+        session: close
+        threshold: 1000
+
+    # 3. 直接修复
+    - id: direct_repair
+      task_id: repair_tick
+      name: 直接修复
+      type: docker
+      depends_on: [first_audit]
+      max_attempts: 3
+      retry_policy: fixed
+      params:
+        date: "{{ target_date }}"
+        mode: repair
+        concurrency: 64
+        stock_codes: "{{ first_audit.missing_list }}"
+
+    # 4. 复查 (L2)
+    - id: re_audit
+      task_id: calculate_data_quality
+      name: 复查
+      type: docker
+      depends_on: [direct_repair]
+      max_attempts: 3
+      retry_policy: fixed
+      params:
+        session: close
+        threshold: 1000
+
+    # 5. AI 复核
+    - id: ai_review
+      task_id: ai_quality_gatekeeper
+      name: AI 复核
+      type: docker
+      depends_on: [re_audit]
+      max_attempts: 3
+      retry_policy: fixed
+      params:
+        input_data: "{{ re_audit.abnormal_list }}"
+        input_file: "{{ re_audit.output_file }}"
+        trigger_condition: "{{ re_audit.diagnosis.action }}"
+
+    # 6. 最终修复
+    - id: final_repair
+      task_id: repair_tick
+      name: 最终修复
+      type: docker
+      depends_on: [re_audit, ai_review]
+      max_attempts: 3
+      retry_policy: fixed
+      params:
+        date: "{{ target_date }}"
+        mode: repair
+        concurrency: 64
+        stock_codes: "{{ ai_review.confirmed_bad_codes }}"
+
+    # 7. 量化选股 (策略引擎)
+    - id: strategy_selection
+      task_id: daily_strategy_scan
+      name: 量化选股
+      type: docker
+      depends_on: [final_repair]
+      max_attempts: 2
+      retry_policy: fixed
+
+    # 8. 流动性复盘 (Market Review)
+    - id: review_liquidity
+      task_id: review_liquidity
+      name: 流动性复盘
+      type: docker
+      depends_on: [strategy_selection]
+      max_attempts: 3
+      retry_policy: fixed

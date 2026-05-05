@@ -1,0 +1,65 @@
+<?xml version="1.0"?>
+<clickhouse>
+    <interserver_http_host>192.168.151.111</interserver_http_host>
+    <macros>
+        <shard>03</shard>
+        <replica>server111</replica>
+    </macros>
+    
+    <keeper_server>
+        <tcp_port>9181</tcp_port>
+        <server_id>3</server_id>
+        <log_storage_path>/var/lib/clickhouse/coordination/log</log_storage_path>
+        <snapshot_storage_path>/var/lib/clickhouse/coordination/snapshots</snapshot_storage_path>
+        <raft_configuration>
+            <server>
+                <id>1</id><hostname>192.168.151.41</hostname><port>9234</port>
+            </server>
+            <server>
+                <id>2</id><hostname>192.168.151.58</hostname><port>9234</port>
+            </server>
+            <server>
+                <id>3</id><hostname>192.168.151.111</hostname><port>9234</port>
+            </server>
+        </raft_configuration>
+    </keeper_server>
+
+    <zookeeper>
+        <node index="1"><host>192.168.151.41</host><port>9181</port></node>
+        <node index="2"><host>192.168.151.58</host><port>9181</port></node>
+        <node index="3"><host>192.168.151.111</host><port>9181</port></node>
+    </zookeeper>
+
+    <distributed_ddl>
+        <path>/clickhouse/task_queue/ddl</path>
+    </distributed_ddl>
+
+    <remote_servers>
+        <stock_cluster>
+            <shard>
+                <replica>
+                    <host>192.168.151.41</host>
+                    <port>9000</port>
+                    <user>admin</user>
+                    <password>admin123</password>
+                </replica>
+            </shard>
+            <shard>
+                <replica>
+                    <host>192.168.151.58</host>
+                    <port>9000</port>
+                    <user>admin</user>
+                    <password>admin123</password>
+                </replica>
+            </shard>
+            <shard>
+                <replica>
+                    <host>192.168.151.111</host>
+                    <port>9000</port>
+                    <user>admin</user>
+                    <password>admin123</password>
+                </replica>
+            </shard>
+        </stock_cluster>
+    </remote_servers>
+</clickhouse>

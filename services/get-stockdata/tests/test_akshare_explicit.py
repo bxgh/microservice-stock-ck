@@ -10,7 +10,7 @@ logging.getLogger("urllib3").setLevel(logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 def test_akshare_explicit_proxy():
-    proxy_url = "http://127.0.0.1:8118"
+    proxy_url = "http://192.168.151.18:3128"
     proxies = {"http": proxy_url, "https": proxy_url}
     
     print(f"\n{'='*20} Testing Akshare with Explicit Proxy {'='*20}")

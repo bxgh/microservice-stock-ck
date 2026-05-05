@@ -1,4 +1,11 @@
-# API 参考文档
+# [DEPRECATED] API 参考文档
+
+⚠️ **注意**: 本文档已过时，请参考最新的功能与数据源文档。
+
+➡️ **最新文档**: [Data Services功能与数据源映射表](../api/services_datasources_features.md)
+
+---
+(Old content removed to avoid confusion)
 
 ## 概述
 

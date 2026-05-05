@@ -1,0 +1,70 @@
+# <!-- Powered by BMAD™ Core -->
+template:
+  id: qa-gate-template-v1
+  name: Quality Gate Decision
+  version: 1.0
+  output:
+    format: yaml
+    filename: qa.qaLocation/gates/1.1-scaffold-revised.yml
+    title: "Quality Gate: 1.1"
+
+# Required fields (keep these first)
+schema: 1
+story: "1.1"
+story_title: "策略服务脚手架与配置 (REVISED)"
+gate: "CONCERNS"
+status_reason: "实现质量良好，但测试框架未安装导致无法执行测试验证"
+reviewer: "Quinn (Test Architect)"
+updated: "2025-12-09T15:00:00Z"
+
+# Always present but only active when WAIVED
+waiver: { active: false }
+
+# Issues (if any) - Use fixed severity: low | medium | high
+top_issues:
+  - id: "ENV-001"
+    severity: medium
+    finding: "Python依赖未安装，pytest无法执行"
+    suggested_action: "创建虚拟环境并安装requirements.txt中的依赖"
+  - id: "REQ-001"
+    severity: low
+    finding: "requirements.txt缺少pythonjsonlogger依赖（logging.py中使用）"
+    suggested_action: "添加pythonjsonlogger>=2.0.0到requirements.txt"
+
+# Risk summary (from risk-profile task if run)
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 1, low: 1 }
+  recommendations:
+    must_fix: ["安装Python依赖以支持测试执行"]
+    monitor: ["监控日志系统的性能影响"]
+
+# Optional Extended Fields
+quality_score: 85  # 20分扣减（1个medium问题）
+
+evidence:
+  tests_reviewed: 4  # 测试文件已创建但无法执行
+  risks_identified: 2
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6]  # 功能性AC已实现
+    ac_gaps: [7, 8, 9, 10, 11, 12]  # 技术性AC无法验证
+
+nfr_validation:
+  security: { status: PASS, notes: "密码通过环境变量管理，无硬编码" }
+  performance: { status: PASS, notes: "连接池配置合理，支持并发" }
+  reliability: { status: PASS, notes: "异常处理完善，有健康检查" }
+  maintainability: { status: PASS, notes: "代码结构清晰，日志记录完善" }
+
+recommendations:
+  immediate:  # Must fix before production
+    - action: "创建虚拟环境并安装依赖"
+      refs: ["requirements.txt"]
+  future:  # Can be addressed later
+    - action: "添加性能基准测试"
+      refs: ["src/core/database.py"]
+    - action: "考虑添加集成测试"
+      refs: ["tests/"]
+
+history:
+  - at: "2025-12-09T15:00:00Z"
+    gate: CONCERNS
+    note: "初始评审 - 实现完整但测试环境未配置"

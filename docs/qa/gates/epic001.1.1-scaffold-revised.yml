@@ -1,0 +1,82 @@
+schema: 1
+story: 'epic001.1.1'
+story_title: '策略服务脚手架与配置 (REVISED)'
+gate: FAIL
+status_reason: 'Critical components missing: database connections, structured logging, and global exception handling not implemented'
+reviewer: 'Quinn (Test Architect)'
+updated: '2025-12-09T09:20:00Z'
+
+top_issues:
+  - severity: high
+    description: 'Database connection pools not implemented (MySQL, ClickHouse, Redis)'
+    files: ['src/core/database.py (missing)']
+    suggested_owner: dev
+
+  - severity: high
+    description: 'No structured logging with trace_id for observability'
+    files: ['src/core/logging.py (missing)', 'src/main.py']
+    suggested_owner: dev
+
+  - severity: high
+    description: 'Tests directory empty, pytest not executable, 0% coverage'
+    files: ['tests/', 'unit_tests/']
+    suggested_owner: dev
+
+  - severity: medium
+    description: 'Configuration uses wrong Pydantic import (BaseModel vs BaseSettings)'
+    files: ['src/config/settings.py']
+    suggested_owner: dev
+
+waiver: { active: false }
+
+# Extended fields
+quality_score: 40  # 100 - (20*3 high issues) - (10*1 medium issue)
+expires: '2025-12-23T09:20:00Z'  # 2 weeks from review
+
+evidence:
+  tests_reviewed: 2  # Only found 2 unit tests
+  risks_identified: 7  # 3 high, 4 medium risks
+  trace:
+    ac_covered: [1, 2, 11]  # Basic startup, Nacos registration, graceful shutdown
+    ac_gaps: [3, 4, 5, 6, 7, 8, 9, 10]  # Database connections, logging, performance, testing
+
+nfr_validation:
+  security:
+    status: CONCERNS
+    notes: 'No global exception handling exposes potential error leakage'
+
+  performance:
+    status: CONCERNS
+    notes: 'Cannot validate performance metrics without proper database connections and monitoring'
+
+  reliability:
+    status: FAIL
+    notes: 'Service cannot handle database failures gracefully - no connection management'
+
+  maintainability:
+    status: CONCERNS
+    notes: 'Missing core infrastructure files will make future development difficult'
+
+recommendations:
+  immediate:  # Must fix before production
+    - action: 'Implement database connection pools for MySQL, ClickHouse, and Redis'
+      refs: ['src/core/database.py (needs creation)', 'Story requirement AC #3']
+
+    - action: 'Add structured logging with trace_id support'
+      refs: ['src/core/logging.py (needs creation)', 'Story requirement AC #4']
+
+    - action: 'Implement global exception handler for standardized error responses'
+      refs: ['src/core/exceptions.py (needs creation)', 'Story requirement AC #5']
+
+    - action: 'Create comprehensive test suite with minimum 80% coverage'
+      refs: ['tests/', 'Story requirement AC #9']
+
+  future:  # Can be addressed later
+    - action: 'Add Prometheus metrics for production monitoring'
+      refs: ['Story requirement AC #8']
+
+    - action: 'Implement health check validation for database connections'
+      refs: ['src/api/health_routes.py']
+
+    - action: 'Add graceful degradation for external dependencies'
+      refs: ['src/main.py']

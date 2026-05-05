@@ -1,0 +1,16 @@
+tasks:
+  # 每日流动性分析复盘 (VOL-01 to VOL-06)
+  - id: review_liquidity
+    name: 每日流动性复盘
+    type: docker
+    enabled: true
+    schedule:
+      type: trading_cron
+      expression: "0 17 * * mon-fri"  # 正常交易日 17:00 (盘后)
+    target:
+      image: gsd-worker:latest
+      command: ["python", "-m", "jobs.review_liquidity_job"]
+      network_mode: "host"
+    retry:
+      max_attempts: 3
+      backoff_seconds: 600

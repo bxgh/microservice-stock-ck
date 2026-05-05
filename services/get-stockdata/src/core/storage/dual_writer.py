@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from src.core.storage.parquet_writer import ParquetWriter
 from src.storage.clickhouse_writer import ClickHouseWriter, SnapshotData
+from gsd_shared.tick import clean_stock_code
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +125,7 @@ class DualWriter:
                 snapshot = SnapshotData(
                     snapshot_time=ts,
                     trade_date=date,
-                    stock_code=str(get_val('code')),
+                    stock_code=clean_stock_code(str(get_val('code'))),
                     stock_name=str(get_val('name', '')), # Mootdx quotes 可能不返回 name
                     market=self._map_market(str(get_val('market', 'SZ'))), # 映射 0/1 到 SZ/SH
                     current_price=float(get_val('price', 0)),
@@ -149,7 +150,8 @@ class DualWriter:
                     
                     total_volume=int(get_val('volume', 0)),
                     total_amount=float(get_val('amount', 0)),
-                    # turnover_rate=float(get_val('turnover', 0)) # Mootdx 可能不返回
+                    # turnover_rate=float(get_val('turnover', 0)), # Mootdx 可能不返回
+                    created_at=ts
                 )
                 snapshots.append(snapshot)
             except Exception as e:
@@ -168,5 +170,7 @@ class DualWriter:
 
     def close(self):
         """关闭资源"""
+        logger.info("Closing DualWriter executor...")
         self._executor.shutdown(wait=True)
-        self.clickhouse.close()
+        if self.clickhouse:
+            self.clickhouse.close()

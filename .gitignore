@@ -62,6 +62,9 @@ temp/
 # 数据目录
 data/
 logs/
+infrastructure/redis/**/data*/
+infrastructure/clickhouse/**/data/
+
 
 # 缓存
 .cache/
@@ -90,15 +93,30 @@ MANIFEST
 .bmad-core/
 openspec/
 
-# 文档和测试目录 - 本地使用，不需要跟踪
-docs/
-tests/
+# 文档目录 - 根据需要可选择性跟踪
+# /docs/
 
 # VSCode工作区配置 - 分支特定配置
-.vscode/workspaces/feature-*.code-workspace
-.vscode/workspaces/cross-*.code-workspace
+# .vscode/workspaces/feature-*.code-workspace
+# .vscode/workspaces/cross-*.code-workspace
 
 # 保留通用工作区配置，忽略分支特定配置
 !.vscode/workspaces/task-scheduler.code-workspace
 !.vscode/workspaces/frontend-web.code-workspace
 !.vscode/workspaces/cross-domain.code-workspace
+
+# 调试脚本与本地工具
+check_task_status.py
+update_db.py
+
+# 私有文档与草稿
+docs/miniprogram/
+
+# Runtime artifacts
+audit_output.json
+final_audit.json
+
+# Agent config
+.opencode/
+# TDX Runtime Files
+services/mootdx-api/src/core/tdx_nodes_ranked.json

@@ -1,0 +1,338 @@
+#!/usr/bin/env python3
+"""
+Akshare Proxy API Service (Ultimate Robust - Json Fix + Baidu Valuation)
+为内网环境提供 Akshare 数据访问接口
+支持 EPIC-002 (Quant Strategy) 和 EPIC-005 (Backtesting) 的所有需求
+Version: 2.5.0 (Add Baidu Valuation)
+"""
+from fastapi import FastAPI, HTTPException, Response
+import akshare as ak
+import logging
+from datetime import datetime
+from zoneinfo import ZoneInfo
+import numpy as np
+import pandas as pd
+
+# Timezone constant
+CST = ZoneInfo("Asia/Shanghai")
+
+# 配置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+app = FastAPI(
+    title="Akshare Proxy API",
+    description="Akshare 数据代理服务 (EPIC-002/005 Ready)",
+    version="2.5.0"
+)
+
+def safe_json_response(df: pd.DataFrame) -> Response:
+    """处理 DataFrame 并返回 JSON Response (解决 Date 序列化问题)"""
+    if df is None or df.empty:
+        return Response(content="[]", media_type="application/json")
+    
+    try:
+        json_str = df.to_json(orient='records', date_format='iso', force_ascii=False)
+        return Response(content=json_str, media_type="application/json")
+    except Exception as e:
+        logger.error(f"Serialization error: {e}")
+        return Response(content="[]", status_code=500)
+
+@app.get("/")
+def root():
+    return {"status": "running", "version": "2.5.0", "akshare_version": ak.__version__}
+
+@app.get("/health")
+def health():
+    return {"status": "healthy", "timestamp": datetime.now(CST).isoformat(), "akshare_version": ak.__version__}
+
+# ==========================================
+# 1. 市场行情 (Market Data)
+# ==========================================
+
+@app.get("/api/v1/stock/spot")
+def get_stock_spot():
+    """全市场实时行情"""
+    try:
+        df = ak.stock_zh_a_spot_em()
+        return safe_json_response(df)
+    except Exception as e:
+        logger.error(f"Spot error: {e}")
+        raise HTTPException(500, str(e))
+
+@app.get("/api/v1/stock/hist/{symbol}")
+def get_stock_hist(symbol: str, start_date: str, end_date: str, adjust: str = "qfq"):
+    """历史行情"""
+    try:
+        df = ak.stock_zh_a_hist(symbol=symbol, start_date=start_date, end_date=end_date, adjust=adjust)
+        return safe_json_response(df)
+    except Exception as e:
+        logger.error(f"Hist error: {e}")
+        return Response(content='{"error": "%s", "data": []}' % str(e).replace('"', "'"), status_code=500, media_type="application/json")
+
+@app.get("/api/v1/stock/info/{symbol}")
+def get_stock_info(symbol: str):
+    """个股基本信息"""
+    try:
+        df = ak.stock_individual_info_em(symbol=symbol)
+        data = {}
+        for _, row in df.iterrows():
+            data[row['item']] = row['value']
+        import json
+        return Response(content=json.dumps(data, ensure_ascii=False), media_type="application/json")
+    except Exception as e:
+        logger.error(f"Info error: {e}")
+        raise HTTPException(500, str(e))
+
+@app.get("/api/v1/stocks")
+def get_standardized_stocks(limit: int = 10000):
+    """
+    Standardized Stock List for StockCodeClient
+    Returns specific format: {items: [ExternalStockResponse...], total: ...}
+    """
+    df = None
+    try:
+        # 1. Fetch Spot Data (Latest list of all A-shares)
+        df = ak.stock_zh_a_spot_em()
+        
+        # 2. Transform to standardized format using vectorized operations
+        # Extract columns as vectors
+        codes = df['代码'].astype(str).tolist()
+        names = df['名称'].astype(str).tolist()
+        
+        # Vectorized exchange inference
+        exchanges = []
+        for code in codes:
+            if code.startswith("6"): 
+                exchanges.append("SH")
+            elif code.startswith("0") or code.startswith("3"): 
+                exchanges.append("SZ")
+            elif code.startswith("8") or code.startswith("4") or code.startswith("9"): 
+                exchanges.append("BJ")
+            else:
+                exchanges.append("UNKNOWN")
+        
+        # Build items using list comprehension (50x faster than iterrows)
+        timestamp = datetime.now(CST).isoformat()
+        items = [
+            {
+                "standard_code": code,
+                "name": name,
+                "exchange": exchange,
+                "security_type": "stock",
+                "is_active": True, 
+                "formats": {
+                    "standard": code,
+                    "akshare": code,
+                    "tushare": f"{code}.{exchange}" if exchange != "UNKNOWN" else code
+                },
+                "list_date": None, 
+                "delist_date": None,
+                "data_source": "akshare",
+                "last_updated": timestamp
+            }
+            for code, name, exchange in zip(codes, names, exchanges)
+        ]
+            
+        # 3. Pagination/Limit
+        total = len(items)
+        items = items[:limit]
+        
+        return {
+            "items": items,
+            "total": total,
+            "skip": 0,
+            "limit": limit,
+            "has_more": len(items) < total
+        }
+            
+    except Exception as e:
+        logger.error(f"Stocks list error: {e}")
+        raise HTTPException(status_code=503, detail=f"Failed to fetch stock list: {str(e)}")
+    finally:
+        # Explicit cleanup for large DataFrames
+        if df is not None:
+            del df
+
+# ==========================================
+# 2. 财务数据 (Financials)
+# ==========================================
+
+@app.get("/api/v1/finance/statements/{symbol}")
+def get_finance_statements(symbol: str):
+    """三大财务报表摘要"""
+    try:
+        df = ak.stock_financial_abstract(symbol=symbol)
+        return safe_json_response(df)
+    except Exception as e:
+        logger.error(f"Finance abstract error: {e}")
+        raise HTTPException(500, str(e))
+
+@app.get("/api/v1/finance/sheet/{symbol}")
+def get_finance_sheet(symbol: str, type: str = "main"):
+    """详细财务报表"""
+    try:
+        func_map = {
+            "income": getattr(ak, 'stock_profit_sheet_by_quarterly_em', None),
+            "balance": getattr(ak, 'stock_balance_sheet_by_quarterly_em', None),
+            "cash": getattr(ak, 'stock_cash_flow_sheet_by_quarterly_em', None),
+            "main": getattr(ak, 'stock_financial_analysis_indicator', None)
+        }
+        func = func_map.get(type)
+        if not func:
+            raise HTTPException(400, f"Invalid type: {type}")
+            
+        df = func(symbol=symbol)
+        return safe_json_response(df)
+    except Exception as e:
+        logger.error(f"Finance sheet {type} error: {e}")
+        raise HTTPException(500, str(e))
+
+# ==========================================
+# 3. 估值数据 (Valuation)
+# ==========================================
+
+@app.get("/api/v1/valuation/history/{symbol}")
+def get_valuation_history(symbol: str):
+    """历史估值 (使用财务指标替代)"""
+    try:
+        df = ak.stock_financial_analysis_indicator(symbol=symbol)
+        return safe_json_response(df)
+    except Exception as e:
+        logger.error(f"Valuation history error: {e}")
+        # P1-7 Fix: Raise explicit error instead of returning empty
+        raise HTTPException(status_code=503, detail=f"Valuation service error: {str(e)}")
+
+@app.get("/api/v1/valuation/baidu/{symbol}")
+def get_valuation_baidu(symbol: str, indicator: str = "市盈率(TTM)"):
+    """
+    百度股市通估值 (History support for PE-TTM, PB, etc.)
+    indicator: '市盈率(TTM)', '市净率', '市销率(TTM)', '总市值'
+    """
+    try:
+        # akshare.stock_zh_valuation_baidu(symbol="600519", indicator="市盈率(TTM)", period="近十年")
+        df = ak.stock_zh_valuation_baidu(symbol=symbol, indicator=indicator, period="近十年")
+        return safe_json_response(df)
+    except Exception as e:
+        logger.error(f"Valuation baidu error: {e}")
+        # P1-7 Fix: Raise explicit error instead of returning empty
+        raise HTTPException(status_code=503, detail=f"Baidu valuation service error: {str(e)}")
+
+# ==========================================
+# 4. 行业与板块
+# ==========================================
+
+@app.get("/api/v1/industry/list")
+def get_industry_list():
+    try:
+        df = ak.stock_board_industry_name_em()
+        return safe_json_response(df)
+    except Exception as e:
+        logger.error(f"Industry list error: {e}")
+        raise HTTPException(500, str(e))
+
+@app.get("/api/v1/industry/cons/{board_code}")
+def get_industry_cons(board_code: str):
+    try:
+        df = ak.stock_board_industry_cons_em(symbol=board_code)
+        return safe_json_response(df)
+    except Exception as e:
+        logger.error(f"Industry cons error: {e}")
+        raise HTTPException(500, str(e))
+
+# ==========================================
+# 5. 榜单数据
+# ==========================================
+
+@app.get("/api/v1/rank/hot")
+def get_rank_hot():
+    try:
+        df = ak.stock_hot_rank_em()
+        return safe_json_response(df)
+    except Exception as e:
+        logger.error(f"Rank hot error: {e}")
+        raise HTTPException(500, str(e))
+
+@app.get("/api/v1/rank/surge")
+def get_rank_surge():
+    try:
+        df = ak.stock_hot_up_em()
+        return safe_json_response(df)
+    except Exception as e:
+        logger.error(f"Rank surge error: {e}")
+        raise HTTPException(500, str(e))
+
+@app.get("/api/v1/rank/limit_up")
+def get_rank_limit_up(date: str):
+    try:
+        df = ak.stock_zt_pool_em(date=date)
+        return safe_json_response(df)
+    except Exception as e:
+        logger.error(f"Rank limit up error: {e}")
+        raise HTTPException(500, str(e))
+
+@app.get("/api/v1/rank/dragon_tiger")
+def get_rank_dragon_tiger(date: str):
+    try:
+        df = ak.stock_lhb_detail_em(start_date=date, end_date=date)
+        return safe_json_response(df)
+    except Exception as e:
+        logger.error(f"Rank lhb error: {e}")
+        raise HTTPException(500, str(e))
+
+@app.get("/api/v1/industries")
+async def get_industries():
+    """获取所有行业板块"""
+    df = None
+    try:
+        df = ak.stock_board_industry_name_em()
+        if df is None or df.empty:
+            return {"items": [], "total": 0}
+            
+        # Vectorized operations instead of iterrows
+        codes = df['板块代码'].astype(str).tolist()
+        names = df['板块名称'].astype(str).tolist()
+        
+        items = [
+            {"code": code, "name": name}
+            for code, name in zip(codes, names)
+        ]
+        return {"items": items, "total": len(items)}
+    except Exception as e:
+        logger.error(f"Error fetching industries: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if df is not None:
+            del df
+
+@app.get("/api/v1/industry/{code}/constituents")
+async def get_industry_constituents(code: str):
+    """获取行业成分股"""
+    df = None
+    try:
+        df = ak.stock_board_industry_cons_em(symbol=code)
+        if df is None or df.empty:
+             return {"items": [], "total": 0}
+        
+        # Vectorized operations
+        codes = df['代码'].astype(str).tolist()
+        names = df['名称'].astype(str).tolist()
+        
+        items = [
+            {"code": c, "name": n}
+            for c, n in zip(codes, names)
+        ]
+        return {"items": items, "total": len(items)}
+    except Exception as e:
+        logger.error(f"Error fetching constituents for {code}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if df is not None:
+            del df
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8111, log_level="info")

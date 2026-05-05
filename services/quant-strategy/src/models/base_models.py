@@ -3,7 +3,8 @@
 """
 
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -11,7 +12,7 @@ class ApiResponse(BaseModel):
     """通用API响应模型"""
     success: bool
     message: str
-    data: Optional[Any] = None
+    data: Any | None = None
     timestamp: datetime = Field(default_factory=datetime.now)
 
     class Config:
@@ -26,4 +27,4 @@ class HealthStatus(BaseModel):
     timestamp: datetime
     version: str
     uptime: int
-    checks: Dict[str, Any]
+    checks: dict[str, Any]

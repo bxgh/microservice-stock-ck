@@ -1,0 +1,230 @@
+# =============================================================================
+# Server 111 (计算节点) Docker Compose 配置
+# =============================================================================
+# 运行: docker-compose -f docker-compose.node-111.yml up -d
+# 设计为: 纯计算节点
+
+services:
+  # ---------------------------------------------------------------------------
+  # 核心服务 (必须运行)
+  # ---------------------------------------------------------------------------
+  
+  mootdx-api:
+    build:
+      context: .
+      dockerfile: services/mootdx-api/Dockerfile
+    image: microservice-stock-mootdx-api:latest
+    container_name: microservice-stock-mootdx-api
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      - PORT=8003
+      - HOST=0.0.0.0
+      - TDX_POOL_SIZE=50
+      - MOOTDX_CONCURRENCY=50
+      - MOOTDX_FETCH_COUNT=5
+      
+      # [Standardized Direct Connection Config]
+      - TDX_AUTO_DISCOVER=false
+      - TDX_BIND_IP=192.168.151.111
+      - TDX_HOSTS=59.36.5.11:7709,119.147.212.81:7709,124.71.187.122:7709,218.60.29.136:7709,175.6.5.153:7709,119.29.51.30:7709,175.6.5.154:7709,175.6.5.155:7709,139.9.51.18:7709
+      - LOG_LEVEL=DEBUG
+      
+      # [Redis Standalone Config]
+      - REDIS_HOST=192.168.151.41
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=redis123
+      - REDIS_CLUSTER=false
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - ./logs/mootdx-api:/app/logs
+      - mootdx_config:/root/.mootdx
+      - ./services/mootdx-api/src:/app/src  # 开发模式挂载源码
+      - ./libs/gsd-shared:/app/libs/gsd-shared:ro
+
+  mootdx-source:
+    build:
+      context: .
+      dockerfile: services/mootdx-api/Dockerfile
+    image: microservice-stock-mootdx-source:latest
+    container_name: microservice-stock-mootdx-source
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      - SERVICE_NAME=mootdx-source
+      - SERVICE_HOST=127.0.0.1
+      - SERVICE_PORT=50051
+      - NACOS_SERVER_ADDR=127.0.0.1:8848
+      - LOG_LEVEL=DEBUG
+      - MOOTDX_API_URL=http://127.0.0.1:8003
+      # 网络代理配置
+      - HTTP_PROXY=http://192.168.151.18:3128
+      - HTTPS_PROXY=http://192.168.151.18:3128
+      - NO_PROXY=localhost,127.0.0.1,0.0.0.0,::1
+      # 云端 API URLs
+      - AKSHARE_API_URL=http://124.221.80.250:8003
+      - BAOSTOCK_API_URL=http://124.221.80.250:8001
+      - PYWENCAI_API_URL=http://124.221.80.250:8002
+    volumes:
+      - ./logs/mootdx-source:/app/logs
+      - ./services/mootdx-source/src:/app/src
+
+  # ---------------------------------------------------------------------------
+  # 盘中分笔实时采集器 (Shard 2)
+  # ---------------------------------------------------------------------------
+  
+  intraday-tick-collector:
+    build:
+      context: ./services/get-stockdata
+      dockerfile: Dockerfile
+      args:
+        - ENABLE_PROXY=true
+        - PROXY_URL=http://192.168.151.18:3128
+    image: get-stockdata:latest
+    container_name: intraday-tick-collector
+    hostname: node-111-collector
+    network_mode: host
+    restart: unless-stopped
+    command: python3 -m src.core.collector.intraday_tick_main
+    environment:
+      - CLICKHOUSE_HOST=127.0.0.1
+      - CLICKHOUSE_PORT=9000
+      - CLICKHOUSE_DB=stock_data
+      - CLICKHOUSE_USER=admin
+      - CLICKHOUSE_PASSWORD=admin123
+      - MOOTDX_API_URL=http://192.168.151.41:8003
+      # 分布式采集配置
+      - SHARD_INDEX=2
+      - SHARD_TOTAL=3
+      - REDIS_HOST=192.168.151.41
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=redis123
+      # 性能调优参数
+      - CONCURRENCY=30
+      - SNAPSHOT_BATCH_SIZE=60
+      - FLUSH_THRESHOLD=4000
+      - POLL_INTERVAL_SECONDS=4.0
+      - POLL_OFFSET=200
+      - PYTHONPATH=/app:/app/libs/gsd-shared
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./libs/gsd-shared:/app/libs/gsd-shared:ro
+      - ./logs/intraday-tick-collector:/app/logs
+      - ./services/get-stockdata/src:/app/src
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import os; exit(0 if os.path.exists('/app/logs/intraday_tick_collector.log') else 1)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+
+  # ---------------------------------------------------------------------------
+  # 任务调度 (111 节点 - 已禁用，由 Server 41 统一调度或手动触发)
+  # ---------------------------------------------------------------------------
+  
+  task-orchestrator:
+    # profiles: ["disabled"] # 显式禁用，防止自动启动冲突
+    deploy:
+      replicas: 0
+    build:
+      context: .
+      dockerfile: services/task-orchestrator/Dockerfile
+    image: task-orchestrator:latest
+    container_name: task-orchestrator
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      - ORCHESTRATOR_DEBUG=false
+      - ORCHESTRATOR_DOCKER_HOST=unix:///var/run/docker.sock
+      - ORCHESTRATOR_BASE_DIR=${PWD}
+      - ORCHESTRATOR_WORKER_IMAGE=gsd-worker:latest
+      - ORCHESTRATOR_WORKER_NETWORK=host
+      - ORCHESTRATOR_REDIS_HOST=192.168.151.41
+      - ORCHESTRATOR_REDIS_PORT=6379
+      - ORCHESTRATOR_REDIS_PASSWORD=redis123
+      - WORKER_CLICKHOUSE_HOST=127.0.0.1
+      - WORKER_CLICKHOUSE_PORT=9000
+      - ORCHESTRATOR_WORKER_MOOTDX_API_URL=http://127.0.0.1:8003
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./libs/gsd-shared:/app/libs/gsd-shared:ro
+      - ./logs/task-orchestrator:/app/logs
+      - ./services/task-orchestrator/config/tasks_111.yml:/app/config/tasks.yml:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:18000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ---------------------------------------------------------------------------
+  # 分片采集 Worker (按需运行)
+  # ---------------------------------------------------------------------------
+  # docker-compose -f docker-compose.node-111.yml run --rm gsd-worker python -m jobs.sync_tick
+  
+  gsd-worker:
+    build:
+      context: .
+      dockerfile: services/gsd-worker/Dockerfile
+    image: gsd-worker:latest
+    network_mode: host
+    environment:
+      - SHARD_INDEX=2
+      - SHARD_TOTAL=3
+      - CLICKHOUSE_HOST=192.168.151.111
+      - MOOTDX_API_URL=http://localhost:8003
+      # 网络代理配置
+      - HTTP_PROXY=http://192.168.151.18:3128
+      - HTTPS_PROXY=http://192.168.151.18:3128
+      - NO_PROXY=localhost,127.0.0.1,192.168.151.111
+      - ENVIRONMENT=development
+      # MySQL 配置
+      - GSD_DB_HOST=${GSD_DB_HOST:-127.0.0.1}
+      - GSD_DB_PORT=${GSD_DB_PORT:-36301}
+      - GSD_DB_NAME=${GSD_DB_NAME:-alwaysup}
+      - GSD_DB_USER=${GSD_DB_USER:-root}
+      - GSD_DB_PASSWORD=${GSD_DB_PASSWORD:-alwaysup@888}
+      # ClickHouse 配置
+      - CLICKHOUSE_HOST=${CLICKHOUSE_HOST:-127.0.0.1}
+      - CLICKHOUSE_PORT=${CLICKHOUSE_PORT:-9000}
+      - CLICKHOUSE_USER=${CLICKHOUSE_USER:-admin}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-admin123}
+      - CLICKHOUSE_DB=${CLICKHOUSE_DB:-stock_data}
+      # Redis 配置
+      - REDIS_HOST=192.168.151.41
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=redis123
+      - REDIS_CLUSTER=false
+      - REDIS_DB=${REDIS_DB:-0}
+    volumes:
+      - ./libs/gsd-shared:/app/libs/gsd-shared:ro
+      - ./logs/gsd-worker:/app/logs
+      - ./services/gsd-worker/src:/app/src
+      - ./services/gsd-worker/config:/app/config
+      - ./data/gsd-worker:/app/data
+
+# =============================================================================
+# 使用说明
+# =============================================================================
+# 
+# 启动所有服务:
+#   docker-compose -f docker-compose.node-111.yml up -d
+#
+# 运行分片采集:
+#   docker-compose -f docker-compose.node-111.yml run --rm gsd-worker python -m jobs.sync_tick --scope all
+#
+# 查看日志:
+#   docker-compose -f docker-compose.node-111.yml logs -f mootdx-api
+#
+# =============================================================================
+# 共享资源定义
+# =============================================================================
+volumes:
+  mootdx_config:
+
+networks:
+  default:
+    name: microservice-stock-network
+

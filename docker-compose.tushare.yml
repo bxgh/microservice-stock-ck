@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  tushare-debug:
+    build:
+      context: ./services/tushare-debug
+      dockerfile: Dockerfile
+      args:
+        ENABLE_PROXY: ${ENABLE_PROXY:-true}
+        PROXY_URL: ${PROXY_URL:-http://192.168.151.18:3128}
+    container_name: tushare-debug-container
+    env_file:
+      - ./services/tushare-debug/.env.tushare
+    volumes:
+      - ./services/tushare-debug/scripts:/app/scripts
+      - ./services/tushare-debug/.env.tushare:/app/.env.tushare
+    # 使用 host 模式以便直接访问本地 Redis/ClickHouse
+    network_mode: host
+    restart: "no"
+    tty: true
+    stdin_open: true
+    environment:
+      - TZ=Asia/Shanghai
+      - PYTHONPATH=/app
+    # 默认进入交互模式，方便调试
+    command: /bin/bash -c "python scripts/tushare_test.py && /bin/bash"
+
+volumes:
+  tushare-debug-data:

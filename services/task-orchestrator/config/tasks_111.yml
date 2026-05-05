@@ -1,0 +1,80 @@
+# Task Orchestrator 任务配置 (Server 111)
+version: "1.0"
+timezone: "Asia/Shanghai"
+
+global:
+  docker:
+    image: gsd-worker:latest
+    network_mode: host
+    default_volumes:
+      - /home/bxgh/microservice-stock/libs/gsd-shared:/app/libs/gsd-shared:ro
+      - /home/bxgh/microservice-stock/services/gsd-worker/config:/app/config:ro
+      - /home/bxgh/microservice-stock/services/gsd-worker/src:/app/src
+    environment:
+      PYTHONPATH: /app/src
+
+tasks:
+  - id: daily_tick_sync_shard_2
+    name: 盘后分笔采集与补采(Shard-2)
+    type: workflow
+    enabled: false # 架构 3.0: 已迁移至 Master 统一发射指令
+    schedule:
+      type: trading_cron
+      expression: "0 18 * * 1-5"
+    workflow:
+      - id: collect
+        name: 分片采集
+        command: ["jobs.sync_tick", "--scope", "all", "--shard-index", "2", "--shard-total", "3"]
+      - id: retry
+        name: 自动补采
+        command: ["jobs.retry_tick", "--concurrency", "25"]
+        depends_on: [collect]
+    retry:
+      max_attempts: 2
+      backoff_seconds: 600
+
+  # 定向个股数据补充 (NEW)
+  - id: stock_data_supplement
+    name: 定向个股数据补充
+    type: docker
+    enabled: false # 不自动调度，仅手动/API/Gate-3触发
+    schedule:
+      type: cron
+      expression: "0 0 1 1 *" # Dummy schedule
+    target:
+      command: ["jobs.supplement_stock"]
+      environment:
+        PYTHONPATH: "/app/src"
+    retry:
+      max_attempts: 2
+      backoff_seconds: 300
+
+  # 分笔按日补采
+  - id: repair_tick
+    name: 分笔数据补采
+    type: docker
+    enabled: false # 不自动调度，仅手动/API触发
+    schedule:
+      type: cron
+      expression: "0 0 1 1 *" # Dummy schedule
+    target:
+      command: ["jobs.sync_tick", "--scope", "all", "--distributed-source", "none", "--concurrency", "25"]
+      environment:
+        TICK_THRESHOLD: "95"
+    retry:
+      max_attempts: 1
+
+  # 分笔指定日期分片采集 (用于分布式精准调度)
+  - id: collect_tick_sharded
+    name: 分笔数据指定日期分片采集
+    type: docker
+    enabled: false
+    schedule: 
+      type: cron
+      expression: "0 0 1 1 *"
+    target:
+      command: ["jobs.sync_tick", "--scope", "all", "--concurrency", "25"]
+      environment:
+        TICK_THRESHOLD: "95"
+    retry:
+      max_attempts: 1

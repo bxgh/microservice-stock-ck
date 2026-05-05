@@ -1,0 +1,22 @@
+# altdata-source/src/config/hardware.yaml
+# 另类数据源：硬件算力现货价格监控配置
+
+platforms:
+  - name: autodl
+    enabled: true
+    # AutoDL 典型型号监控
+    gpu_models:
+      - "RTX 4090"
+      - "A100 (80GB)"
+      - "H100"
+      - "RTX 3090"
+      - "Ascend 910B"  # 国产替代标杆
+      - "MetaX 曦云 C500" # 沐曦训练系列
+      - "MetaX 曦思 N100" # 沐曦推理系列
+
+  - name: aliyun
+    enabled: true
+    # 阿里云 PAI/ECS 竞价实例
+    gpu_models:
+      - "NVIDIA A100"  # gn7i 实例
+      - "NVIDIA V100"  # gn6v 实例

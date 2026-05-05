@@ -1,0 +1,430 @@
+"""
+Mootdx Handler
+通达信直连数据源处理器
+
+职责:
+- 管理 mootdx 客户端的生命周期
+- 提供实时行情、分笔、K线数据获取接口
+- 异步包装同步调用
+"""
+import asyncio
+import logging
+from typing import List, Dict, Any
+import pandas as pd
+from mootdx.quotes import Quotes
+
+from config import HistoryDefaults
+
+logger = logging.getLogger("mootdx-handler")
+
+
+class MootdxHandler:
+    """
+    通达信（mootdx）数据源处理器
+    
+    封装 mootdx 库的调用逻辑，提供异步接口。
+    使用 bestip 自动选择最佳服务器节点。
+    """
+    
+    def __init__(self):
+        self.client: Quotes = None
+    
+    async def initialize(self) -> None:
+        """
+        初始化 mootdx 客户端
+        
+        使用 bestip=True 自动选择最快的通达信服务器节点
+        """
+        loop = asyncio.get_event_loop()
+        try:
+            self.client = await loop.run_in_executor(
+                None,
+                lambda: Quotes.factory(market='std', bestip=True)
+            )
+            logger.info("✓ Mootdx client initialized (auto best server)")
+        except Exception as e:
+            logger.error(f"Failed to initialize mootdx: {e}")
+            self.client = None
+    
+    async def close(self) -> None:
+        """
+        关闭 mootdx 客户端
+        
+        注意: mootdx 客户端通常不需要显式关闭，此方法仅用于统一接口
+        """
+        if self.client:
+            self.client = None
+            logger.info("Mootdx client closed")
+    
+    async def get_quotes(
+        self,
+        codes: List[str],
+        params: Dict[str, Any]
+    ) -> pd.DataFrame:
+        """
+        获取实时行情
+        
+        Args:
+            codes: 股票代码列表
+            params: 额外参数（暂未使用）
+        
+        Returns:
+            DataFrame 包含字段:
+            - code: 股票代码
+            - name: 股票名称
+            - open, high, low, price: OHLC
+            - bid1-5, ask1-5: 五档买卖
+            - volume, amount: 成交量/额
+        """
+        if not self.client:
+            logger.warning("Mootdx client not initialized")
+            return pd.DataFrame()
+        
+        if not codes:
+            return pd.DataFrame()
+        
+        loop = asyncio.get_event_loop()
+        try:
+            data = await loop.run_in_executor(
+                None,
+                lambda: self.client.quotes(symbol=list(codes))
+            )
+            return data if data is not None else pd.DataFrame()
+        except Exception as e:
+            logger.error(f"Mootdx get_quotes failed: {e}")
+            return pd.DataFrame()
+    
+    async def get_tick(
+        self,
+        codes: List[str],
+        params: Dict[str, Any]
+    ) -> pd.DataFrame:
+        """
+        获取分笔成交数据
+        
+        Args:
+            codes: 股票代码列表（仅支持单个代码）
+            params: 额外参数
+                - date: 交易日期（整数格式 YYYYMMDD）
+                - start: 起始位置（默认 0）
+                - offset: 获取数量（默认 800）
+        
+        Returns:
+            DataFrame 包含字段:
+            - time: 时间
+            - price: 成交价
+            - volume: 成交量
+            - type: 买卖类型
+        
+        Raises:
+            ValueError: 未指定股票代码
+        """
+        if not self.client:
+            logger.warning("Mootdx client not initialized")
+            return pd.DataFrame()
+        
+        if not codes:
+            raise ValueError("No code specified for TICK")
+        
+        # 提取参数
+        date = params.get("date")  # 整数格式
+        start = params.get("start", 0)
+        offset = params.get("offset", 800)
+        
+        loop = asyncio.get_event_loop()
+        try:
+            # 根据是否有日期参数调用不同的方法
+            if date is not None:
+                data = await loop.run_in_executor(
+                    None,
+                    lambda: self.client.transactions(
+                        symbol=codes[0],
+                        date=date,
+                        start=start,
+                        offset=offset
+                    )
+                )
+            else:
+                data = await loop.run_in_executor(
+                    None,
+                    lambda: self.client.transactions(symbol=codes[0])
+                )
+            return data if data is not None else pd.DataFrame()
+        except Exception as e:
+            logger.error(f"Mootdx get_tick failed: {e}")
+            return pd.DataFrame()
+    
+    async def get_history(
+        self,
+        codes: List[str],
+        params: Dict[str, Any]
+    ) -> pd.DataFrame:
+        """
+        获取历史K线数据
+        
+        Args:
+            codes: 股票代码列表（仅支持单个代码）
+            params: 参数
+                - frequency: 频率 (d/w/m)
+                - start: 起始位置（默认0）
+                - offset: 数据条数（默认500，最大800）
+        
+        Returns:
+            DataFrame 包含字段:
+            - date: 日期
+            - open, high, low, close: OHLC
+            - volume, amount: 成交量/额
+        
+        Note:
+            - mootdx 不支持复权数据
+            - 最多返回800条历史数据
+        
+        Raises:
+            ValueError: 未指定股票代码
+        """
+        if not self.client:
+            logger.warning("Mootdx client not initialized")
+            return pd.DataFrame()
+        
+        if not codes:
+            raise ValueError("No code specified for HISTORY")
+        
+        # 频率映射: d/w/m -> mootdx frequency code
+        frequency = params.get("frequency", HistoryDefaults.FREQUENCY)
+        freq_map = {"d": 9, "w": 6, "m": 5}
+        mootdx_freq = freq_map.get(frequency, 9)
+        
+        # 数据范围
+        start = params.get("start", 0)
+        offset = min(params.get("offset", 500), 800)  # 最大800条
+        
+        loop = asyncio.get_event_loop()
+        try:
+            data = await loop.run_in_executor(
+                None,
+                lambda: self.client.bars(
+                    symbol=codes[0],
+                    frequency=mootdx_freq,
+                    start=start,
+                    offset=offset
+                )
+            )
+            return data if data is not None else pd.DataFrame()
+        except Exception as e:
+            logger.error(f"Mootdx get_history failed: {e}")
+            return pd.DataFrame()
+    
+    async def get_stocks(
+        self,
+        codes: List[str],
+        params: Dict[str, Any]
+    ) -> pd.DataFrame:
+        """
+        获取股票列表
+        
+        Args:
+            codes: 股票代码列表（未使用，返回全市场）
+            params: 参数
+                - market: 0=深圳, 1=上海, None=全市场
+        
+        Returns:
+            DataFrame 包含字段:
+            - code: 股票代码
+            - name: 股票名称（可能为空）
+            - market: 市场代码
+        
+        Note:
+            - 返回约 48,000+ 只股票
+            - 包含股票、ETF、债券等
+        """
+        if not self.client:
+            logger.warning("Mootdx client not initialized")
+            return pd.DataFrame()
+        
+        market = params.get("market")
+        
+        loop = asyncio.get_event_loop()
+        try:
+            if market is not None:
+                # 单个市场
+                data = await loop.run_in_executor(
+                    None,
+                    lambda: self.client.stocks(market=market)
+                )
+            else:
+                # 全市场：合并上海+深圳
+                sh_data = await loop.run_in_executor(
+                    None,
+                    lambda: self.client.stocks(market=1)
+                )
+                sz_data = await loop.run_in_executor(
+                    None,
+                    lambda: self.client.stocks(market=0)
+                )
+                data = pd.concat([sh_data, sz_data], ignore_index=True)
+            
+            return data if data is not None else pd.DataFrame()
+        except Exception as e:
+            logger.error(f"Mootdx get_stocks failed: {e}")
+            return pd.DataFrame()
+    
+    async def get_finance_info(
+        self,
+        codes: List[str],
+        params: Dict[str, Any]
+    ) -> pd.DataFrame:
+        """
+        获取股票基础财务信息
+        
+        Args:
+            codes: 股票代码列表
+            params: 额外参数（暂未使用）
+        
+        Returns:
+            DataFrame 包含字段:
+            - code: 股票代码
+            - liutongguben: 流通股本
+            - zongguben: 总股本
+            - province: 省份
+            - industry: 行业
+            - ipo_date: 上市日期
+            - updated_date: 更新日期
+        
+        Note:
+            - 数据来自通达信内置数据
+            - 更新频率可能不如专业财务数据源
+        """
+        if not self.client:
+            logger.warning("Mootdx client not initialized")
+            return pd.DataFrame()
+        
+        if not codes:
+            return pd.DataFrame()
+        
+        loop = asyncio.get_event_loop()
+        results = []
+        
+        try:
+            for code in codes:
+                data = await loop.run_in_executor(
+                    None,
+                    lambda c=code: self.client.finance(symbol=c)
+                )
+                if data is not None and not data.empty:
+                    results.append(data)
+            
+            return pd.concat(results, ignore_index=True) if results else pd.DataFrame()
+        except Exception as e:
+            logger.error(f"Mootdx get_finance_info failed: {e}")
+            return pd.DataFrame()
+    
+    async def get_xdxr(
+        self,
+        codes: List[str],
+        params: Dict[str, Any]
+    ) -> pd.DataFrame:
+        """
+        获取除权除息数据
+        
+        Args:
+            codes: 股票代码列表（仅支持单个代码）
+            params: 额外参数（暂未使用）
+        
+        Returns:
+            DataFrame 包含字段:
+            - year, month, day: 日期
+            - category: 类别
+            - fenhong: 分红（每股）
+            - songzhuangu: 送转股比例
+            - peigu: 配股比例
+            - peigujia: 配股价格
+            - suogu: 缩股比例
+            - panqianliutong: 盘前流通股本
+            - panhouliutong: 盘后流通股本
+        
+        Note:
+            - 用于计算复权价格
+            - 历史分红记录完整
+        
+        Raises:
+            ValueError: 未指定股票代码
+        """
+        if not self.client:
+            logger.warning("Mootdx client not initialized")
+            return pd.DataFrame()
+        
+        if not codes:
+            raise ValueError("No code specified for XDXR")
+        
+        loop = asyncio.get_event_loop()
+        try:
+            data = await loop.run_in_executor(
+                None,
+                lambda: self.client.xdxr(symbol=codes[0])
+            )
+            return data if data is not None else pd.DataFrame()
+        except Exception as e:
+            logger.error(f"Mootdx get_xdxr failed: {e}")
+            return pd.DataFrame()
+    
+    async def get_index_bars(
+        self,
+        codes: List[str],
+        params: Dict[str, Any]
+    ) -> pd.DataFrame:
+        """
+        获取指数历史K线数据
+        
+        Args:
+            codes: 指数代码列表（仅支持单个代码）
+                - 000001: 上证指数
+                - 399001: 深证成指
+                - 399006: 创业板指
+            params: 参数
+                - frequency: 频率 (d/w/m)
+                - start: 起始位置（默认0）
+                - offset: 数据条数（默认500，最大800）
+        
+        Returns:
+            DataFrame 包含字段:
+            - date: 日期
+            - open, high, low, close: OHLC
+            - volume, amount: 成交量/额
+            - up_count: 上涨家数
+            - down_count: 下跌家数
+        
+        Raises:
+            ValueError: 未指定指数代码
+        """
+        if not self.client:
+            logger.warning("Mootdx client not initialized")
+            return pd.DataFrame()
+        
+        if not codes:
+            raise ValueError("No code specified for INDEX_BARS")
+        
+        # 频率映射: d/w/m -> mootdx frequency code
+        frequency = params.get("frequency", HistoryDefaults.FREQUENCY)
+        freq_map = {"d": 9, "w": 6, "m": 5}
+        mootdx_freq = freq_map.get(frequency, 9)
+        
+        # 数据范围
+        start = params.get("start", 0)
+        offset = min(params.get("offset", 500), 800)  # 最大800条
+        
+        loop = asyncio.get_event_loop()
+        try:
+            data = await loop.run_in_executor(
+                None,
+                lambda: self.client.index_bars(
+                    symbol=codes[0],
+                    frequency=mootdx_freq,
+                    start=start,
+                    offset=offset
+                )
+            )
+            return data if data is not None else pd.DataFrame()
+        except Exception as e:
+            logger.error(f"Mootdx get_index_bars failed: {e}")
+            return pd.DataFrame()
+

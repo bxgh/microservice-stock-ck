@@ -1,0 +1,30 @@
+# Task Orchestrator 主配置文件
+# 版本: 2.0 (模块化架构)
+# 时区: Asia/Shanghai
+
+version: "2.0"
+timezone: "Asia/Shanghai"
+
+# 全局配置
+global:
+  docker:
+    image: gsd-worker:latest
+    network_mode: host
+    default_volumes:
+      - ./libs/gsd-shared:/app/libs/gsd-shared:ro
+      - ./libs/gsd-agent/src:/app/libs/gsd-agent:ro
+      - ./services/gsd-worker/config:/app/config:ro
+      - ./services/gsd-worker/src:/app/src
+    environment:
+      PYTHONPATH: /app/src:/app/libs/gsd-shared:/app/libs/gsd-agent
+  
+  notifications:
+    on_failure:
+      - type: webhook
+        url: "${ALERT_WEBHOOK_URL}"
+
+# 任务定义已模块化拆分至 tasks/ 子目录:
+# - 01_data_sync.yml        数据同步任务
+# - 02_strategies.yml       策略任务
+# - 03_maintenance.yml      系统维护任务
+# - 04_workflow_triggers.yml 工作流触发器

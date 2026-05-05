@@ -5,11 +5,11 @@ Nacos 服务注册模板
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
 import socket
-from typing import Dict, Optional
 
 import aiohttp
 
@@ -37,7 +37,7 @@ def get_nacos_url():
             try:
                 nacos_ip = socket.gethostbyname("nacos")
                 return env_url.replace("nacos:", f"{nacos_ip}:")
-            except:
+            except Exception:
                 # 回退到Docker网络默认IP
                 return env_url.replace("nacos:", "172.18.0.1:")
         return env_url
@@ -143,7 +143,7 @@ def get_local_ip() -> str:
         local_ip = socket.gethostbyname(hostname)
         if local_ip.startswith("172.") or local_ip.startswith("192.168.") or local_ip.startswith("10."):
             return local_ip
-    except:
+    except Exception:
         pass
 
     # 回退到原始方法
@@ -177,7 +177,7 @@ async def heartbeat_task_func(heartbeat_interval: int = 10):
 
 async def register_to_nacos(service_name: str, service_port: int,
                            framework: str, description: str,
-                           additional_metadata: Optional[Dict] = None,
+                           additional_metadata: dict | None = None,
                            max_retries: int = 3, retry_delay: int = 5,
                            heartbeat_interval: int = 10) -> bool:
     """
@@ -252,7 +252,7 @@ async def register_to_nacos(service_name: str, service_port: int,
     return False
 
 
-async def initialize_nacos(nacos_url: Optional[str] = None) -> bool:
+async def initialize_nacos(nacos_url: str | None = None) -> bool:
     """
     初始化 Nacos 注册器
 
@@ -281,10 +281,8 @@ async def cleanup_nacos():
     # 停止心跳任务
     if heartbeat_task:
         heartbeat_task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await heartbeat_task
-        except asyncio.CancelledError:
-            pass
         logger.info("💓 心跳任务已停止")
 
     # 关闭注册器

@@ -24,54 +24,10 @@ services:
       timeout: 10s
       retries: 3
 
-  # 缓存服务 - Redis
-  redis:
-    image: redis:7.2.4-alpine
-    container_name: microservice-stock-redis
-    restart: unless-stopped
-    command: redis-server --appendonly yes --requirepass redis123
-    volumes:
-      - redis_data:/data
-    ports:
-      - "6379:6379"
-    networks:
-      - microservice-stock
-    depends_on:
-      - nacos
-    healthcheck:
-      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
 
-  # 时序数据库 - ClickHouse
-  clickhouse:
-    image: clickhouse/clickhouse-server:latest
-    container_name: microservice-stock-clickhouse
-    restart: unless-stopped
-    volumes:
-      - clickhouse_data:/var/lib/clickhouse
-      - clickhouse_logs:/var/log/clickhouse-server
-    ports:
-      - "8123:8123"  # HTTP接口
-      - "9000:9000"  # TCP接口
-      - "9004:9004"  # MySQL兼容接口
-      - "9009:9009"  # 复制通信接口
-    networks:
-      - microservice-stock
-    depends_on:
-      - nacos
-    ulimits:
-      nofile:
-        soft: 262144
-        hard: 262144
-    environment:
-      - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8123/ping"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+  # ClickHouse 集群由独立 Docker Compose 文件管理
+  # 部署位置: infrastructure/clickhouse/docker-compose.node-{41,58,111}.yml
+  # 快速部署: infrastructure/clickhouse/scripts/full_redeploy_cluster.sh
 
   # 消息队列 - RabbitMQ
   rabbitmq:
@@ -161,7 +117,7 @@ services:
     depends_on:
       - nacos
       - redis
-      - clickhouse
+      #- clickhouse
       - rabbitmq
     
 volumes:
@@ -171,15 +127,6 @@ volumes:
   nacos_logs:
     driver: local
 
-  # Redis 数据卷
-  redis_data:
-    driver: local
-
-  # ClickHouse 数据卷
-  clickhouse_data:
-    driver: local
-  clickhouse_logs:
-    driver: local
 
   # RabbitMQ 数据卷
   rabbitmq_data:
