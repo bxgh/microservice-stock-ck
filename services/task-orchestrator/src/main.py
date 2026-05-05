@@ -142,17 +142,21 @@ class GenericTaskRunner:
         try:
             async with mysql_pool.acquire() as conn:
                 async with conn.cursor() as cursor:
-                    for shard_id in shards:
-                        params = params_base.copy()
-                        params['date'] = target_date
-                        if shard_id is not None:
-                            params['shard_index'] = shard_id
-                            
-                        await cursor.execute(
-                            "INSERT INTO alwaysup.task_commands (task_id, params, status) VALUES (%s, %s, %s)",
-                            (template_id, json.dumps(params), "PENDING")
-                        )
-                    await conn.commit()
+                    try:
+                        for shard_id in shards:
+                            params = params_base.copy()
+                            params['date'] = target_date
+                            if shard_id is not None:
+                                params['shard_index'] = shard_id
+                                
+                            await cursor.execute(
+                                "INSERT INTO alwaysup.task_commands (task_id, params, status) VALUES (%s, %s, %s)",
+                                (template_id, json.dumps(params), "PENDING")
+                            )
+                        await conn.commit()
+                    except Exception as e:
+                        await conn.rollback()
+                        raise e
             logger.info(f"✅ Successfully emitted {len(shards)} commands to cloud.")
         except Exception as e:
             logger.error(f"❌ Failed to emit commands: {e}")
@@ -368,22 +372,57 @@ async def run_stale_task_sweeper() -> None:
     try:
         async with mysql_pool.acquire() as conn:
             async with conn.cursor() as cursor:
-                # 标记超过 2 小时未完成的任务为 FAILED
-                await cursor.execute("""
-                    UPDATE alwaysup.task_commands
-                    SET 
-                        status = 'FAILED',
-                        result = CONCAT('Auto-recovered: Task stalled for over ', TIMESTAMPDIFF(MINUTE, executed_at, NOW()), ' minutes')
-                    WHERE 
-                        status = 'RUNNING' 
-                        AND executed_at < NOW() - INTERVAL 2 HOUR
-                """)
-                affected = cursor.rowcount
-                if affected > 0:
-                    logger.warning(f"⚠️ Sweeper recovered {affected} stale tasks")
-                await conn.commit()
+                try:
+                    # 标记超过 2 小时未完成的任务为 FAILED
+                    await cursor.execute("""
+                        UPDATE alwaysup.task_commands
+                        SET 
+                            status = 'FAILED',
+                            result = CONCAT('Auto-recovered: Task stalled for over ', TIMESTAMPDIFF(MINUTE, executed_at, NOW()), ' minutes')
+                        WHERE 
+                            status = 'RUNNING' 
+                            AND executed_at < NOW() - INTERVAL 2 HOUR
+                    """)
+                    affected = cursor.rowcount
+                    if affected > 0:
+                        logger.warning(f"⚠️ Sweeper recovered {affected} stale tasks")
+                    await conn.commit()
+                except Exception as e:
+                    await conn.rollback()
+                    raise e
     except Exception as e:
         logger.error(f"❌ Sweeper failed: {e}")
+
+async def run_recalc_signal_sweeper() -> None:
+    """清理 E6 重算信号：将超过 30 分钟处于 PROCESSING 但未确认的任务重置 (防丢单)"""
+    if not mysql_pool:
+        return
+        
+    logger.info("🧹 Running Recalc Signal Sweeper...")
+    try:
+        async with mysql_pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                try:
+                    # 状态重置逻辑：PROCESSING -> PENDING
+                    await cursor.execute("""
+                        UPDATE alwaysup.recalc_signals
+                        SET 
+                            status = 'PENDING',
+                            notes = CONCAT('Auto-recovered: Node timeout at ', NOW()),
+                            retry_count = retry_count + 1
+                        WHERE 
+                            status = 'PROCESSING' 
+                            AND executed_at < NOW() - INTERVAL 30 MINUTE
+                    """)
+                    affected = cursor.rowcount
+                    if affected > 0:
+                        logger.warning(f"⚠️ Sweeper recovered {affected} timed-out recalc tasks")
+                    await conn.commit()
+                except Exception as e:
+                    await conn.rollback()
+                    raise e
+    except Exception as e:
+        logger.error(f"❌ Recalc Sweeper failed: {e}")
 
 # --- Registration Logic ---
 
@@ -645,6 +684,15 @@ async def lifespan(app: FastAPI):
         name="Stale Task Sweeper",
         replace_existing=True
     )
+    
+    # E6 重算任务扫描
+    scheduler.add_job(
+        run_recalc_signal_sweeper,
+        CronTrigger(minute="*/10"),
+        id="recalc_signal_sweeper",
+        name="Recalc Signal Sweeper",
+        replace_existing=True
+    )
     logger.info("✓ Internal maintenance jobs registered")
     
     # 7. Start FlowController (Workflow 4.0 Engine)
@@ -716,8 +764,10 @@ app = FastAPI(
 # Mount API routes
 from api.tasks import router as tasks_router
 from api.dq import router as dq_router
+from api.backfill import router as backfill_router
 app.include_router(tasks_router, prefix="/api/v1", tags=["tasks"])
 app.include_router(dq_router, prefix="/api/v1/dq", tags=["dq"])
+app.include_router(backfill_router, prefix="/api/v1/backfill", tags=["backfill"])
 
 # Prometheus metrics
 from prometheus_client import make_asgi_app
