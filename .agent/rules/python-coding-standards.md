@@ -55,6 +55,8 @@ You are an expert Python Backend Engineer specializing in financial data systems
 - **测试文件**
   所有测试文件必须使用专用前缀文件名。
 
+# 算法规则
+- 核心算法必须用 Python 实现，CK 仅承担存储 / 列式聚合 / 时序窗口职责。CK 物化视图、ARRAY JOIN、AggregateFunction 等特有特性可用于性能优化，但不得作为算法逻辑的承载层。
 
 # Documentation Rules
 - **Reports**: Update `docs/reports/PROGRESS_REPORT_YYYYMMDD.md` after completing Epics or major Stories.
