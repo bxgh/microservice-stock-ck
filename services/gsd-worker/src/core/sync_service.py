@@ -187,10 +187,10 @@ class KLineSyncService:
                 async with mysql_conn.cursor(aiomysql.DictCursor) as cursor:
                     query = """
                         SELECT 
-                            code, trade_date, open, high, low, close,
+                            ts_code, trade_date, open, high, low, close,
                             volume, amount, turnover, pct_chg
                         FROM stock_kline_daily
-                        ORDER BY trade_date, code
+                        ORDER BY trade_date, ts_code
                     """
                     
                     await cursor.execute(query)
@@ -300,30 +300,30 @@ class KLineSyncService:
             if re_sync_date:
                 query = """
                     SELECT 
-                        code, trade_date, open, high, low, close,
+                        ts_code, trade_date, open, high, low, close,
                         volume, amount, turnover, pct_chg
                     FROM stock_kline_daily
                     WHERE trade_date >= %s
-                    ORDER BY trade_date, code
+                    ORDER BY trade_date, ts_code
                 """
                 params = (re_sync_date,)
             elif clickhouse_max_date:
                 query = """
                     SELECT 
-                        code, trade_date, open, high, low, close,
+                        ts_code, trade_date, open, high, low, close,
                         volume, amount, turnover, pct_chg
                     FROM stock_kline_daily
                     WHERE trade_date > %s
-                    ORDER BY trade_date, code
+                    ORDER BY trade_date, ts_code
                 """
                 params = (clickhouse_max_date,)
             else:
                 query = """
                     SELECT 
-                        code, trade_date, open, high, low, close,
+                        ts_code, trade_date, open, high, low, close,
                         volume, amount, turnover, pct_chg
                     FROM stock_kline_daily
-                    ORDER BY trade_date, code
+                    ORDER BY trade_date, ts_code
                 """
                 params = ()
 
@@ -436,11 +436,11 @@ class KLineSyncService:
             placeholders = ','.join(['%s'] * len(stock_codes))
             query = f"""
                 SELECT 
-                    code, trade_date, open, high, low, close,
+                    ts_code, trade_date, open, high, low, close,
                     volume, amount, turnover, pct_chg
                 FROM stock_kline_daily
-                WHERE code IN ({placeholders})
-                ORDER BY code, trade_date
+                WHERE ts_code IN ({placeholders})
+                ORDER BY ts_code, trade_date
             """
             
             rows = await self._fetch_from_mysql_with_retry(query, tuple(stock_codes))
@@ -451,7 +451,7 @@ class KLineSyncService:
                 
                 # 统计每只股票的记录数
                 from collections import Counter
-                stock_counts = Counter(row['code'] for row in rows)
+                stock_counts = Counter(row['ts_code'] for row in rows)
                 
                 msg = f"按股票代码同步完成：{len(rows):,} 条记录，{len(stock_counts)} 只股票"
                 logger.info(f"✓ {msg}")
@@ -513,21 +513,21 @@ class KLineSyncService:
                     while True:
                         if is_first_batch:
                             query = f"""
-                                SELECT code, trade_date, open, high, low, close, volume, amount, turnover, pct_chg, created_at
+                                SELECT ts_code, trade_date, open, high, low, close, volume, amount, turnover, pct_chg, created_at
                                 FROM stock_kline_daily
                                 WHERE created_at >= %s
-                                ORDER BY created_at ASC, code ASC, trade_date ASC
+                                ORDER BY created_at ASC, ts_code ASC, trade_date ASC
                                 LIMIT {batch_size}
                             """
                             params = (start_time,)
                         else:
                             query = f"""
-                                SELECT code, trade_date, open, high, low, close, volume, amount, turnover, pct_chg, created_at
+                                SELECT ts_code, trade_date, open, high, low, close, volume, amount, turnover, pct_chg, created_at
                                 FROM stock_kline_daily
                                 WHERE (created_at > %s) 
-                                   OR (created_at = %s AND code > %s)
-                                   OR (created_at = %s AND code = %s AND trade_date > %s)
-                                ORDER BY created_at ASC, code ASC, trade_date ASC
+                                   OR (created_at = %s AND ts_code > %s)
+                                   OR (created_at = %s AND ts_code = %s AND trade_date > %s)
+                                ORDER BY created_at ASC, ts_code ASC, trade_date ASC
                                 LIMIT {batch_size}
                             """
                             params = (last_created_at, last_created_at, last_code, last_created_at, last_code, last_trade_date)
@@ -540,11 +540,11 @@ class KLineSyncService:
                         
                         last_row = rows[-1]
                         last_created_at = last_row['created_at']
-                        last_code = last_row['code']
+                        last_code = last_row['ts_code']
                         last_trade_date = last_row['trade_date']
                         is_first_batch = False
                         
-                        await self._insert_to_clickhouse(rows)
+                        await self._insert_to_clickhouse_enhanced(rows)
                         
                         synced += len(rows)
                         if total > 0:
@@ -602,10 +602,10 @@ class KLineSyncService:
                     synced = 0
                     while offset < total:
                         query = f"""
-                            SELECT code, adjust_date, fore_adjust_factor, back_adjust_factor
+                            SELECT ts_code, adjust_date, fore_adjust_factor, back_adjust_factor
                             FROM stock_adjust_factor
                             {where_clause}
-                            ORDER BY adjust_date, code
+                            ORDER BY adjust_date, ts_code
                             LIMIT {batch_size} OFFSET {offset}
                         """
                         await cursor.execute(query)
@@ -636,9 +636,7 @@ class KLineSyncService:
     
     def _normalize_code_for_mysql(self, code: str) -> str:
         """
-        归一化股票代码用于 MySQL 查询
-        600000.SH -> sh.600000
-        000001.SZ -> sz.000001
+        标准化股票代码为 Tushare 风格: 600000.SH
         """
         if not code:
             return code
@@ -647,16 +645,20 @@ class KLineSyncService:
         if '.' in code:
             parts = code.split('.')
             if len(parts) == 2:
-                # 处理 600000.SH 这种格式
-                if parts[1] in ['SH', 'SZ', 'BJ']:
-                    symbol, market = parts
-                    return f"{market.lower()}.{symbol}"
-                # 处理 SH.600000 这种格式
-                elif parts[0] in ['SH', 'SZ', 'BJ']:
-                    market, symbol = parts
-                    return f"{market.lower()}.{symbol}"
+                # 处理 sh.600000 -> 600000.SH
+                if parts[0] in ['SH', 'SZ', 'BJ'] and parts[1].isdigit():
+                    return f"{parts[1]}.{parts[0]}"
+                # 已经是 600000.SH
+                return code
         
-        return code.lower()
+        # 处理 sh600000 -> 600000.SH
+        if len(code) == 8:
+            if code.startswith(('SH', 'SZ', 'BJ')):
+                return f"{code[2:]}.{code[:2]}"
+            if code.endswith(('SH', 'SZ', 'BJ')):
+                return f"{code[:-2]}.{code[-2:]}"
+                
+        return code
 
     async def _insert_factors_to_clickhouse(self, rows: list):
         """批量插入复权因子到 ClickHouse"""
@@ -667,17 +669,18 @@ class KLineSyncService:
             async with ch_conn.cursor() as cursor:
                 insert_query = """
                     INSERT INTO stock_adjust_factor 
-                    (stock_code, adjust_date, fore_adjust_factor, back_adjust_factor)
+                    (ts_code, adjust_date, fore_adjust_factor, back_adjust_factor, adjust_factor)
                     VALUES
                 """
                 
                 values = []
                 for row in rows:
                     values.append((
-                        row['code'],
+                        row['ts_code'],
                         row['adjust_date'],
                         float(row['fore_adjust_factor']) if row['fore_adjust_factor'] is not None else 1.0,
-                        float(row['back_adjust_factor']) if row['back_adjust_factor'] is not None else 1.0
+                        float(row['back_adjust_factor']) if row['back_adjust_factor'] is not None else 1.0,
+                        float(row['adjust_factor']) if row.get('adjust_factor') is not None else 1.0
                     ))
                 
                 await cursor.execute(insert_query, values)
@@ -689,7 +692,7 @@ class KLineSyncService:
         P1 改进: 防止错误数据覆盖 ClickHouse
         """
         # 必填字段检查
-        required = ['code', 'trade_date', 'open', 'close', 'volume']
+        required = ['ts_code', 'trade_date', 'open', 'close', 'volume']
         for field in required:
             if field not in row or row[field] is None:
                 return False, f"缺少必填字段: {field}"
@@ -745,7 +748,7 @@ class KLineSyncService:
             else:
                 invalid_count += 1
                 logger.warning(
-                    f"数据校验失败: {row.get('code')} {row.get('trade_date')} - {error}"
+                    f"数据校验失败: {row.get('ts_code')} {row.get('trade_date')} - {error}"
                 )
         
         if invalid_count > 0:
@@ -760,15 +763,15 @@ class KLineSyncService:
             async with ch_conn.cursor() as cursor:
                 insert_query = """
                     INSERT INTO stock_kline_daily 
-                    (stock_code, trade_date, open_price, high_price, low_price, 
-                     close_price, volume, amount, turnover_rate, change_pct)
+                    (ts_code, trade_date, open, high, low, 
+                     close, volume, amount, turnover, pct_chg)
                     VALUES
                 """
                 
                 values = []
                 for row in valid_rows:
                     values.append((
-                        row['code'],
+                        row['ts_code'],
                         row['trade_date'],
                         float(row['open']) if row['open'] is not None else 0.0,
                         float(row['high']) if row['high'] is not None else 0.0,
@@ -891,7 +894,7 @@ class KLineSyncService:
                         if 90 <= ratio <= 110:
                             # 自动归一化为'股'
                             row['volume'] = int(volume * 100)
-                            logger.info(f"⚖️ L5检测到单位差异，已自动归一化 (Ratio={ratio:.1f}): {row.get('code')} {row.get('trade_date')}")
+                            logger.info(f"⚖️ L5检测到单位差异，已自动归一化 (Ratio={ratio:.1f}): {row.get('ts_code')} {row.get('trade_date')}")
                             return True, ""
                         
                         # 正常校验 (50% 误差阈值)
@@ -929,7 +932,7 @@ class KLineSyncService:
         duplicate_count = 0
         
         for row in rows:
-            key = (row.get('code'), str(row.get('trade_date')))
+            key = (row.get('ts_code'), str(row.get('trade_date')))
             if key in seen:
                 duplicate_count += 1
                 logger.warning(f"L7-发现重复数据: {key}")
@@ -970,7 +973,7 @@ class KLineSyncService:
         # 按股票代码分组，便于 L2 验证
         stock_groups = defaultdict(list)
         for row in unique_rows:
-            stock_groups[row.get('code')].append(row)
+            stock_groups[row.get('ts_code')].append(row)
         
         # 对每组按日期排序
         for code in stock_groups:
@@ -1021,15 +1024,15 @@ class KLineSyncService:
             async with ch_conn.cursor() as cursor:
                 insert_query = """
                     INSERT INTO stock_kline_daily 
-                    (stock_code, trade_date, open_price, high_price, low_price, 
-                     close_price, volume, amount, turnover_rate, change_pct)
+                    (ts_code, trade_date, open, high, low, 
+                     close, volume, amount, turnover, pct_chg)
                     VALUES
                 """
                 
                 values = []
                 for row in valid_rows:
                     values.append((
-                        row['code'],
+                        row['ts_code'],
                         row['trade_date'],
                         float(row['open']) if row['open'] is not None else 0.0,
                         float(row['high']) if row['high'] is not None else 0.0,
