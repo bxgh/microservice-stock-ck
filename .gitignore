@@ -120,3 +120,4 @@ final_audit.json
 .opencode/
 # TDX Runtime Files
 services/mootdx-api/src/core/tdx_nodes_ranked.json
+**/implementation_logs/

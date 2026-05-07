@@ -53,10 +53,7 @@ You are an expert Python Backend Engineer specializing in financial data systems
 - **mock**
   使用mock进行测试时，必须明确说明，严禁使用mock测试代替真实环境下任何结论
 - **测试文件**
-  所有测试文件必须使用专用前缀文件名。
-
-# 算法规则
-- 核心算法必须用 Python 实现，CK 仅承担存储 / 列式聚合 / 时序窗口职责。CK 物化视图、ARRAY JOIN、AggregateFunction 等特有特性可用于性能优化，但不得作为算法逻辑的承载层。
+  所有测试文件必须使用专用前缀文件名。测试文件必须保存在对应的微服务的scratch目录下。产生的log文件也必须保存在对应logs目录下。
 
 # Documentation Rules
 - **Reports**: Update `docs/reports/PROGRESS_REPORT_YYYYMMDD.md` after completing Epics or major Stories.
@@ -68,3 +65,4 @@ You are an expert Python Backend Engineer specializing in financial data systems
 - **Commit Messages**: Use Conventional Commits (feat, fix, docs, test, refactor).
 - **Strategy**: Group changes logically (e.g., separate tests from core logic).
 - **git提交代码后需要清理本次的测试文件。
+- git 推送应该推送到所有远程仓库。
