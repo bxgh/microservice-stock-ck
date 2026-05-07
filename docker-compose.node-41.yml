@@ -27,7 +27,7 @@ services:
       - TDX_POOL_SIZE=75
       - MOOTDX_CONCURRENCY=75
       - MOOTDX_FETCH_COUNT=5
-      # - SOCKS_PROXY=127.0.0.1:8118
+      - SOCKS_PROXY=127.0.0.1:8118
       
       # [Standardized Direct Connection Config]
       - TDX_AUTO_DISCOVER=false
@@ -102,6 +102,7 @@ services:
       - ORCHESTRATOR_BASE_DIR=${PWD}
       - ORCHESTRATOR_WORKER_IMAGE=gsd-worker:latest
       - ORCHESTRATOR_WORKER_NETWORK=host
+      - ORCHESTRATOR_MYSQL_HOST=192.168.151.41
       - ORCHESTRATOR_REDIS_HOST=127.0.0.1
       - ORCHESTRATOR_REDIS_PORT=6379
       - ORCHESTRATOR_REDIS_PASSWORD=redis123
@@ -116,7 +117,7 @@ services:
       - ./libs/gsd-shared:/app/libs/gsd-shared:ro
       - ./libs/gsd-agent:/app/libs/gsd-agent:ro
       - ./logs/task-orchestrator:/app/logs
-      - ./services/task-orchestrator/config/tasks.yml:/app/config/tasks.yml:ro
+      - ./services/task-orchestrator/config:/app/config:ro
       - ./services/task-orchestrator/src:/app/src
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:18000/health"]
@@ -224,51 +225,51 @@ services:
   # 盘中分笔实时采集器 (NEW)
   # ---------------------------------------------------------------------------
   
-  intraday-tick-collector:
-    build:
-      context: ./services/get-stockdata
-      dockerfile: Dockerfile
-      args:
-        - ENABLE_PROXY=true
-        - PROXY_URL=http://192.168.151.18:3128
-    image: get-stockdata:latest
-    container_name: intraday-tick-collector
-    hostname: node-41-collector
-    network_mode: host
-    restart: unless-stopped
-    command: python3 -m src.core.collector.intraday_tick_main
-    environment:
-      - CLICKHOUSE_HOST=127.0.0.1
-      - CLICKHOUSE_PORT=9000
-      - CLICKHOUSE_DB=stock_data
-      - CLICKHOUSE_USER=admin
-      - CLICKHOUSE_PASSWORD=admin123
-      - MOOTDX_API_URL=http://127.0.0.1:8003
-      # 分布式采集配置 (Server 41 - Shard 0/3)
-      - SHARD_INDEX=0
-      - SHARD_TOTAL=3
-      - REDIS_HOST=127.0.0.1
-      - REDIS_PORT=6379
-      - REDIS_PASSWORD=redis123
-      # 性能调优参数
-      - CONCURRENCY=5
-      - SNAPSHOT_BATCH_SIZE=60
-      - FLUSH_THRESHOLD=4000
-      - POLL_INTERVAL_SECONDS=4.0
-      - POLL_OFFSET=200
-      - PYTHONPATH=/app:/app/libs/gsd-shared
-      - PYTHONUNBUFFERED=1
-    volumes:
-      - ./libs/gsd-shared:/app/libs/gsd-shared:ro
-      - ./logs/intraday-tick-collector:/app/logs
-      - ./services/get-stockdata/src:/app/src
-      - ./services/get-stockdata/tests:/app/tests:ro
-      - ./services/get-stockdata/config/hs300_stocks.yaml:/app/config/hs300_stocks.yaml:ro
-    healthcheck:
-      test: ["CMD", "python3", "-c", "import os; exit(0 if os.path.exists('/app/logs/intraday_tick_collector.log') else 1)"]
-      interval: 60s
-      timeout: 10s
-      retries: 3
+#   intraday-tick-collector:
+#     build:
+#       context: ./services/get-stockdata
+#       dockerfile: Dockerfile
+#       args:
+#         - ENABLE_PROXY=true
+#         - PROXY_URL=http://192.168.151.18:3128
+#     image: get-stockdata:latest
+#     container_name: intraday-tick-collector
+#     hostname: node-41-collector
+#     network_mode: host
+#     restart: unless-stopped
+#     command: python3 -m src.core.collector.intraday_tick_main
+#     environment:
+#       - CLICKHOUSE_HOST=127.0.0.1
+#       - CLICKHOUSE_PORT=9000
+#       - CLICKHOUSE_DB=stock_data
+#       - CLICKHOUSE_USER=admin
+#       - CLICKHOUSE_PASSWORD=admin123
+#       - MOOTDX_API_URL=http://127.0.0.1:8003
+#       # 分布式采集配置 (Server 41 - Shard 0/3)
+#       - SHARD_INDEX=0
+#       - SHARD_TOTAL=3
+#       - REDIS_HOST=127.0.0.1
+#       - REDIS_PORT=6379
+#       - REDIS_PASSWORD=redis123
+#       # 性能调优参数
+#       - CONCURRENCY=5
+#       - SNAPSHOT_BATCH_SIZE=60
+#       - FLUSH_THRESHOLD=4000
+#       - POLL_INTERVAL_SECONDS=4.0
+#       - POLL_OFFSET=200
+#       - PYTHONPATH=/app:/app/libs/gsd-shared
+#       - PYTHONUNBUFFERED=1
+#     volumes:
+#       - ./libs/gsd-shared:/app/libs/gsd-shared:ro
+#       - ./logs/intraday-tick-collector:/app/logs
+#       - ./services/get-stockdata/src:/app/src
+#       - ./services/get-stockdata/tests:/app/tests:ro
+#       - ./services/get-stockdata/config/hs300_stocks.yaml:/app/config/hs300_stocks.yaml:ro
+#     healthcheck:
+#       test: ["CMD", "python3", "-c", "import os; exit(0 if os.path.exists('/app/logs/intraday_tick_collector.log') else 1)"]
+#       interval: 60s
+#       timeout: 10s
+#       retries: 3
 
   # ---------------------------------------------------------------------------
   # 支撑服务 (仅 41 运行)

@@ -233,7 +233,7 @@ class TickSyncService:
                     sql = f"""
                     ALTER TABLE stock_data.{target_table} ON CLUSTER stock_cluster
                     DELETE WHERE trade_date = '{formatted_date}' 
-                      AND stock_code IN ({codes_str})
+                      AND ts_code IN ({codes_str})
                     """
                     async with self.clickhouse_pool.acquire() as conn:
                         async with conn.cursor() as cursor:
@@ -322,48 +322,48 @@ class TickSyncService:
     async def filter_stocks_need_repair(self, stock_codes: list, trade_date: str) -> list:
         return await self.validator.filter_need_repair(stock_codes, trade_date)
 
-    async def sync_stock(self, stock_code: str, trade_date: str, force: bool = False, idempotent: bool = False) -> int:
+    async def sync_stock(self, ts_code: str, trade_date: str, force: bool = False, idempotent: bool = False) -> int:
         """
         同步单只股票分笔数据
         :param idempotent: 是否先清理旧数据 (默认 False，安全优先)
         """
         """同步单只股票 (Orchestration Logic)"""
         # 0. init status
-        await self.tracker.update(stock_code, trade_date, "processing")
+        await self.tracker.update(ts_code, trade_date, "processing")
         
         try:
             # 1. Pre-validation (Skip if quality is good AND not forcing)
             if not force:
-                is_valid = await self.validator.check_quality(stock_code, trade_date)
+                is_valid = await self.validator.check_quality(ts_code, trade_date)
                 if is_valid:
-                    logger.debug(f"⏭️ {stock_code} 已跳过 (数据合格)")
-                    await self.tracker.update(stock_code, trade_date, "skipped", 0)
+                    logger.debug(f"⏭️ {ts_code} 已跳过 (数据合格)")
+                    await self.tracker.update(ts_code, trade_date, "skipped", 0)
                     return -1
 
             # 2. Fetch
-            tick_data = await self.fetcher.fetch(stock_code, trade_date)
+            tick_data = await self.fetcher.fetch(ts_code, trade_date)
             
             if not tick_data:
-                await self.tracker.update(stock_code, trade_date, "completed", 0)
+                await self.tracker.update(ts_code, trade_date, "completed", 0)
                 return 0
 
             # 3. Post-validation (Canary)
-            self.validator.validate_canary(stock_code, tick_data, trade_date)
+            self.validator.validate_canary(ts_code, tick_data, trade_date)
             
             # 4. Write
-            count = await self.writer.write(stock_code, trade_date, tick_data, idempotent=idempotent)
+            count = await self.writer.write(ts_code, trade_date, tick_data, idempotent=idempotent)
             
             # 5. Update Status
             times = [x.get('time', '') for x in tick_data]
             min_t, max_t = min(times), max(times)
-            await self.tracker.update(stock_code, trade_date, "completed", count, min_t, max_t)
+            await self.tracker.update(ts_code, trade_date, "completed", count, min_t, max_t)
             
-            logger.debug(f"✓ {stock_code}: {count} ticks")
+            logger.debug(f"✓ {ts_code}: {count} ticks")
             return count
 
         except Exception as e:
-            logger.error(f"❌ {stock_code} sync failed: {e}")
-            await self.tracker.update(stock_code, trade_date, "failed", error=str(e))
+            logger.error(f"❌ {ts_code} sync failed: {e}")
+            await self.tracker.update(ts_code, trade_date, "failed", error=str(e))
             return 0
 
     async def sync_stocks(

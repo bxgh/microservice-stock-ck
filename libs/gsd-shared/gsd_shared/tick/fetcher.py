@@ -36,12 +36,12 @@ class TickFetcher:
 
     async def fetch(
         self,
-        stock_code: str,
+        ts_code: str,
         trade_date: Optional[str] = None,
         start: int = 0
     ) -> List[Dict[str, Any]]:
         # Clean code
-        clean_code = clean_stock_code(stock_code)
+        clean_code = clean_stock_code(ts_code)
         
         # Reset deduplicator counters for this stock
         self.deduplicator.reset_batch_counters()
@@ -128,6 +128,8 @@ class TickFetcher:
                             retries -= 1
                 except Exception as e:
                     logger.warning(f"Slice fetch retry {code} @ {current_start}: {e}")
+                    import traceback
+                    logger.error(traceback.format_exc())
                     retries -= 1
             
             if not success:

@@ -190,14 +190,25 @@ class GenericTaskRunner:
                 await task_logger.log_failure(log_id, f"Watch error: {str(e)}", -1, container.id)
 
     @staticmethod
-    async def run_docker_task(task: TaskDefinition):
+    async def run_docker_task(task: TaskDefinition, params: Optional[dict] = None):
         """Generic runner for Docker tasks with Log tracking"""
         if not docker_client:
             logger.error("❌ Docker client not connected")
             return
 
         image = task.target.get('image') or settings.WORKER_IMAGE
-        command = task.target.get('command')
+        command = list(task.target.get('command') or [])
+        
+        # Inject dynamic params into command (with duplication check)
+        if params:
+            for k, v in params.items():
+                cli_flag = f"--{k.replace('_', '-')}"
+                # If flag already exists in command, skip it to avoid duplication
+                if cli_flag in command:
+                    continue
+                command.append(cli_flag)
+                if v is not None and str(v) != "":
+                    command.append(str(v))
         
         # Prepare Environment: Merge task-specific env with default worker settings
         env = {}
@@ -281,7 +292,7 @@ class GenericTaskRunner:
             raise
 
     @staticmethod
-    async def run_workflow_task(task: TaskDefinition):
+    async def run_workflow_task(task: TaskDefinition, params: Optional[dict] = None):
         """Generic runner for Workflow tasks"""
         if not docker_client:
             logger.error("❌ Docker client not connected")
@@ -302,11 +313,17 @@ class GenericTaskRunner:
                 # Expand parallel tasks
                 for sub_task in step.tasks:
                     sub_id = sub_task.get('id')
-                    sub_cmd = sub_task.get('command')
+                    sub_cmd = list(sub_task.get('command') or [])
                     
-                    # Merge environment
-                    env = {}
-                    # Inherit workflow global env if any (not on task def currently, but maybe in future)
+                    # Inject params
+                    if params:
+                        for k, v in params.items():
+                            cli_flag = f"--{k.replace('_', '-')}"
+                            if cli_flag in sub_cmd:
+                                continue
+                            sub_cmd.append(cli_flag)
+                            if v is not None and str(v) != "":
+                                sub_cmd.append(str(v))
                     
                     dt = DagTask(
                         id=f"{task.id}-{step.id}-{sub_id}", # Unique global ID
@@ -317,12 +334,37 @@ class GenericTaskRunner:
                     dag_tasks.append(dt)
             else:
                 # Single step task
+                sub_cmd = list(step.command or [])
+                
+                # Replace placeholders and inject params
+                if params:
+                    new_sub_cmd = []
+                    for arg in sub_cmd:
+                        # Replace {{var}} with param value
+                        for k, v in params.items():
+                            placeholder = f"{{{{{k}}}}}"
+                            if placeholder in arg:
+                                arg = arg.replace(placeholder, str(v))
+                        new_sub_cmd.append(arg)
+                    sub_cmd = new_sub_cmd
+
+                    # Also append params that weren't in placeholders (for backward compatibility)
+                    for k, v in params.items():
+                        cli_key = k.replace('_', '-')
+                        placeholder = f"{{{{{k}}}}}"
+                        # Check if this param was already handled by a placeholder in ANY arg
+                        if not any(placeholder in original_arg for original_arg in list(step.command or [])):
+                            sub_cmd.append(f"--{cli_key}")
+                            if v is not None and str(v) != "":
+                                sub_cmd.append(str(v))
+                            
                 dt = DagTask(
                     id=f"{task.id}-{step.id}",
                     name=f"{task.name}-{step.id}",
-                    command=step.command,
+                    command=sub_cmd,
                     dependencies=set([f"{task.id}-{d}" for d in step.depends_on]) if step.depends_on else set()
                 )
+                logger.info(f"🧩 Debug: Workflow Step {dt.id} command: {sub_cmd}")
                 dag_tasks.append(dt)
 
 
@@ -468,44 +510,47 @@ async def register_jobs() -> None:
             # B. 如果没有特殊 Handler，使用通用 Runner
             else:
                 if task_def.type == TaskType.HTTP:
-                    async def http_wrapper(t=task_def):
-                        await GenericTaskRunner.run_http_task(t)
+                    async def http_wrapper(t_val=task_def, **kwargs):
+                        await GenericTaskRunner.run_http_task(t_val)
                     job_func = http_wrapper
                     logger.info(f"  • {task_def.id}: Using Generic HTTP Runner")
                     
                 elif task_def.type == TaskType.DOCKER:
-                    async def docker_wrapper(t=task_def, params=None):
-                        await GenericTaskRunner.run_docker_task(t)
+                    async def docker_wrapper(t_val=task_def, **kwargs):
+                        params_val = kwargs.get('params')
+                        await GenericTaskRunner.run_docker_task(t_val, params=params_val)
                     job_func = docker_wrapper
                     logger.info(f"  • {task_def.id}: Using Generic Docker Runner")
 
                 elif task_def.type == TaskType.WORKFLOW:
-                    async def workflow_wrapper(t=task_def):
-                        await GenericTaskRunner.run_workflow_task(t)
+                    async def workflow_wrapper(t_val=task_def, **kwargs):
+                        params_val = kwargs.get('params')
+                        await GenericTaskRunner.run_workflow_task(t_val, params=params_val)
                     job_func = workflow_wrapper
                     logger.info(f"  • {task_def.id}: Using Generic Workflow Runner")
                 
                 elif task_def.type == TaskType.COMMAND_EMITTER:
-                    async def emitter_wrapper(t=task_def):
-                        await GenericTaskRunner.run_command_emitter_task(t)
+                    async def emitter_wrapper(t_val=task_def, **kwargs):
+                        await GenericTaskRunner.run_command_emitter_task(t_val)
                     job_func = emitter_wrapper
                     logger.info(f"  • {task_def.id}: Using Generic Command Emitter")
 
                 elif task_def.type == TaskType.WORKFLOW_TRIGGER:
-                    async def trigger_wrapper(t=task_def, params=None):
+                    async def trigger_wrapper(t_val=task_def, **kwargs):
+                        params_val = kwargs.get('params')
                         if not flow_controller:
                             logger.error("❌ FlowController not initialized")
                             return
                         
-                        workflow_id = t.target.get('workflow_id')
-                        logger.info(f"⚡ Triggering Workflow: {workflow_id} (Task: {t.name}, Dynamic Params: {params})")
+                        workflow_id = t_val.target.get('workflow_id')
+                        logger.info(f"⚡ Triggering Workflow: {workflow_id} (Task: {t_val.name}, Dynamic Params: {params_val})")
                         
                         # Context preparation
                         from datetime import datetime
                         # 重要：合并 params 到 context
-                        ctx = t.target.get('initial_context', {}).copy()
-                        if params:
-                            ctx.update(params)
+                        ctx = t_val.target.get('initial_context', {}).copy()
+                        if params_val:
+                            ctx.update(params_val)
                         
                         ctx['trigger_time'] = datetime.now().isoformat()
                         
@@ -603,13 +648,24 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("⏭️ SiliconFlow integration disabled by configuration")
     
-    # Filter out None values
-    api_keys = {k: v for k, v in api_keys.items() if v}
+    # Determine default provider
+    default_provider = "deepseek"
+    default_model = "deepseek-chat"
     
+    # Check if deepseek is truly available (not None and not empty string)
+    is_deepseek_available = api_keys.get("deepseek") is not None and str(api_keys.get("deepseek")).strip() != ""
+    is_siliconflow_available = api_keys.get("siliconflow") is not None and str(api_keys.get("siliconflow")).strip() != ""
+    
+    if not is_deepseek_available and is_siliconflow_available:
+        default_provider = "siliconflow"
+        default_model = "deepseek-ai/DeepSeek-V3"
+        logger.info(f"Using {default_provider} as default LLM provider")
+
     agent_engine = SmartDecisionEngine(
         api_keys=api_keys,
         redis_url=f"redis://:{settings.REDIS_PASSWORD}@{settings.REDIS_HOST}:{settings.REDIS_PORT}/{settings.REDIS_DB}",
-        default_provider=settings.LLM_DEFAULT_PROVIDER
+        default_provider=default_provider,
+        default_model=default_model
     )
     logger.info("✓ SmartDecisionEngine (gsd-agent) initialized")
 
@@ -722,7 +778,8 @@ async def lifespan(app: FastAPI):
     # 只有当配置了云端 MySQL 时才启动，或者默认启动因为 alwaysup 库在云端
     try:
         from core.command_poller import CommandPoller
-        command_poller = CommandPoller(mysql_pool, scheduler, docker_client, task_config, flow_controller=flow_controller)
+        from core.notifier import notifier as notifier_instance
+        command_poller = CommandPoller(mysql_pool, scheduler, docker_client, task_config, flow_controller=flow_controller, notifier=notifier_instance)
         await command_poller.start()
         logger.info("✓ CommandPoller started")
     except Exception as e:

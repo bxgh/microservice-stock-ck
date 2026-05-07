@@ -32,7 +32,7 @@ class TickValidator:
     def __init__(self, clickhouse_pool: Optional[AsynchPool]):
         self.ch_pool = clickhouse_pool
 
-    async def check_quality(self, stock_code: str, trade_date: str) -> bool:
+    async def check_quality(self, ts_code: str, trade_date: str) -> bool:
         """
         检查 ClickHouse 中数据是否存在且符合质量标准 (宽松标准)
         用于采集前的幂等性检查。
@@ -56,9 +56,9 @@ class TickValidator:
                             min(tick_time) as min_time,
                             max(tick_time) as max_time
                         FROM {target_table} 
-                        WHERE stock_code = %(stock_code)s 
+                        WHERE ts_code = %(ts_code)s 
                           AND trade_date = %(trade_date)s
-                    """, {"stock_code": stock_code, "trade_date": trade_date_str})
+                    """, {"ts_code": ts_code, "trade_date": trade_date_str})
                     row = await cursor.fetchone()
                     
                     if not row or row[0] == 0:
@@ -137,12 +137,12 @@ class TickValidator:
             logger.error(f"❌ 检查盘中分笔覆盖率失败: {e}")
             return len(stock_codes), 0, stock_codes
 
-    async def validate_stock(self, stock_code: str, trade_date: str, session: str = 'close') -> Dict[str, Any]:
+    async def validate_stock(self, ts_code: str, trade_date: str, session: str = 'close') -> Dict[str, Any]:
         """
         个股精准审计校验 (基于快照优先策略)
         """
         result = {
-            "code": stock_code,
+            "code": ts_code,
             "status": "PASS",
             "reasons": [],
             "action": "NONE",
@@ -169,8 +169,8 @@ class TickValidator:
                             argMax(price, tick_time) as last_price,
                             max(tick_time) as last_tick_time
                         FROM {target_table}
-                        WHERE stock_code = %(code)s AND trade_date = %(date)s
-                    """, {"code": stock_code, "date": trade_date_str})
+                        WHERE ts_code = %(code)s AND trade_date = %(date)s
+                    """, {"code": ts_code, "date": trade_date_str})
                     row = await cursor.fetchone()
 
             if not row or row[0] == 0:
@@ -180,12 +180,12 @@ class TickValidator:
             tick_count, tick_vol, tick_price, last_tick_t = row
             
             # 2. 尝试获取快照作为基准
-            ref_data = await self._fetch_snapshot_ref(stock_code, trade_date_str, session)
+            ref_data = await self._fetch_snapshot_ref(ts_code, trade_date_str, session)
             source = "snapshot"
             
             if not ref_data:
                 # 降级使用 K 线
-                ref_data = await self._fetch_kline_ref(stock_code, trade_date_str)
+                ref_data = await self._fetch_kline_ref(ts_code, trade_date_str)
                 source = "kline"
             
             result["source"] = source
@@ -237,7 +237,7 @@ class TickValidator:
                     await cursor.execute("""
                         SELECT total_volume, current_price, snapshot_time
                         FROM stock_data.snapshot_data_distributed
-                        WHERE stock_code = %(code)s 
+                        WHERE ts_code = %(code)s 
                           AND trade_date = %(date)s
                           AND formatDateTime(snapshot_time, '%%H:%%M:%%S') >= %(min_time)s
                         ORDER BY snapshot_time DESC
@@ -259,7 +259,7 @@ class TickValidator:
                     await cursor.execute("""
                         SELECT volume, close_price
                         FROM stock_data.stock_kline_daily
-                        WHERE stock_code = %(code)s AND trade_date = %(date)s
+                        WHERE ts_code = %(code)s AND trade_date = %(date)s
                     """, {"code": code, "date": date})
                     row = await cursor.fetchone()
                     if row:
@@ -269,9 +269,9 @@ class TickValidator:
             logger.debug(f"Fetch kline ref failed {code}: {e}")
             return None
 
-    def validate_canary(self, stock_code: str, data: list, trade_date: Optional[str] = None) -> None:
+    def validate_canary(self, ts_code: str, data: list, trade_date: Optional[str] = None) -> None:
         """金丝雀校验"""
         if data:
             return
-        if stock_code in self.CANARY_STOCKS:
-             raise ValueError(f"CRITICAL: Empty data for canary stock {stock_code}")
+        if ts_code in self.CANARY_STOCKS:
+             raise ValueError(f"CRITICAL: Empty data for canary stock {ts_code}")

@@ -6,3 +6,4 @@ pandas>=2.0.0
 redis>=5.0.0
 pytdx>=1.72
 chinesecalendar>=1.8.0
+PySocks>=1.7.1

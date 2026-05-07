@@ -16,7 +16,7 @@ class CommandPoller:
     仅当 status='PENDING' 时提取并执行。
     """
     
-    def __init__(self, mysql_pool, scheduler, docker_client=None, task_config=None, poll_interval: int = 15, shard_id: Optional[int] = None, flow_controller=None):
+    def __init__(self, mysql_pool, scheduler, docker_client=None, task_config=None, poll_interval: int = 15, shard_id: Optional[int] = None, flow_controller=None, notifier=None):
         self.mysql_pool = mysql_pool
         self.scheduler = scheduler
         self.docker_client = docker_client
@@ -24,6 +24,7 @@ class CommandPoller:
         self.poll_interval = poll_interval
         self.shard_id = shard_id
         self.flow_controller = flow_controller
+        self.notifier = notifier
         self._running = False
         self._task: Optional[asyncio.Task] = None
     
@@ -326,6 +327,15 @@ class CommandPoller:
                                     except:
                                         pass
                         
+                        
+                    elif task_def.type == "workflow":
+                        # 直接执行 Workflow 任务
+                        from main import GenericTaskRunner
+                        logger.info(f"⚡ [Direct] Running Workflow task: {task_id}")
+                        # 启动异步任务执行 Workflow
+                        asyncio.create_task(GenericTaskRunner.run_workflow_task(task_def, params=params))
+                        result = f"Workflow triggered directly (Ad-hoc). ID: {task_id}"
+                        output_context = {"triggered": True}
                         
                     elif task_def.type == "workflow_trigger" and self.flow_controller:
                         # 核心优化：直接调用 FlowController 触发工作流，绕过定时调度

@@ -27,7 +27,8 @@
 - 数据库:**MySQL 5.7**(不是 8.0)+ ClickHouse(双写)
 - Python:async/await 全栈、Pydantic v2 模型、JSON 日志 + `request_id`
 - ORM:SQLAlchemy 2.x(异步)。(例外:`scripts/` 下的数据初始化或一次性运维脚本,允许使用 `pymysql` 等同步库直连)
-- 调度:APScheduler + 自研 JSON pipeline(`post_market_def.json` / `pre_market_prep_def.json`)。**不引入 Airflow / 独立 cron**
+- 调度: APScheduler + 自研 JSON pipeline(`post_market_def.json` / `pre_market_prep_def.json`)。**不引入 Airflow / 独立 cron**
+- 通知规范: 所有定时任务(Task)和工作流(Workflow)完成或失败时,**必须**触发标准格式的邮件报告(`send_task_report` / `send_workflow_report`)。报告须包含执行时长、处理行数(processed_count)及错误摘要。
 - DDL 管理:所有 schema 变更进 `migrations/`,Alembic 或独立 SQL 脚本,**禁止内嵌业务代码**
 - 字符集:`utf8mb4` + `utf8mb4_unicode_ci` + `ROW_FORMAT=DYNAMIC`,新表必须显式声明
 - LLM 接入:统一走 `app/services/llm_service.py`,prompt 配置化在 `app/config/llm_prompts/{event_type}.json`
@@ -59,7 +60,8 @@
 | `symbol` (VARCHAR(10)) | (symbol 专指纯数字代码,跟 ts_code 是两个字段) |
 | `trade_date` (DATE) | `dt` / `date` / `t_date` |
 | `pct_chg` (DECIMAL(10,6)) | `pct` / `change_pct` / `chg` |
-| `amount` (DECIMAL(20,2)) | `vol` / `volume`(vol 专指成交量手数) |
+| `amount` (DECIMAL(20,2)) | `vol` / `volume` (成交额/成交量) |
+| `volume` (BIGINT) | 成交量 (股)。注：`stock_kline_daily` 历史表单位为“股”，而非“手” |
 | `created_at` / `updated_at` | `ctime` / `mtime` / `create_time` |
 | `is_deleted` (TINYINT(1)) | `deleted` / `is_del` |
 
@@ -283,3 +285,4 @@ KEY idx_updated_at (updated_at)
 | 2026-05-06 | v0.4 | 将实施日志存放路径修改为相对于对应设计文档的动态路径。 |
 | 2026-05-06 | v0.5 | 量化 Python 与 ClickHouse 的分工边界,引入 10,000 行结果集红线。 |
 | 2026-05-06 | v0.6 | 增加部署节点(41服务器)与网络代理约束，完善熔断器、Gate-3与ORM豁免规则。 |
+| 2026-05-08 | v0.7 | 修正 ClickHouse 分工与网关约束：允许 ClickHouse 承担查询角色，前提是结果集需被 Python 封装后返回给 Gate-3 或其他下游服务；强调必须通过 Gate-3 访问 ClickHouse，禁止直接暴露。 |

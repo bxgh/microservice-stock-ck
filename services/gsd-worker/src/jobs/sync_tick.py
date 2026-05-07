@@ -4,6 +4,7 @@
 供 task-orchestrator 调用的临时任务
 """
 
+import os
 import sys
 import asyncio
 import logging
@@ -76,17 +77,17 @@ async def main(
     try:
         if mode == "full":
             logger.info(f"🚀 全量重建模式: 正在清理 {target_date} 全天数据...")
-            # 获取全市场名单 (带分片)
-            stock_codes = await service.fetch_sync_list(
-                scope="all", 
-                trade_date=target_date,
-                shard_index=shard_index,
-                shard_total=shard_total
-            )
+            if not stock_codes:
+                stock_codes = await service.fetch_sync_list(
+                    scope="all", 
+                    trade_date=target_date,
+                    shard_index=shard_index,
+                    shard_total=shard_total
+                )
             # 只有在非分片模式或分片0时，才执行全表物理清理 (避免重复操作导致 ClickHouse Mutation 堆积)
             if shard_index is None or shard_index == 0:
                 # 全量模式根据参数决定是否强制清场
-                await service.purge_tick_data(target_date, stock_codes=None, force_all=force_all)
+                await service.purge_tick_data(target_date, stock_codes=stock_codes if stock_codes and len(stock_codes) < 200 else None, force_all=force_all)
             idempotent_next = False # 已经提前清场
             
         elif mode == "repair":

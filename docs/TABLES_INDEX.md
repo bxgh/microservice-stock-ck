@@ -63,6 +63,12 @@
 | ods_sw_index_daily | (ts_code, trade_date) | close / pct_chg / amount | T+0 17:00 | Tushare | 申万 l1 + l2,~530 行 |
 | ods_concept_kline_daily | (concept_code, trade_date) | close / pct_chg / amount / up_count / down_count | T+0 17:10 | akshare / 同花顺 | ⚠️ 半数概念 < 10 只无统计意义,需过滤;同名多版本(机器人 / 机器人概念 / 人形机器人)需消歧 |
 
+### 第 5 章 · L5 分笔数据 (T+0 盘后同步)
+| 表名 | 主键 | 关键字段 | 频率 | 上游 | 说明 |
+|---|---|---|---|---|---|
+| tick_data | (ts_code, trade_date, num) | price / volume / amount / direction | T+0 18:00 | mootdx-source | 原始成交分笔(14M+); 归一化后存入 CK |
+| tick_daily_stats | (ts_code, trade_date) | buy_volume / sell_volume / tick_count | T+0 18:05 | MV 聚合 | 盘后主力资金流向基础表 |
+
 ### 第 3 章 · L4 情绪与连板
 
 | 表名 | 主键 | 关键字段 | 频率 | 上游 | 说明 |

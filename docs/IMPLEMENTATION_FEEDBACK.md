@@ -16,5 +16,6 @@
 | 2026-05-06 | E1-S7 | 评分权重配置表实施 | docs/design/异动股捕捉/implementation_logs/E1/S7/ | DONE |
 | 2026-05-06 | E1-S8 | 用户板块偏好表实施 | docs/design/异动股捕捉/implementation_logs/E1/S8/ | DONE |
 | 2026-05-06 | E1-S9 | 元数据初始化实施 | docs/design/异动股捕捉/implementation_logs/E1/S9/ | DONE |
-| 2026-05-06 | E2-S1 | 派生指标计算引擎实施 | docs/design/异动股捕捉/implementation_logs/E2/S1/ | IN_PROGRESS |
-| 2026-05-06 | E4-S1 | 解决 ts_code 冲突，集成邮件 Hook | docs/design/数据管线/implementation_logs/E4/S1/ | COMPLETED |
+| 2026-05-07 | E2-S1 | 盘后分笔同步作业编排与稳定性治理 | docs/分笔数据/盘后全市场同步/implementation_logs/E2/S1/ | DONE |
+| 2026-05-07 | E3-S1 | 盘后一致性审计 (Gate-3) 实施 | docs/分笔数据/盘后全市场同步/implementation_logs/E3/S1/ | DONE |
+| 2026-05-07 | Doc Align | 对齐 stock_kline_daily 表名与 volume (股) 单位 | docs/分笔数据/盘后全市场同步/01_DATA_SCHEMA.md | DONE |

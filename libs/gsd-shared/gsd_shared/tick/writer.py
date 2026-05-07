@@ -37,7 +37,7 @@ class TickWriter:
 
     async def write(
         self, 
-        stock_code: str, 
+        ts_code: str, 
         trade_date: str, 
         data: List[Dict[str, Any]],
         idempotent: bool = True
@@ -47,7 +47,7 @@ class TickWriter:
         Auto-determines target table based on date.
         
         Args:
-            stock_code: Stock code
+            ts_code: Stock code
             trade_date: YYYYMMDD
             data: List of tick records
             idempotent: If True, clear existing data for this stock/date before inserting.
@@ -61,17 +61,14 @@ class TickWriter:
             
         # 0. Normalize date
         clean_date_str = trade_date.replace("-", "")
-        today_str = datetime.now(CST).strftime("%Y%m%d")
 
         # 1. Determine Target Table
-        if clean_date_str == today_str:
-            target_table = TABLE_INTRADAY_DIST if self.use_distributed else TABLE_INTRADAY_LOCAL
-        else:
-            target_table = TABLE_HISTORY_DIST if self.use_distributed else TABLE_HISTORY_LOCAL
+        # POLICY: Forced to history for now as intraday pipeline is paused.
+        target_table = TABLE_HISTORY_DIST if self.use_distributed else TABLE_HISTORY_LOCAL
             
         try:
             trade_date_obj = datetime.strptime(clean_date_str, "%Y%m%d").date()
-            clean_code = self._clean_code(stock_code)
+            clean_code = self._clean_code(ts_code)
 
             # 2. Strong Idempotency: Clear existing data
             if idempotent:
@@ -112,14 +109,14 @@ class TickWriter:
             async with self.ch_pool.acquire() as conn:
                 async with conn.cursor() as cursor:
                     await cursor.execute(
-                        f"INSERT INTO stock_data.{target_table} (stock_code, trade_date, tick_time, price, volume, amount, direction, num) VALUES",
+                        f"INSERT INTO stock_data.{target_table} (ts_code, trade_date, tick_time, price, volume, amount, direction, num) VALUES",
                         rows
                     )
             
             return len(rows)
             
         except Exception as e:
-            logger.error(f"Tick write failed for {stock_code} to {target_table}: {e}")
+            logger.error(f"Tick write failed for {ts_code} to {target_table}: {e}")
             raise
 
     async def _clear_existing_data(self, table: str, code: str, date_obj: Any):
@@ -130,7 +127,7 @@ class TickWriter:
             async with self.ch_pool.acquire() as conn:
                 async with conn.cursor() as cursor:
                     await cursor.execute(
-                        f"ALTER TABLE stock_data.{table} DELETE WHERE stock_code = %(code)s AND trade_date = %(date)s",
+                        f"ALTER TABLE stock_data.{table} DELETE WHERE ts_code = %(code)s AND trade_date = %(date)s",
                         {"code": code, "date": date_obj}
                     )
             logger.debug(f"🗑️ Cleared existing data for {code} on {date_obj} in {table}")

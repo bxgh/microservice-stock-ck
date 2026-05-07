@@ -38,7 +38,7 @@ tasks:
     enabled: true
     schedule:
       type: trading_cron
-      expression: "30 18 * * *"
+      expression: "0 17 * * *"
     target:
       command: ["jobs.sync_kline", "--mode", "adaptive"]
     retry:
@@ -53,7 +53,7 @@ tasks:
     enabled: true
     schedule:
       type: trading_cron
-      expression: "0 18 * * mon-fri"
+      expression: "0 17 * * mon-fri"
     target:
       environment:
         CLICKHOUSE_USE_DISTRIBUTED: "true"
@@ -61,11 +61,16 @@ tasks:
     workflow:
       - id: collect
         name: 全量采集
-        command: ["jobs.sync_tick", "--scope", "all", "--concurrency", "60"]
-      - id: retry
-        name: 自动补采
-        command: ["jobs.retry_tick", "--concurrency", "60"]
+        command: ["jobs.sync_tick", "--scope", "all", "--concurrency", "60", "--date", "{{date}}", "--mode", "{{mode}}"]
+      - id: audit
+        name: Gate-3 审计
+        command: ["jobs.audit_gate3", "--date", "{{date}}"]
         depends_on: [collect]
+      - id: repair
+        name: 自动补采
+        command: ["jobs.sync_tick", "--scope", "all", "--concurrency", "60", "--date", "{{date}}", "--stock-codes", "{{audit.failed_list}}", "--mode", "full"]
+        depends_on: [audit]
+        condition: "{{audit.failed_count > 0}}"
     retry:
       max_attempts: 2
       backoff_seconds: 600
@@ -78,7 +83,7 @@ tasks:
     enabled: false
     schedule:
       type: trading_cron
-      expression: "0 18 * * mon-fri"
+      expression: "0 17 * * mon-fri"
     target:
       task_template: "collect_tick_sharded"
       params:
