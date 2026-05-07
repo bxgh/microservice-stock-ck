@@ -128,7 +128,7 @@ class Notifier:
         payload = {
             "msgtype": "markdown",
             "markdown": {
-                "content": f"### {icon} {title}\n**Level**: {level.upper()}\n**Time**: {current_time}\n\n{message}"
+                "content": f"### {icon} {title}\n**级别**: {level.upper()}\n**时间**: {current_time}\n\n{message}"
             }
         }
         
@@ -140,5 +140,46 @@ class Notifier:
         except Exception as e:
             logger.error(f"❌ Failed to send Webhook: {e}")
             raise  # Re-raise for tenacity retry
+
+    async def send_task_report(self, task_id: str, status: str, duration: float, error: Optional[str] = None, output: Optional[str] = None) -> None:
+        """
+        发送单任务执行报告
+        """
+        icon = "✅" if status.lower() == "done" else "❌"
+        title = f"任务报告: {task_id} [{status.upper()}]"
+        
+        message = f"**任务 ID**: `{task_id}`\n"
+        message += f"**执行状态**: {icon} `{status.upper()}`\n"
+        message += f"**总计耗时**: `{duration:.1f}s`\n"
+        
+        if error:
+            message += f"\n**异常信息**:\n> {error}\n"
+            
+        if output:
+            # 截断过长的输出
+            display_output = output if len(output) < 1000 else output[:1000] + "..."
+            message += f"\n**执行日志摘要**:\n```\n{display_output}\n```"
+            
+        await self.send_alert(title, message, level="info" if status.lower() == "done" else "error")
+
+    async def send_workflow_report(self, flow_id: str, biz_date: str, status: str, steps: list) -> None:
+        """
+        发送工作流汇总报告
+        """
+        icon = "🎉" if status.lower() == "completed" else "⚠️"
+        title = f"工作流汇总: {flow_id} [{status.upper()}]"
+        
+        message = f"**工作流**: `{flow_id}`\n"
+        message += f"**业务日期**: `{biz_date}`\n"
+        message += f"**最终状态**: {icon} `{status.upper()}`\n\n"
+        
+        message += "#### 执行步骤详情:\n"
+        for i, step in enumerate(steps):
+            step_name = step.get('task_id', f'Step {i}')
+            step_status = step.get('status', 'PENDING')
+            step_icon = "✅" if step_status == "DONE" else "❌" if step_status == "FAILED" else "⏳"
+            message += f"{i+1}. {step_icon} {step_name}: `{step_status}`\n"
+            
+        await self.send_alert(title, message, level="info" if status.lower() == "completed" else "warning")
 
 notifier = Notifier()

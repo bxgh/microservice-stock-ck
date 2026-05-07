@@ -139,6 +139,7 @@ class CommandPoller:
                     logger.debug(f"参数标准化: shard_index={params['shard_index']} -> shard_id={params['shard_id']}")
 
                 # 3. 更新状态为 RUNNING
+                start_time = datetime.now()
                 await cursor.execute(
                     "UPDATE alwaysup.task_commands SET status='RUNNING', executed_at=NOW() WHERE id=%s",
                     (cmd_id,)
@@ -398,6 +399,22 @@ class CommandPoller:
                     (status, result, json.dumps(output_context), cmd_id)
                 )
                 await conn.commit()
+                
+                # 5. 发送报告 (非异步等待，不阻塞轮询)
+                try:
+                    duration = (datetime.now() - start_time).total_seconds()
+                    error_msg = output_context.get("error") if status == "FAILED" else None
+                    # 只给管理员发送关键任务报告，或者如果是失败任务则必须发送
+                    # 这里默认所有任务完成都发邮件 (用户要求：所有任务完成后都需要发送邮件)
+                    asyncio.create_task(self.notifier.send_task_report(
+                        task_id=task_id,
+                        status=status.lower(),
+                        duration=duration,
+                        error=error_msg,
+                        output=result if status == "FAILED" else f"Result: {result[:200]}"
+                    ))
+                except Exception as e:
+                    logger.warning(f"触发任务邮件报告失败: {e}")
 
                 # 5. [方案 A] 自动化联动：修复任务完成后自动触发门禁审计 (Re-Audit)
                 if status == "DONE":

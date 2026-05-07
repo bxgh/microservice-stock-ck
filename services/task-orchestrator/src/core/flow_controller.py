@@ -8,6 +8,7 @@ import aiomysql
 import re
 
 from core.workflow_parser import WorkflowDefinition, WorkflowStep, StepType, RetryPolicy
+from core.notifier import notifier
 from gsd_agent.core import SmartDecisionEngine
 from gsd_agent.schemas import DiagnosisResult
 
@@ -137,6 +138,30 @@ class FlowController:
                         (datetime.now(), run_id)
                     )
                     await conn.commit()
+                    
+                    # 发送汇总报告
+                    try:
+                        # 重新加载步骤状态用于报告
+                        report_steps = []
+                        for s in wf_def.steps:
+                            c = cmd_map.get(s.id, {})
+                            report_steps.append({
+                                "task_id": s.id,
+                                "status": c.get("status", "PENDING")
+                            })
+                        
+                        # 尝试从 context 提取 biz_date
+                        biz_date = context.get("target_date") or context.get("trade_date") or datetime.now().strftime("%Y-%m-%d")
+                        
+                        asyncio.create_task(notifier.send_workflow_report(
+                            flow_id=run['workflow_id'],
+                            biz_date=str(biz_date),
+                            status="COMPLETED",
+                            steps=report_steps
+                        ))
+                    except Exception as e:
+                        logger.warning(f"触发工作流汇总报告失败: {e}")
+                        
                     return
 
                 # 3. Find ready steps
