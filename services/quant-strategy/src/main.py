@@ -122,6 +122,7 @@ async def startup():
         from services.alpha.fundamental_scoring_service import FundamentalScoringService
         from services.alpha.valuation_service import ValuationService
         from services.stock_pool.candidate_service import CandidatePoolService
+        from services.anomaly.anomaly_scoring_service import anomaly_scoring_service
 
         fundamental_scoring = FundamentalScoringService(
             data_provider=data_provider
@@ -134,6 +135,10 @@ async def startup():
         )
         await valuation_service.initialize()
         logger.info("  ✓ Valuation service initialized")
+
+        # Initialize Anomaly Scoring (L8)
+        await anomaly_scoring_service.initialize()
+        logger.info("  ✓ Anomaly scoring service (L8) initialized")
 
         # Initialize candidate pool service with real scoring
         candidate_service = CandidatePoolService(

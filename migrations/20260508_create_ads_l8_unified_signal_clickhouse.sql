@@ -21,11 +21,11 @@ CREATE TABLE IF NOT EXISTS stock_data.ads_l8_unified_signal_local
     `signal_subtype`    String,
     `anomaly_category`  String,
     
-    `pct_chg`           Float32,
-    `turnover_rate`     Float32,
-    `volume_ratio_5d`   Float32,
-    `amount`            Float64,
-    `main_net_inflow`   Float64,
+    `pct_chg`           Decimal(10, 6),
+    `turnover_rate`     Decimal(10, 6),
+    `volume_ratio_5d`   Decimal(10, 6),
+    `amount`            Decimal(20, 2),
+    `main_net_inflow`   Decimal(20, 2),
     
     `signal_features`   String, -- ClickHouse 存储 JSON 为 String
     `tags`              String,
@@ -37,12 +37,12 @@ CREATE TABLE IF NOT EXISTS stock_data.ads_l8_unified_signal_local
     `counter_signal_score`  Float32,
     `temporal_resonance`    String,
     
-    `raw_score`         Float32,
-    `score_l3_capital`  Float32,
-    `score_l4_emotion`  Float32,
-    `score_user_pref`   Float32,
-    `score_dedup_pen`   Float32,
-    `composite_score`   Float32,
+    `raw_score`         Decimal(6, 2),
+    `score_l3_capital`  Decimal(6, 2),
+    `score_l4_emotion`  Decimal(6, 2),
+    `score_user_pref`   Decimal(6, 2),
+    `score_dedup_pen`   Decimal(6, 2),
+    `composite_score`   Decimal(6, 2),
     `component_score`   String,
     
     `excluded_reasons`  String,

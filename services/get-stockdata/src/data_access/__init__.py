@@ -10,6 +10,7 @@ from .valuation_dao import ValuationDAO
 from .market_data_dao import MarketDataDAO
 from .sector_dao import SectorDAO
 from .finance_dao import FinanceDAO
+from .anomaly_dao import AnomalyDAO
 
 __all__ = [
     'MySQLPoolManager', 
@@ -20,5 +21,6 @@ __all__ = [
     'ValuationDAO',
     'MarketDataDAO',
     'SectorDAO',
-    'FinanceDAO'
+    'FinanceDAO',
+    'AnomalyDAO'
 ]

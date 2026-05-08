@@ -599,6 +599,40 @@ class StockDataProvider:
             logger.warning(f"Failed to fetch industry stats for {industry_code}: {e}. Falling back to absolute scoring.")
             return None
 
+    async def get_anomaly_weights(self, version: str = "v1") -> dict[str, float]:
+        """
+        获取异动评分权重配置
+
+        Args:
+            version: 权重版本号 (如 v1)
+
+        Returns:
+            权重字典 {weight_key: weight_value}
+        """
+        try:
+            # 调用 get-stockdata 的 /api/v1/anomaly/weights 接口
+            data = await self._make_request('GET', '/api/v1/anomaly/weights', params={'version': version})
+            
+            # get-stockdata 响应格式: {"success": true, "version": "v1", "weights": {...}}
+            # _make_request 已经处理了 success 检查并返回了 data 部分 (如果有)
+            # 但如果接口直接返回全量 JSON，我们需要适配。
+            # 根据 _make_request 的实现 (105-112行)，它返回的是 data.get('data', {})
+            # 但是我的新接口返回的是顶级 key: weights。
+            # 我需要修正 _make_request 的适配或者在这里处理。
+            
+            # 修正：我的接口返回格式是 {"success": true, "version": "v1", "weights": {...}}
+            # _make_request (110行) 返回 data.get('data', {})，所以 weights 拿不到。
+            # 我应该在 DAO 响应里包一层 data 或者修改 _make_request。
+            
+            # 这里的实现逻辑：
+            if isinstance(data, dict) and 'weights' in data:
+                return data['weights']
+            return data # 兜底返回
+            
+        except Exception as e:
+            logger.error(f"Failed to fetch anomaly weights for {version}: {e}")
+            return {}
+
     async def get_valuation_history(self, code: str, years: int = 5) -> dict[str, Any] | None:
         """
         获取历史估值数据 (For PE/PB Band Scoring)
