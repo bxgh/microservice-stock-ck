@@ -1,55 +1,37 @@
-# 异动捕捉模块 · 设计交付文档 v1.1
+# 异动捕捉模块 · 设计交付文档 (v1 极简版)
 
 | 项 | 内容 |
 |---|---|
-| **文档版本** | v1.1 |
-| **生成日期** | 2026-05-02 |
-| **替代版本** | v1.0(2026-05-02) |
-| **适用项目** | A 股盘后复盘体系 · L8 扩展模块 |
-| **数据库** | MySQL 5.7 |
-| **状态** | 已对齐共识,待实施 |
+| **当前版本** | v1.0 (极简版) |
+| **设计冻结** | 2026-05-07 |
+| **核心目标** | 建立评估体系, 识别极端市况, 极简分类打标 |
+| **状态** | **设计已锁定, 准备实施** |
 
 ---
 
 ## 1. 简介
 
-本模块在 L8 现有基础上扩展,产出**统一异动池** + **每日 Top 10 推送清单**,作为后续"观察点系统"的信号供给层。
-
-### 1.1 v1.1 核心变化
-- **弹性设计**: 标签 + Profile 替代固定优先级。
-- **形态标签**: 扩展至 22 个细分标签,大幅强化形态识别。
-- **多维印证**: 引入共振等级 (L1-L5)、反向信号、时间共振。
-- **数据保留**: 被忽略的涨停也入库,带 `excluded_reasons` 标注。
-
-### 1.2 目标与范围
-- 产出 3 类异动池 (strong / early / trap)。
-- 每条信号附带完整多维标签及多维印证评估。
-- 综合评分函数支持权重热配置及重复跟踪压制。
+本模块旨在为 L8 异动系统建立**闭环评估能力**。通过先建设回测子系统, 我们能够用客观数据指导后续的评分算法优化, 避免盲目调参。同时引入极端市况下的策略切换机制(D 视图), 解决评分系统在普涨/普跌日失效的问题。
 
 ---
 
-## 2. 文档索引
+## 2. 文档索引 (v1 极简版)
 
-1.  **[E1 数据结构](file:///home/ubuntu/microservice-stock/docs/design/异动股捕捉/E1_Data_Structure.md)**: 派生指标表、统一信号表、标签字典、Profile 配置等 9 张表。
-2.  **[E2 信号判定与标签体系](file:///home/ubuntu/microservice-stock/docs/design/异动股捕捉/E2_Signal_Rules.md)**: 标签判定框架、三池产出逻辑、多维印证计算。
-3.  **[E3 综合评分与可解释性](file:///home/ubuntu/microservice-stock/docs/design/异动股捕捉/E3_Scoring_Function.md)**: 评分公式、子项细则、中文说明生成。
-4.  **[E4 Top 10 推送规则](file:///home/ubuntu/microservice-stock/docs/design/异动股捕捉/E4_Top10_Rules.md)**: 动态配额、填补规则及推送生成逻辑。
-5.  **[E5 系统集成](file:///home/ubuntu/microservice-stock/docs/design/异动股捕捉/E5_System_Integration.md)**: 数据流向、任务编排及下游接口。
-6.  **[附录](file:///home/ubuntu/microservice-stock/docs/design/异动股捕捉/Appendices.md)**: 标签字典列表、预设 Profile 详情、生命周期预留。
-
----
-
-## 3. 核心共识 (基线)
-
-- **定位**: 信号优选 → 多维标注 → Top 10 输出。
-- **三池**: `strong` (强异动)、`early` (启动前)、`trap` (陷阱)。
-- **启动前优先组合**: 龙头预备役 > 连板接力 > 箱体蓄势 > 趋势反转。
-- **弹性原则**: 系统不替用户预设涨停优先级,通过 Profile 实现。
+1.  **[00_OVERVIEW 设计全景](file:///home/bxgh/microservice-stock/docs/design/异动股捕捉/00_OVERVIEW.md)**: 背景、设计哲学、目标范围、里程碑及风险评估。
+2.  **[E1 主表增量改造](file:///home/bxgh/microservice-stock/docs/design/异动股捕捉/E1_SCHEMA_REFORM.md)**: `ads_l8_unified_signal` 字段扩展与版本化权重配置。
+3.  **[E2 评估子系统](file:///home/bxgh/microservice-stock/docs/design/异动股捕捉/E2_EVALUATION_SUBSYSTEM.md)**: 标注表设计、历史回填、月度回测与自动化报告。
+4.  **[E3 异动分类逻辑](file:///home/bxgh/microservice-stock/docs/design/异动股捕捉/E3_CLASSIFICATION_LOGIC.md)**: C1-C4 单标签分类规则与评分溯源 JSON 存储。
+5.  **[E4 极端市况与 D 视图](file:///home/bxgh/microservice-stock/docs/design/异动股捕捉/E4_EXTREME_MARKET_GATING.md)**: 普涨/普跌识别逻辑、推送切换及市场全景简报。
+6.  **[E5 & E6 集成与文档](file:///home/bxgh/microservice-stock/docs/design/异动股捕捉/E5_E6_INTEGRATION_AND_DOCS.md)**: 管线任务增补与全局索引文档同步。
 
 ---
 
-## 4. 实施路线
+## 3. 历史版本
+- **[Legacy v1.1 (完整版)](file:///home/bxgh/microservice-stock/docs/design/异动股捕捉/legacy_v1.1/)**: 包含 22 个细分标签的复杂方案(因过度工程暂缓实施)。
 
-- **技术依赖**: 依赖 L1-L8 已有数据。
-- **里程碑**: 预计工时 9 天,从 DDL 落地到调度集成。
-- **风险点**: MySQL 5.7 排名计算性能、形态判定复杂度、权重调优。
+---
+
+## 4. 核心共识 (极简版)
+- **评估先行**: 没有回测数据的评分优化都是玄学。
+- **单标签简化**: 第一阶段不搞多标签重叠, 命中即停。
+- **极端市况兜底**: 涨跌停 > 100 家时, 评分失效, 改看全场梯队。
