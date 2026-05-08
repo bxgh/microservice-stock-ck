@@ -19,3 +19,11 @@
 | 2026-05-07 | E2-S1 | 盘后分笔同步作业编排与稳定性治理 | docs/分笔数据/盘后全市场同步/implementation_logs/E2/S1/ | DONE |
 | 2026-05-07 | E3-S1 | 盘后一致性审计 (Gate-3) 实施 | docs/分笔数据/盘后全市场同步/implementation_logs/E3/S1/ | DONE |
 | 2026-05-07 | Doc Align | 对齐 stock_kline_daily 表名与 volume (股) 单位 | docs/分笔数据/盘后全市场同步/01_DATA_SCHEMA.md | DONE |
+| 2026-05-08 | E1-S1 | 异动捕捉主表增量改造 (极简版 v1) | docs/design/异动股捕捉/implementation_logs/E1/S1/ | DONE |
+
+| 2026-05-08 | E1-S2 | 激活评分权重版本化使用 | docs/design/异动股捕捉/implementation_logs/E1/S2/ | DONE |
+| 2026-05-08 | E2-S1 | 评估标注表建表 (MySQL + ClickHouse) | docs/design/异动股捕捉/implementation_logs/E2/ | DONE |
+
+### 跨仓 Schema 变更记录
+- [2026-05-08] 跨仓 schema 变更: `ads_l8_unified_signal` (AlwaysUp MySQL → Node-41 ClickHouse)
+- [2026-05-08] 跨仓 schema 变更: `ads_l8_backtest_label` (AlwaysUp MySQL → Node-41 ClickHouse) [NEW]

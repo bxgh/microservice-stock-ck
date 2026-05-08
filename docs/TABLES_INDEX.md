@@ -112,7 +112,8 @@
 | ads_l2_style_factor | 2 | (factor_code, trade_date) | spread_today / direction | T+0 17:20 | 4 行 / 日 |
 | ads_l3_capital_flow | 4 | trade_date | main_net / north_net / margin_net | T+0 17:25 | 🚧 待开发 |
 | ads_l4_sentiment | 3 | trade_date | promote_rate / money_effect / erp_pctile | T+0 17:25 | 🚧 待开发 |
-| ads_l8_unified_signal | 5 | (ts_code, trade_date, signal_type) | composite_score / resonance_level / explanation_zh | T+0 17:22 | 异动信号池 |
+| ads_l8_unified_signal | 5 | (ts_code, trade_date, signal_type) | composite_score / source_version / anomaly_category / is_pushed | T+0 17:22 | 异动信号池 |
+| ads_l8_backtest_label | 5 | (ts_code, trade_date, source_version) | ret_t5 / alpha_t5 / benchmark_ret_t5 | T+1 01:00 | 异动后表现回测标注表 |
 | ads_stock_derived_metrics | 5 | (ts_code, trade_date) | volume_ratio_5d / volume_ratio_20d / dist_to_ma20 / dist_to_ma250 | T+0 17:18 | 派生指标层,L8 评分上游 |
 
 ---
