@@ -15,6 +15,22 @@ tasks:
     retry:
       max_attempts: 2
       backoff_seconds: 300
+
+  # 每日异动评分与分类 (P1) [NEW]
+  - id: daily_anomaly_scoring
+    name: 每日异动评分与分类 (C1-C4)
+    type: docker
+    enabled: true
+    schedule:
+      type: trading_cron
+      expression: "35 17 * * mon-fri"
+    target:
+      image: quant-strategy:dev
+      command: ["python", "src/jobs/anomaly_scoring_job.py"]
+      network_mode: "host"
+    retry:
+      max_attempts: 2
+      backoff_seconds: 300
   
   # 周末策略回测 (P2)
   - id: weekly_backtest

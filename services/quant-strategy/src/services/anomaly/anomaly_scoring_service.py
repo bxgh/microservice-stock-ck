@@ -88,28 +88,81 @@ class AnomalyScoringService:
         
         return round(total_score, 2)
 
+    def _classify_anomaly(self, stock: Dict[str, Any]) -> str:
+        """
+        异动分类逻辑 (命中即停优先级: C4 > C2 > C3 > C1)
+        
+        Args:
+            stock: 包含异动特征的字典
+            
+        Returns:
+            str: 分类标签 (C1-C4)
+        """
+        # 1. C4 事件驱动: 当日有重要事件 (增减持/回购/业绩/立案等)
+        # 约定：如果 has_event 为 True 或 event_score 较高，判定为 C4
+        if stock.get("has_event") or stock.get("event_score", 0) >= 60:
+            return "C4"
+        
+        # 2. C2 中线连板/题材: board_height >= 3 且无事件
+        if stock.get("board_height", 0) >= 3:
+            return "C2"
+        
+        # 3. C3 资金驱动: LHB 上榜 或 北向资金显著异常
+        if stock.get("has_lhb") or stock.get("is_north_top10"):
+            return "C3"
+        
+        # 4. C1 短线封板/普通异动: 兜底类别
+        return "C1"
+
     async def batch_score_stocks(self, stocks_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        批量计算股票评分 (用于跑批任务)
+        批量计算股票评分与分类 (用于跑批任务)
+        
+        Args:
+            stocks_data: 待评分股票列表
+            
+        Returns:
+            List[Dict[str, Any]]: 包含 composite_score, anomaly_category, component_score 的结果列表
         """
         if not self.initialized:
             await self.initialize()
             
         results = []
+        from datetime import datetime
+        import json
+
+        now_str = datetime.now().isoformat()
+
         for stock in stocks_data:
-            # 提取各维度分数
-            scores = {
-                "score_pct_chg": stock.get("score_pct_chg", 0),
-                "score_volume": stock.get("score_volume", 0),
-                "score_event": stock.get("score_event", 0),
-                "score_position": stock.get("score_position", 0)
+            # 1. 提取各维度分数
+            component_scores = {
+                "score_pct_chg": float(stock.get("score_pct_chg", 0)),
+                "score_volume": float(stock.get("score_volume", 0)),
+                "score_event": float(stock.get("score_event", 0)),
+                "score_position": float(stock.get("score_position", 0))
             }
-            composite = await self.calculate_composite_score(scores)
             
-            # 构造结果
+            # 2. 计算综合评分
+            composite = await self.calculate_composite_score(component_scores)
+            
+            # 3. 判定分类标签 (E3-S1)
+            category = self._classify_anomaly(stock)
+            
+            # 4. 生成溯源 JSON (E3-S2)
+            component_score_json = {
+                **component_scores,
+                "weighted_total": composite,
+                "version": self.version,
+                "computed_at": now_str
+            }
+            
+            # 5. 构造结果 (E3-S1-T3, E3-S2-T2)
             result = stock.copy()
             result["composite_score"] = composite
+            result["anomaly_category"] = category
+            result["component_score"] = json.dumps(component_score_json)
             result["source_version"] = self.version
+            
             results.append(result)
             
         return results

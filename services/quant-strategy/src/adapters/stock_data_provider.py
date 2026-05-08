@@ -1,8 +1,8 @@
 import asyncio
 import json
 import logging
-from datetime import datetime
-from typing import Any, Optional
+from datetime import date, datetime
+from typing import Any, Optional, List, Dict
 
 import aiohttp
 import pandas as pd
@@ -683,6 +683,120 @@ class StockDataProvider:
             "pe_ttm": get_stats(pe_vals),
             "pb_ratio": get_stats(pb_vals)
         }
+
+    async def fetch_anomaly_candidates(self, target_date: date) -> List[Dict[str, Any]]:
+        """
+        获取异动候选标的列表
+        逻辑：合并 ads_stock_derived_metrics (基础异动) 和 ods_event_limit_pool (涨跌停/炸板)
+        """
+        async with self._db_lock:
+            async for session in get_session():
+                # 1. 从派生指标层获取 (满足基础成交额或振幅阈值的标的，由 E2 引擎预筛选)
+                # 这里的逻辑是拉取当日所有有记录的标的，假设 E2 已经做了初步过滤
+                from database.ods_models import StockDerivedMetricsModel, EventLimitPoolModel
+                from sqlalchemy import select, or_
+
+                # 1.1 基础异动标的
+                stmt_metrics = select(StockDerivedMetricsModel.ts_code).where(
+                    StockDerivedMetricsModel.trade_date == target_date,
+                    StockDerivedMetricsModel.is_deleted == 0
+                )
+                metrics_res = await session.execute(stmt_metrics)
+                metrics_codes = {r[0] for r in metrics_res.all()}
+
+                # 1.2 涨跌停/炸板标的
+                stmt_events = select(EventLimitPoolModel.ts_code, EventLimitPoolModel.board_height, EventLimitPoolModel.pool_type).where(
+                    EventLimitPoolModel.trade_date == target_date,
+                    EventLimitPoolModel.is_deleted == 0
+                )
+                events_res = await session.execute(stmt_events)
+                event_data = {r[0]: {"board_height": r[1], "pool_type": r[2]} for r in events_res.all()}
+                event_codes = set(event_data.keys())
+
+                # 合并所有代码
+                all_codes = metrics_codes | event_codes
+                logger.info(f"Fetched {len(all_codes)} anomaly candidates for {target_date}")
+
+                # 2. 组装基础特征
+                candidates = []
+                for code in all_codes:
+                    candidates.append({
+                        "ts_code": code,
+                        "trade_date": target_date,
+                        "board_height": event_data.get(code, {}).get("board_height", 0),
+                        "pool_type": event_data.get(code, {}).get("pool_type", "normal")
+                    })
+                return candidates
+
+    async def get_anomaly_features_batch(self, ts_codes: List[str], target_date: date) -> Dict[str, Dict[str, Any]]:
+        """
+        批量获取评分所需特征 (LHB, 公告等)
+        """
+        features = {code: {"has_event": False, "has_lhb": False} for code in ts_codes}
+        
+        async with self._db_lock:
+            async for session in get_session():
+                from database.ods_models import HolderTradeModel, RepurchaseModel, LhbDailyModel
+                from sqlalchemy import select, in_
+
+                # 1. 龙虎榜
+                stmt_lhb = select(LhbDailyModel.ts_code).where(
+                    LhbDailyModel.trade_date == target_date,
+                    LhbDailyModel.ts_code.in_(ts_codes),
+                    LhbDailyModel.is_deleted == 0
+                )
+                lhb_res = await session.execute(stmt_lhb)
+                for r in lhb_res.all():
+                    features[r[0]]["has_lhb"] = True
+
+                # 2. 重要公告 (增减持/回购)
+                # 增减持
+                stmt_holder = select(HolderTradeModel.ts_code).where(
+                    HolderTradeModel.ann_date == target_date,
+                    HolderTradeModel.ts_code.in_(ts_codes),
+                    HolderTradeModel.is_deleted == 0
+                )
+                holder_res = await session.execute(stmt_holder)
+                for r in holder_res.all():
+                    features[r[0]]["has_event"] = True
+
+                # 回购
+                stmt_repurchase = select(RepurchaseModel.ts_code).where(
+                    RepurchaseModel.ann_date == target_date,
+                    RepurchaseModel.ts_code.in_(ts_codes),
+                    RepurchaseModel.is_deleted == 0
+                )
+                repurchase_res = await session.execute(stmt_repurchase)
+                for r in repurchase_res.all():
+                    features[r[0]]["has_event"] = True
+
+        return features
+
+    async def get_market_breadth(self, target_date: date) -> Dict[str, Any]:
+        """
+        获取当日市场涨跌家数
+        """
+        async with self._db_lock:
+            async for session in get_session():
+                from database.ods_models import MarketBreadthModel
+                from sqlalchemy import select
+
+                stmt = select(MarketBreadthModel).where(
+                    MarketBreadthModel.trade_date == target_date,
+                    MarketBreadthModel.is_deleted == 0
+                )
+                res = await session.execute(stmt)
+                row = res.scalar_one_or_none()
+                
+                if row:
+                    return {
+                        "trade_date": row.trade_date,
+                        "up_count": row.up_count,
+                        "down_count": row.down_count,
+                        "limit_up_count": row.limit_up_count,
+                        "limit_down_count": row.limit_down_count
+                    }
+                return {}
 
 # 全局单例
 data_provider = StockDataProvider()
