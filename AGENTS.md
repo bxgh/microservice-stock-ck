@@ -32,76 +32,42 @@
 - DDL 管理:所有 schema 变更进 `migrations/`,Alembic 或独立 SQL 脚本,**禁止内嵌业务代码**
 - 字符集:`utf8mb4` + `utf8mb4_unicode_ci` + `ROW_FORMAT=DYNAMIC`,新表必须显式声明
 - LLM 接入:统一走 `app/services/llm_service.py`,prompt 配置化在 `app/config/llm_prompts/{event_type}.json`
+- **韧性与安全**: 外部接口调用必须遵循 `.agent/rules/python-coding-standards.md` 中的熔断与重试规范；共享状态修改必须强制使用锁机制。
 
 ---
 
-## 3. 命名规范(强制)
+## 3. 命名与结构规范 (自动化审计)
 
-### 3.1 表前缀
+本仓实施严格的命名与结构门禁，由 `skill:data-validator` 和 `skill:schema-enforcer` 强制执行。
+
+### 3.1 表前缀规范
 
 | 前缀 | 用途 | 写入方 | 关键约定 |
 |---|---|---|---|
-| `ods_` | 原始数据层 | 云端采集 | **永不修改**,只能 TRUNCATE 重灌 |
-| `dwd_` | 明细层 | 本仓 | 清洗 / 脱敏后明细 |
-| `dim_` | 维度表 | 手工 / 批量 | 字典 / 基础信息 |
-| `ads_` | 应用数据层 | 本仓 | 每日聚合指标 |
-| `app_` | 应用面表 | 本仓 | 前端直查专用 |
-| `obs_` | 观察点系统 | 本仓 | 第 9 章专属 |
-| `train_` | 认知训练系统 | 用户 / 本仓 | 第 8 章专属 |
-| `meta_` | 系统元数据 | 系统 | 调度 / 契约 |
+| `ods_` | 原始数据层 | 云端采集 | **永不修改**, 只能 TRUNCATE 重灌 |
+| `dwd_` / `dim_` | 明细与维度 | 本仓 | 清洗 / 字典 / 基础信息 |
+| `ads_` / `app_` | 应用与聚合 | 本仓 | 指标计算 / 前端直查专用 |
+| `obs_` / `train_` | 专项系统 | 本仓 | 观察点与认知训练专属 |
 
-**禁止**:新表使用 `stock_*` / `daily_*` / `raw_*` / `sys_*` 前缀(legacy)。如需用 legacy 表名,先在 PR 标题写「使用 legacy 命名:<理由>」。
+### 3.2 字段与单位审计 (强制)
 
-### 3.2 字段命名
+**核心禁令**: 严禁使用 legacy 命名（如 `stock_code`, `dt`, `vol`, `ctime` 等）。
+**单位门禁**: 
+- `amount` 必须为 **元**。
+- `pct_chg` 必须为 **小数** (0.0123 = 1.23%)。
+- ETF 净申购金额必须包含 `1e8` 缩放。
 
-| 必须用 | 不要用 |
-|---|---|
-| `ts_code` (VARCHAR(20)) | `stock_code` / `code` |
-| `symbol` (VARCHAR(10)) | (symbol 专指纯数字代码,跟 ts_code 是两个字段) |
-| `trade_date` (DATE) | `dt` / `date` / `t_date` |
-| `pct_chg` (DECIMAL(10,6)) | `pct` / `change_pct` / `chg` |
-| `amount` (DECIMAL(20,2)) | `vol` / `volume` (成交额/成交量) |
-| `volume` (BIGINT) | 成交量 (股)。注：`stock_kline_daily` 历史表单位为“股”，而非“手” |
-| `created_at` / `updated_at` | `ctime` / `mtime` / `create_time` |
-| `is_deleted` (TINYINT(1)) | `deleted` / `is_del` |
+> [!IMPORTANT]
+> **实施要求**: 任何代码提交前，必须运行 `.agents/scripts/data_validator.py <file_path>`。凡工具报错项，必须原地修正。
 
-### 3.3 表结构尾部三件套(强制)
+### 3.3 DDL 准入标准
 
-每张新表必须包含:
-
-```sql
-created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-is_deleted TINYINT(1) NOT NULL DEFAULT 0,
-KEY idx_updated_at (updated_at)
-```
-
-`idx_updated_at` 用于增量同步,不能省。
-
-### 3.4 查询必须过滤软删除
-
-任何查询业务表的 SQL,WHERE 子句必须包含 `is_deleted = 0`。**没有默认行为兜底**,漏写就是 bug。
-
-### 3.5 数据质量与防线融合
-
-盘后批处理极度依赖上游数据质量。在执行 T+0 核心数据写入前,必须验证或等待 **Gate-3(盘后审计 / Sync Consistency Audit)** 校验通过,确保 MySQL 与 ClickHouse 双写记录一致且无脏数据。
+每张新表必须包含“三件套”审计字段及增量索引。
+**审计工具**: 编写 DDL 后，必须通过 `.agents/scripts/schema_enforcer.py --ddl "..."` 进行合规性检查。严禁绕过工具手动创建不规范表结构。
 
 ---
 
-## 4. 单位陷阱(高频踩坑,采集 / 计算 / 应用层都涉及)
-
-| 字段 | 入库规范 | 上游格式 | 强制处理 |
-|---|---|---|---|
-| `pct_chg` | 小数(0.0123 = 1.23%) | 通常已是小数 | 采集层 sanity check `if value > 1: log.warn`,异常告警 |
-| `holdertrade.change_ratio` | 小数 | **不稳定**(百分比/小数交替) | 采集层强制 `if value > 1: value /= 100` |
-| ETF `share_chg` | 亿份 | 直接存 | 净申购金额 = `share_chg * nav * 1e8`(单位:元) |
-| `yield_pct`(国债) | 小数 | 上游百分比 | 采集层 `/100` |
-| `amount`(成交额) | 元 | Tushare 千元 / akshare 元 | 各源单独适配,统一为元 |
-| `discount_pct`(大宗) | 小数,**正数 = 溢价** | - | 同 pct_chg 规则 |
-
-**ETF 净申购金额漏乘 `1e8` 是历史 bug 重灾区**。任何涉及 ETF 净申购的计算都要 grep 一遍 `1e8`。
-
----
+## 4. 业务领域口径 (A 股专属)
 
 ## 5. MySQL 5.7 限制(必须知道)
 
@@ -132,8 +98,6 @@ KEY idx_updated_at (updated_at)
 
 - **整体北向**:仅日终,走 `stock_north_funds_daily.net_buy_amount`
 - **个股北向**:北向资金 2024-08-19 起港交所不再披露盘中实时数据,仅日终成交净额。**个股北向已无法获取,跨期不可比**。
-- **外部接口防护**:针对 akshare/Tushare 等的三方限速与网络抖动,**必须强制实现 CircuitBreaker(熔断器)和 RetryPolicy(重试机制)**。
-- **并发状态安全**:任何涉及共享状态(如连接池、内存字典)的修改,必须使用 `asyncio.Lock()` 保障并发安全。
 
 ### 6.3 行业分类(申万)
 
@@ -234,11 +198,17 @@ KEY idx_updated_at (updated_at)
 
 ### 9.1 具体实施流程
 
-1. **AC 即测试用例**:每条 Given-When-Then AC 直接转成对应测试函数
+1.  **禁止无文档开发 (Strict Docs-First)**: **严禁在未将 `implementation_plan.md` 和 `task.md` 持久化到本地对应目录前进行任何生产代码编写。** 所有设计规划必须先在本地留下“物理存证”。
+2.  **激活虚拟角色**: 在 `implementation_plan.md` 中必须显式声明激活的角色（如 `[DB Auditor]`, `[Workflow Guard]`），具体定义参考 `docs/architecture/agent-skill-rules/ROLES.md`。
+2. **AC 即测试用例**: 每条 Given-When-Then AC 直接转成对应测试函数
    - Given → fixture / setup
    - When → 被测调用
    - Then → assert
-2. **Task ID 进 commit message**:每个 task 一个 commit,前缀 `[E1-S1-T1]`
+2. **Git 提交规范 (Atomic & Traceable)**:
+   - **格式**: `[E{Epic}-S{Story}-T{Task}] <type>: <description>`
+   - **Type**: 必须使用 `feat` (新功能), `fix` (修补), `docs` (文档), `refactor` (重构), `test` (测试), `chore` (构建/工具)。
+   - **原则**: 每个 Task 对应一个 Commit。禁止跨任务提交，禁止将测试文件（`scratch/`）混入生产代码。
+   - **同步**: 提交后必须同步 push 到所有配置的远程仓库。
 3. **验收前必跑 AC**:实施完一个 Story 必须先跑全部 AC 通过再写下一个 Story。所有测试文件**必须保存在对应模块的 `scratch/` 目录**中,禁止污染生产代码目录。
 4. **遇到 TBD 停下**:文档标 TBD 的字段 / 接口名 / 实现细节,**不允许编造**。两种处理:
    - 在 `IMPLEMENTATION_FEEDBACK.md` 标注后等设计侧补
@@ -274,10 +244,6 @@ KEY idx_updated_at (updated_at)
 
 写代码 / SQL / DDL 前,以下错误必须避免:
 
-- ❌ 字段命名用 `stock_code` / `dt` / `pct`(应为 `ts_code` / `trade_date` / `pct_chg`)
-- ❌ 漏 `is_deleted = 0` 过滤
-- ❌ `pct_chg` 当百分比处理(全库一律小数)
-- ❌ ETF 净申购金额漏 `* 1e8`
 - ❌ 跨长假用日历日加减取上一交易日
 - ❌ 用了 MySQL 8.0 才有的窗口函数 / CTE / CHECK 约束
 - ❌ JSON 路径查询直接进生产 SQL
@@ -285,14 +251,12 @@ KEY idx_updated_at (updated_at)
 - ❌ 涉及个股北向数据(2024-08-19 后已停发)
 - ❌ 涨跌停判定混合板块阈值(简化版统一 9.7%)
 - ❌ 申万和中信行业混用
-- ❌ `SELECT *`(明确列出字段,便于 schema 变更追踪)
 - ❌ 隐式类型转换:`WHERE ts_code = 600519`(缺引号导致全表扫)
 - ❌ 大表 `OFFSET N LIMIT M` 当 N 很大(改用主键游标)
 - ❌ 没跑 AC 通过就进入下一个 Story
-- ❌ TBD 字段用编造的接口名 / 字段名 / 默认值填补
+- ❌ **未经本地文档化直接编写代码 (No Plan, No Code)**
 - ❌ 跨仓 schema 变更不通知对侧
 - ❌ 跨任务开发 (未完成 T1 就开始 T2,或合并多个 Task 实施)
-- ❌ 理想化数据阈值 (如 100% 或 98% 探测阈值,应改为 **95%** 以兼容停牌等异常)
 
 ---
 
@@ -334,3 +298,4 @@ KEY idx_updated_at (updated_at)
 | 2026-05-08 | v0.9 | 增加“实施前准入 (Readiness Check)”：要求在 Plan 中包含需求解析、依赖认证、TBD 销账与环境对齐。 |
 | 2026-05-08 | v1.0 | 增加“架构溯源与风险认证”：要求在 Plan 中声明双写、审计等核心架构保障机制，强化风险意识。 |
 | 2026-05-08 | v1.1 | 根据事件化开发教训，增加“真源”验证准则、容器同步红线及 95% 鲁棒阈值约束。 |
+| 2026-05-09 | v1.2 | **架构重构**: 技术标准下沉至 `python-coding-standards.md`, 引入虚拟角色体系 (`ROLES.md`), 并修正了 Section 6.2 混杂技术逻辑的问题。 |
