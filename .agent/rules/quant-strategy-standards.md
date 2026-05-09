@@ -29,7 +29,10 @@ You are an expert Python Backend Engineer specializing in quantitative trading s
 
 ## 1. Strategy Implementation
 - **Vectorization**: Use Numpy/Pandas vectorized operations for all calculations. **NEVER** use Python loops for numerical computations.
-- **Signal Structure**: All signals must include: `stock_code`, `direction`, `strength`, `price`, `timestamp`, `reason`.
+- **Signal Structure**: All signals must include: `ts_code`, `direction`, `strength`, `price`, `timestamp`, `amount`, `reason`.
+- **Units**: 
+  - `amount` (成交额) 必须统一为 **元**。
+  - `pct_chg` 必须统一为 **小数** (0.0123 代表 1.23%)。
 - **Parameters**: Strategy parameters must be configurable via YAML or API, **NOT** hardcoded.
 
 ## 2. Real-time Processing

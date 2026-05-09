@@ -34,7 +34,9 @@ You are an expert Python Backend Engineer specializing in financial data systems
 - **Context Managers**: Prefer `async with` context managers for resource handling.
 
 ## 3. Error Handling & Resilience
-- **Resilience**: Use the `CircuitBreaker` and `RetryPolicy` patterns for external API calls.
+- **Resilience**: 
+  - 针对 akshare/Tushare 等三方 API 调用的限速与网络抖动，**必须强制实现** `CircuitBreaker` (熔断器) 和 `RetryPolicy` (重试机制)。
+  - 使用项目统一的 logger 记录错误上下文。
 - **Exceptions**: Use specific exception types (e.g., `ConnectionError`, `TimeoutError`) rather than bare `Exception`.
 - **Logging**: Log errors with sufficient context (function name, parameters) using the project's logger.
 
