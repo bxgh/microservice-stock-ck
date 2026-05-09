@@ -1,0 +1,41 @@
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    ens32:
+      addresses:
+        - 192.168.151.41/24
+      routes:
+        - to: default
+          via: 192.168.151.254
+          metric: 300
+        # 集群心跳锁定：去往 Server 58 和 Server 111 的流量强制走 ens32
+        - to: 192.168.151.58/32
+          via: 192.168.151.254
+          metric: 100
+        - to: 192.168.151.111/32
+          via: 192.168.151.254
+          metric: 100
+      nameservers:
+        addresses: [8.8.8.8, 1.1.1.1, 192.168.151.254]
+
+    ens34:
+      addresses:
+        - 192.168.151.47/24
+      routes:
+        # HTTP 代理锁定：去往代理网关的流量强制走 ens34
+        - to: 192.168.151.18/32
+          via: 192.168.151.254
+          metric: 100
+        - to: default
+          via: 192.168.151.254
+          metric: 200
+
+    ens35:
+      addresses:
+        - 192.168.151.49/24
+      routes:
+        # 默认出口与加密隧道：优先级最高
+        - to: default
+          via: 192.168.151.254
+          metric: 100

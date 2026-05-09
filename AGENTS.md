@@ -65,6 +65,20 @@
 每张新表必须包含“三件套”审计字段及增量索引。
 **审计工具**: 编写 DDL 后，必须通过 `.agents/scripts/schema_enforcer.py --ddl "..."` 进行合规性检查。严禁绕过工具手动创建不规范表结构。
 
+### 3.4 根目录整洁规范 (Strict Root Dir Governance)
+
+**核心原则**: 根目录必须保持绝对精简。严禁在根目录新建任何临时、调试或一次性文件。
+
+1. **白名单准入**: 根目录仅允许存在核心工程目录 (`apps/`, `services/`, `libs/`, `docs/`, `scripts/`, `logs/`, `scratch/`, `deploy/` 等) 及核心配置文件 (`AGENTS.md`, `CLAUDE.md`, `docker-compose*.yml`, `pyproject.toml` 等)。
+2. **日志重定向**: 严禁在根目录生成 `.log` 或 `.out` 文件。所有手动运行或调试产生的日志必须重定向至 `logs/manual/`。
+3. **临时代码物理隔离**: 
+   - 属于特定微服务的测试代码存放在该服务下的 `scratch/`。
+   - 跨模块或一次性修复脚本必须存放在根目录 `scratch/history/`。
+4. **运维脚本归口**: 常用运维或初始化脚本必须存放在 `scripts/maintenance/` 或 `ops/` 目录下，禁止散落在根目录。
+
+> [!CAUTION]
+> **强力审计**: Agent 严禁在根目录创建任何不在白名单内的文件。提交 PR 前必须物理清理根目录残留文件。
+
 ---
 
 ## 4. 业务领域口径 (A 股专属)
