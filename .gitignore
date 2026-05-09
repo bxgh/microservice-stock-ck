@@ -121,3 +121,4 @@ final_audit.json
 # TDX Runtime Files
 services/mootdx-api/src/core/tdx_nodes_ranked.json
 **/implementation_logs/
+**/scratch/

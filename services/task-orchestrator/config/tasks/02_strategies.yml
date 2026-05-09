@@ -23,7 +23,7 @@ tasks:
     enabled: true
     schedule:
       type: trading_cron
-      expression: "35 17 * * mon-fri"
+      expression: "0 22 * * mon-fri"
     target:
       image: quant-strategy:dev
       command: ["python", "src/jobs/anomaly_scoring_job.py"]
